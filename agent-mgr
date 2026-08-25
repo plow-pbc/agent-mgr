@@ -98,6 +98,51 @@ case "$cmd" in
         # (unprivileged, remapped) then cannot rewrite.
         compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes hermes chat -q "$*"
         ;;
+    activate)
+        load_agent "${1:-}"
+        # activate rewrites PLOW_CHAT_CHAT_UID and PLOW_CHAT_TOKEN in place.
+        # Pointed at another agent's home it would take that agent off its chat
+        # until /sethome is re-sent, and spend a one-time activation to do it.
+        #
+        # The conventional home always carries the agent's own name, so it is
+        # always allowed. A bare `.hermes` is the legacy shape and is allowed
+        # only when the descriptor SAYS SO -- a copied descriptor that inherited
+        # a sibling's name fails the first test, and one that fell back to the
+        # convention can never produce a bare `.hermes` at all.
+        case "$AGENT_HOME" in
+            *"/.hermes-$AGENT_NAME") ;;
+            */.hermes)
+                grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" \
+                    || die "activate refuses to target $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
+            *) die "activate refuses to target $AGENT_HOME -- that is not ${AGENT_NAME}'s own home" ;;
+        esac
+        [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
+        ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
+        [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
+        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+        curl -fsSL "https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow/$ref/ref/scripts/create_plow_chat_curl.sh" -o "$tmp"
+        bash "$tmp" --data-dir "$AGENT_HOME"
+        # Non-fatal, and the message matters more than the restart: by this line
+        # the one-time activation is already spent and the token is written. A
+        # red exit would read as "activation failed", and the natural response to
+        # that is to run it again -- spending a second activation to recover from
+        # a docker hiccup.
+        "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the credential just written" \
+            || echo "activation SUCCEEDED and the credential is written -- do NOT re-run activate; run 'agent-mgr restart $AGENT_NAME'." >&2
+        ;;
+    sign-in)
+        load_agent "${1:-}"
+        installed="$AGENT_HOME/config.yaml"
+        [ -f "$installed" ] || die "no $installed -- run 'agent-mgr restore $AGENT_NAME' first"
+        require_running
+        # Read out of the config the GATEWAY loads, not the instance repo's copy:
+        # the gateway resolved model.provider from the installed one at boot, so
+        # reading the repo copy would mint a credential for a provider it is not
+        # using the moment the two differ.
+        provider="$("$AGENT_MGR_ROOT/lib/model-provider" "$installed")"
+        compose exec --user "$HERMES_UID:$HERMES_GID" hermes hermes auth add "$provider"
+        "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the credential just written"
+        ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac
