@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Install one pinned skill into an agent's home.
+#
+# One installer for what were two: rowan's install-connectors and property's
+# install-skill did the same thing -- read a pinned SHA, fetch, verify the file
+# is the skill it claims to be, install, reload -- and differed only in `gh api`
+# versus `curl raw` and in file count. `gh api` serves public and private repos
+# alike, so it is the single code path.
+#
+# Fetched into a temp dir and moved into place. Fetching straight at the
+# destination truncates a running agent's skill before the first byte arrives,
+# so a deleted SHA would leave it empty -- and the checks below would report
+# that, having already caused it.
+set -euo pipefail
+home="${1:?usage: fetch-skill <home> <repo> <ref> <dest> [srcpath]}"
+repo="${2:?}"; ref="${3:?}"; dest="${4:?}"; src="${5:-}"
+
+[[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "the skill ref must be a 40-char SHA, got: $ref" >&2; exit 1; }
+skill_name="${dest##*/}"
+prefix="${src:+$src/}"
+
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+gh api "repos/$repo/contents/${prefix}SKILL.md?ref=$ref" --jq '.content' | base64 -d > "$tmp/SKILL.md"
+[ -s "$tmp/SKILL.md" ] || { echo "fetched an empty SKILL.md from $repo@${ref:0:7}" >&2; exit 1; }
+# The name line, not just non-emptiness: a wrong path or a moved skill returns
+# a perfectly valid file that is not the one this agent pinned.
+grep -qE "^name: $skill_name\$" "$tmp/SKILL.md" \
+    || { echo "fetched a file that is not the $skill_name skill" >&2; exit 1; }
+
+target="$home/skills/$dest"
+mkdir -p "$target"
+install -m 644 "$tmp/SKILL.md" "$target/SKILL.md"
+printf 'installed %s at %s (from %s@%s)\n' "$skill_name" "$target" "$repo" "${ref:0:7}"
