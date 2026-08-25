@@ -67,3 +67,65 @@ usage: agent-mgr <command> [args]
   check-connectors <name>     report Gmail/Slack linkage
 USAGE
 }
+
+# Descriptor keys this tool owns. Every one is unset from the inherited
+# environment before the descriptor is read, because Compose resolves shell
+# variables ahead of --env-file: a stale AGENT_HOME exported in the caller's
+# shell would otherwise silently mount a different agent's home, which is the
+# same failure class that once rewrote a live home to uid 501:20.
+AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE"
+
+load_agent() {
+    local name="${1:-}"
+    [ -n "$name" ] || die "which agent? try 'agent-mgr ls'"
+
+    local dir
+    dir="$(registry_lookup "$name")" || die "$name is not registered -- run 'agent-mgr register $name <dir>'"
+    [ -d "$dir" ] || die "$name points at $dir, which no longer exists"
+
+    local descriptor="$dir/agent.env"
+    [ -f "$descriptor" ] || die "$dir has no agent.env -- an instance repo needs one"
+
+    # shellcheck disable=SC2086
+    unset $AGENT_KEYS
+    set -a
+    # shellcheck source=/dev/null
+    . "$descriptor"
+    set +a
+
+    # Convention, applied only where the descriptor said nothing.
+    AGENT_NAME="$name"
+    AGENT_DIR="$dir"
+    : "${AGENT_HOME:=$HOME/.hermes-$name}"
+    : "${AGENT_CONTAINER:=hermes-$name}"
+    : "${AGENT_PROJECT:=hermes-$name}"
+    : "${AGENT_TZ:=America/Los_Angeles}"
+    : "${AGENT_IMAGE:=nousresearch/hermes-agent@$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/image.ref")}"
+    AGENT_DESCRIPTOR="$descriptor"
+
+    HERMES_UID="$(id -u)"
+    HERMES_GID="$(id -g)"
+
+    export AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT \
+           AGENT_TZ AGENT_IMAGE AGENT_DESCRIPTOR HERMES_UID HERMES_GID
+}
+
+# Every Compose invocation goes through here so the file list, the override
+# convention and the descriptor's env-file have exactly one definition.
+compose() {
+    local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
+    [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
+    docker compose "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
+}
+
+# Refuse to act unless a gateway is actually up. Separated from the empty case
+# deliberately: piping straight into `grep -q .` treats a compose that REFUSED
+# TO RUN the same as one reporting no container, so a failure to ask reads as
+# "not running" and the caller proceeds on a false negative.
+require_running() {
+    local running
+    if ! running="$(compose ps --status running --quiet hermes 2>/dev/null)"; then
+        die "could not ask docker whether ${AGENT_NAME}'s gateway is running"
+    fi
+    [ -n "$running" ] || die "${AGENT_NAME}'s gateway is not running -- start it first: agent-mgr up $AGENT_NAME"
+}

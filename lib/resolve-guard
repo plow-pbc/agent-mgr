@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Prove the Compose config that will actually be used names the agent we were
+# asked for.
+#
+# load_agent unsets the descriptor keys before reading the file, which prevents
+# a stale shell variable from winning. This proves it: it reads back what
+# Compose resolved rather than trusting that the prevention held. Cheap, and it
+# is the only check that survives someone adding a key to a descriptor and
+# forgetting to add it to AGENT_KEYS.
+set -euo pipefail
+[ -n "${AGENT_MGR_ROOT:-}" ] || { echo "resolve-guard: run me through agent-mgr" >&2; exit 1; }
+# shellcheck source=common.sh
+. "$AGENT_MGR_ROOT/lib/common.sh"
+load_agent "${1:?usage: resolve-guard <name>}"
+
+resolved="$(compose config --format json)" || die "compose could not resolve a config for $AGENT_NAME"
+
+read -r got_container got_home <<<"$(printf '%s' "$resolved" | python3 -c '
+import json, sys
+svc = json.load(sys.stdin)["services"]["hermes"]
+home = ""
+for v in svc.get("volumes", []):
+    if v.get("target") == "/opt/data":
+        home = v.get("source", "")
+        break
+print(svc.get("container_name", "-"), home or "-")
+')"
+
+[ "$got_container" = "$AGENT_CONTAINER" ] \
+    || die "refusing to act: compose resolved container '$got_container' but $AGENT_NAME expects '$AGENT_CONTAINER'"
+[ "$got_home" = "$AGENT_HOME" ] \
+    || die "refusing to act: compose resolved home '$got_home' but $AGENT_NAME expects '$AGENT_HOME'"

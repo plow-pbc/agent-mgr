@@ -30,6 +30,12 @@ case "$cmd" in
         registry_add "$1" "$2"
         echo "registered $1 -> $(registry_lookup "$1")"
         ;;
+    resolve)
+        load_agent "${1:-}"
+        for k in $AGENT_KEYS AGENT_DESCRIPTOR; do
+            printf '%s=%s\n' "$k" "${!k}"
+        done
+        ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac
