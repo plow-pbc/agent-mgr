@@ -183,13 +183,20 @@ case "$cmd" in
         # case it was written for. The sed strips surrounding quotes -- a normal
         # dotenv line is KEY="..." and sending the quotes gets a 401.
         read_key() { grep -m1 "^$1=" "$env_file" | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/" || true; }
-        uid="$(read_key DOMO_DEVICE_UID)"; tok="$(read_key DOMO_MCP_TOKEN)"
-        # Presence of the credential IS the declaration: an agent that drives no
-        # Mac is not a failure, and there is no capability flag to forget.
-        if [ -z "$uid" ] && [ -z "$tok" ]; then
-            echo "no latch configured for $AGENT_NAME -- it drives no Mac"
+        # The CONFIG is the declaration, not the dotenv. Keying off the
+        # credential looked equivalent and is not: a leftover DOMO_* pair from an
+        # earlier experiment sits in a dotenv long after the config stopped
+        # declaring a latch server, and this then probed a relay for an agent
+        # that cannot reach it -- reporting a revoked token as a failure of an
+        # agent that never used one. Read from the INSTALLED config, which is
+        # what the gateway loaded, for the same reason sign-in does.
+        installed="$AGENT_HOME/config.yaml"
+        [ -f "$installed" ] || die "no $installed -- run 'agent-mgr restore $AGENT_NAME' first"
+        if ! awk '/^mcp_servers:/{m=1;next} /^[^[:space:]]/{m=0} m && $1=="latch:"{found=1} END{exit !found}' "$installed"; then
+            echo "no latch configured for $AGENT_NAME -- its config declares no latch server"
             exit 0
         fi
+        uid="$(read_key DOMO_DEVICE_UID)"; tok="$(read_key DOMO_MCP_TOKEN)"
         [ -n "$uid" ] || die "DOMO_DEVICE_UID is empty in $env_file -- mint one from the Mac"
         [ -n "$tok" ] || die "DOMO_MCP_TOKEN is empty in $env_file -- mint one from the Mac"
         require_running

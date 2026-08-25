@@ -60,8 +60,8 @@ def test_an_override_cannot_re_project_the_stack_at_all(run, instance):
     assert "someone-elses-project" not in run("resolve", "rowan").stdout
 
 
-def _retargeting(instance, run, name, tmp_path):
-    repo = instance(name)
+def _retargeting(instance, run, name, tmp_path, config=None):
+    repo = instance(name) if config is None else instance(name, config=config)
     run("register", name, str(repo))
     (repo / "compose.override.yml").write_text(
         "services:\n"
@@ -82,7 +82,11 @@ def test_sign_in_will_not_write_a_credential_through_a_retargeting_override(run,
 
 
 def test_check_latch_will_not_probe_through_a_retargeting_override(run, instance, tmp_path):
-    _retargeting(instance, run, "property", tmp_path)
+    # A config that declares latch, so the probe gets past the not-configured
+    # exit and actually reaches the guard this test is about.
+    _retargeting(instance, run, "property", tmp_path,
+                 config="model:\n  provider: openai-codex\nmcp_servers:\n  latch:\n"
+                        "    url: https://api.plow.co/v1/relay/devices/x/mcp\n")
     run("restore", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_1\nDOMO_MCP_TOKEN=tok_1\n")
