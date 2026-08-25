@@ -169,6 +169,64 @@ case "$cmd" in
         sort -o "$t" "$t"; mv "$t" "$tsv"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the skill just installed"
         ;;
+    check-latch)
+        load_agent "${1:-}"
+        env_file="$AGENT_HOME/.env"
+        [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
+        # `|| true` on the grep: under `set -e` a missing key exits 1 and kills
+        # the command, so the friendly branch below could never fire for the
+        # case it was written for. The sed strips surrounding quotes -- a normal
+        # dotenv line is KEY="..." and sending the quotes gets a 401.
+        read_key() { grep -m1 "^$1=" "$env_file" | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/" || true; }
+        uid="$(read_key DOMO_DEVICE_UID)"; tok="$(read_key DOMO_MCP_TOKEN)"
+        # Presence of the credential IS the declaration: an agent that drives no
+        # Mac is not a failure, and there is no capability flag to forget.
+        if [ -z "$uid" ] && [ -z "$tok" ]; then
+            echo "no latch configured for $AGENT_NAME -- it drives no Mac"
+            exit 0
+        fi
+        [ -n "$uid" ] || die "DOMO_DEVICE_UID is empty in $env_file -- mint one from the Mac"
+        [ -n "$tok" ] || die "DOMO_MCP_TOKEN is empty in $env_file -- mint one from the Mac"
+        require_running
+        err="$(mktemp)"; trap 'rm -f "$err"' EXIT
+        # Asked from INSIDE the container, because the container is what has to
+        # reach api.plow.co. Egress, DNS and CA config all differ between this
+        # shell and that network namespace, and every one of those failures is
+        # invisible to a host-side probe. There is deliberately no host
+        # fallback: a host answer is exactly the evidence entering the namespace
+        # was meant to stop accepting.
+        code="$(compose exec -T hermes \
+            curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+            -X POST "https://api.plow.co/v1/relay/devices/$uid/mcp" \
+            -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' 2>"$err")" || true
+        # A dead credential and a dead network need different fixes, so they must
+        # not collapse into one message.
+        case "$code" in
+            200) echo "latch reachable from ${AGENT_NAME}'s container (HTTP 200)" ;;
+            401) die "DOMO_MCP_TOKEN (...${tok: -3}) is REVOKED -- mint a fresh agent credential from the Mac" ;;
+            000) die "no answer from api.plow.co -- the credential was NOT tested: $(tr '\n' ' ' < "$err")" ;;
+            *)   die "relay returned HTTP ${code:-<none>}: $(tr '\n' ' ' < "$err")" ;;
+        esac
+        ;;
+    check-connectors)
+        load_agent "${1:-}"
+        require_running
+        rc=0
+        for c in gmail slack; do
+            # `connected:false` is a real answer, not a failure -- it means the
+            # connector is not linked to that Plow account yet.
+            if out="$(compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes \
+                    python3 /opt/data/skills/plow-connectors/plow_connector.py "$c" status 2>&1)"; then
+                printf '%s: %s\n' "$c" "$out"
+            else
+                printf '%s: probe did not run -- %s\n' "$c" "$(printf '%s' "$out" | tr '\n' ' ')" >&2
+                rc=1
+            fi
+        done
+        exit "$rc"
+        ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac
