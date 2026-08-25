@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# The provider the gateway authenticates against, read from the one place it is
+# declared: model.provider in the config the gateway itself loads.
+#
+# A script rather than a line inside sign-in so the contract test can run the
+# real extraction instead of re-implementing it. A test that re-implements the
+# command under test asserts nothing about the command.
+#
+# Anchored to the `model:` block, not to a two-space indent: `provider:` is a
+# plausible key under other top-level mappings, and taking the first match in
+# file order would silently authenticate against whichever block came first.
+# $2 rather than the rest of the line, so a trailing inline comment does not
+# become part of the provider name.
+set -euo pipefail
+config="${1:?usage: model-provider <config.yaml>}"
+[ -f "$config" ] || { echo "no such config: $config" >&2; exit 1; }
+provider="$(awk '/^model:/{m=1;next} /^[^[:space:]]/{m=0} m && $1=="provider:"{print $2; exit}' "$config")"
+[ -n "$provider" ] || { echo "no model.provider in $config" >&2; exit 1; }
+printf '%s\n' "$provider"

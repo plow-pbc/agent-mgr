@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Reload an agent's gateway, if one is running, after writing something it reads
+# at boot.
+#
+# One copy, called by every subcommand that writes into an agent's home. This
+# lived inline in four recipes across four repos and the copies drifted
+# immediately -- one gained a change-gate, the others did not; one was fatal
+# under `set -e`, the others were not.
+#
+# Non-fatal on purpose. Every caller has finished its write by the time this
+# runs -- activate has already spent a one-time activation -- so a red exit here
+# reads as "the write failed" and invites a re-run that costs far more than a
+# stale process does.
+set -euo pipefail
+[ -n "${AGENT_MGR_ROOT:-}" ] || { echo "reload-if-running: run me through agent-mgr" >&2; exit 1; }
+# shellcheck source=common.sh
+. "$AGENT_MGR_ROOT/lib/common.sh"
+load_agent "${1:?usage: reload-if-running <name> <what>}"
+what="${2:-what was just written}"
+
+# Separated from the empty case deliberately. Piping straight into `grep -q .`
+# treats a compose that REFUSED TO RUN the same as one reporting no container:
+# it prints nothing on stdout, the pipeline reads as "no gateway is running", so
+# the reload silently never happens and the caller reports success.
+if ! running="$(compose ps --status running --quiet hermes)"; then
+    echo "could not ask docker whether ${AGENT_NAME}'s gateway is running, so ${what} may not be loaded" >&2
+    exit 1
+fi
+# No running gateway is the normal case during first bring-up: nothing to do.
+[ -n "$running" ] || exit 0
+echo "restarting ${AGENT_NAME}'s gateway so it loads ${what}..."
+compose restart hermes \
+  || echo "${what} is written, but the gateway did not restart -- run 'agent-mgr restart ${AGENT_NAME}'." >&2
