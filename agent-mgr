@@ -50,6 +50,36 @@ case "$cmd" in
         load_agent "${1:-}"
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         ;;
+    restore)
+        load_agent "${1:-}"
+        [ -f "$AGENT_DIR/config.yaml" ] || die "$AGENT_DIR has no config.yaml -- an instance repo needs one"
+        mkdir -p "$AGENT_HOME"
+        umask 077
+        [ -f "$AGENT_HOME/.env" ] || install -m 600 "$AGENT_MGR_ROOT/templates/env.example" "$AGENT_HOME/.env"
+        # Compared before the copy, because after it they are always identical.
+        # restore is the idempotent installer and the first line of the
+        # documented bring-up, so bouncing a live gateway on a byte-identical
+        # copy drops an in-flight chat turn for nothing.
+        if cmp -s "$AGENT_DIR/config.yaml" "$AGENT_HOME/config.yaml"; then changed=; else changed=1; fi
+        install -m 600 "$AGENT_DIR/config.yaml" "$AGENT_HOME/config.yaml"
+        echo "restored config.yaml to $AGENT_HOME"
+        # config.yaml is boot-read, the same as auth.json and .env. Without this
+        # the installed file says one thing and the running gateway holds
+        # another from its own boot.
+        [ -z "$changed" ] || "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the config just installed"
+        ;;
+    install-plugin)
+        load_agent "${1:-}"
+        ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
+        # A SHA, never a branch: a branch would silently re-point a running
+        # agent on the next upstream push, and this plugin holds the chat token.
+        [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
+        [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
+        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
+        curl -fsSL "https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow/$ref/ref/scripts/install_direct_mount.sh" -o "$tmp"
+        PLOW_CHAT_PLUGIN_REF="$ref" bash "$tmp" --data-dir "$AGENT_HOME"
+        "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the plugin just installed"
+        ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac
