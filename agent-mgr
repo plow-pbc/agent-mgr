@@ -83,7 +83,6 @@ case "$cmd" in
     agent)
         load_agent "${1:-}"; shift
         [ $# -ge 1 ] || die "usage: agent-mgr agent <name> \"<prompt>\""
-        "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         require_running
         # `exec`, not `run`, and this is the whole point of the tool. The image's
         # s6 entrypoint starts a gateway whatever command you pass it, so

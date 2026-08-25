@@ -45,3 +45,42 @@ def instance(tmp_path):
         return repo
 
     return _instance
+
+
+def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
+                name="rowan", running=True, exec_output=None, log=None):
+    """A `docker` that answers the three things agent-mgr asks of it.
+
+    One builder rather than one per test file: every command now passes through
+    resolve-guard, so every fake needs a parseable `config --format json` -- and
+    three near-copies of that JSON drift the moment the guard reads a new field.
+
+    `log` records argv when given, so a test can assert on what actually ran
+    rather than on what the source says.
+    """
+    import json
+
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    container = container.replace("<name>", name)
+    project = project.replace("<name>", name)
+    cfg = json.dumps({
+        "name": project,
+        "services": {"hermes": {
+            "container_name": container,
+            "volumes": [{"target": "/opt/data", "source": str(home)}],
+        }},
+    })
+    parts = [
+        "#!/usr/bin/env bash",
+        f'printf "%s\\n" "$*" >> {log}' if log else "",
+        'case "$*" in',
+        f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;",
+        f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',
+    ]
+    if exec_output is not None:
+        parts.append(f'  *exec*) echo {exec_output} ;;')
+    parts += ["esac", "exit 0", ""]
+    (b / "docker").write_text("\n".join(x for x in parts if x))
+    (b / "docker").chmod(0o755)
+    return b

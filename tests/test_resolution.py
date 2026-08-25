@@ -61,3 +61,43 @@ def test_resolve_with_no_name_asks_which_agent(run):
     r = run("resolve")
     assert r.returncode != 0
     assert "which agent" in r.stderr
+
+
+def test_a_descriptor_is_read_not_executed(run, instance, tmp_path):
+    """The descriptor is documented as declarative. Dot-sourcing it made any
+    registered repo able to run arbitrary commands with the operator's
+    credentials the moment `resolve` touched it -- before any Compose guard."""
+    canary = tmp_path / "pwned"
+    repo = instance("rowan", descriptor=f'AGENT_TZ=$(touch {canary})\n')
+    run("register", "rowan", str(repo))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert not canary.exists(), "the descriptor executed a command substitution"
+    assert "AGENT_TZ=$(touch" in r.stdout, "the value should stay literal"
+
+
+def test_a_descriptor_cannot_run_a_command_through_a_later_line(run, instance, tmp_path):
+    """A parser that only *starts* strict still executes if it falls back to
+    sourcing on anything it does not recognise."""
+    canary = tmp_path / "pwned2"
+    repo = instance("rowan", descriptor=f'AGENT_TZ=UTC\ntouch {canary}\nAGENT_CONTAINER=x\n')
+    run("register", "rowan", str(repo))
+    r = run("resolve", "rowan")
+    assert not canary.exists(), "a non-assignment line was executed"
+    assert "AGENT_TZ=UTC" in r.stdout
+
+
+def test_a_descriptor_cannot_set_a_variable_outside_the_agent_namespace(run, instance):
+    """Override-only variables belong to Compose's --env-file parser, not to
+    this one -- narrowing what a descriptor can reach in the CLI's own process."""
+    repo = instance("rowan", descriptor="PATH=/tmp/evil\nAGENT_TZ=UTC\n")
+    run("register", "rowan", str(repo))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "/tmp/evil" not in r.stdout
+
+
+def test_home_expansion_still_works_because_the_template_documents_it(run, instance, tmp_path):
+    repo = instance("str", descriptor="AGENT_HOME=${HOME}/.hermes\n")
+    run("register", "str", str(repo))
+    assert f"AGENT_HOME={tmp_path / 'home'}/.hermes\n" in run("resolve", "str").stdout

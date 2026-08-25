@@ -97,10 +97,38 @@ load_agent() {
 
     # shellcheck disable=SC2086
     unset $AGENT_KEYS $COMPOSE_KEYS
-    set -a
-    # shellcheck source=/dev/null
-    . "$descriptor"
-    set +a
+
+    # Read, never execute. This used to dot-source the descriptor, which made a
+    # file documented as declarative into host shell code: any repo registered
+    # here could run arbitrary commands with the operator's credentials the
+    # moment `agent-mgr resolve` touched it -- before a single Compose guard ran.
+    #
+    # Only AGENT_* is parsed. The override-only variables a descriptor also
+    # carries (STR_REPO and friends) are none of this function's business:
+    # Compose reads them itself through --env-file, with its own parser.
+    #
+    # $HOME is the one expansion, because it is the one the template documents.
+    # Anything else stays literal -- a descriptor cannot reach $(...) or a
+    # sibling variable, which is the whole point of not sourcing it.
+    local line key value
+    while IFS= read -r line; do
+        case "$line" in
+            \#*|'') continue ;;
+            AGENT_*=*) ;;
+            *) continue ;;
+        esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        # One layer of surrounding quotes, the way a dotenv file is usually written.
+        case "$value" in
+            \"*\") value="${value#\"}"; value="${value%\"}" ;;
+            "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
+        esac
+        value="${value//\$\{HOME\}/$HOME}"
+        value="${value//\$HOME/$HOME}"
+        printf '%s' "$AGENT_KEYS" | grep -qw "$key" || continue
+        printf -v "$key" '%s' "$value"
+    done < "$descriptor"
 
     # Convention, applied only where the descriptor said nothing.
     AGENT_NAME="$name"
@@ -127,11 +155,20 @@ compose() {
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
 }
 
-# Refuse to act unless a gateway is actually up. Separated from the empty case
-# deliberately: piping straight into `grep -q .` treats a compose that REFUSED
-# TO RUN the same as one reporting no container, so a failure to ask reads as
-# "not running" and the caller proceeds on a false negative.
+# Refuse to act unless the resolved config is this agent's AND a gateway is up.
+#
+# The guard runs here rather than at each call site: sign-in and the reload paths
+# mutate a running stack, and they were reaching Compose without it -- so an
+# override that retargets /opt/data could take a credential write or a restart
+# against a sibling's mounted home. One seam that every mutating path already
+# passes through beats three call sites that each have to remember.
+#
+# The running check is separated from the empty case deliberately: piping
+# straight into `grep -q .` treats a compose that REFUSED TO RUN the same as one
+# reporting no container, so a failure to ask reads as "not running" and the
+# caller proceeds on a false negative.
 require_running() {
+    "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
     local running
     if ! running="$(compose ps --status running --quiet hermes 2>/dev/null)"; then
         die "could not ask docker whether ${AGENT_NAME}'s gateway is running"

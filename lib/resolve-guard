@@ -17,7 +17,13 @@ resolved="$(compose config --format json)" || die "compose could not resolve a c
 
 read -r got_project got_container got_home <<<"$(printf '%s' "$resolved" | python3 -c '
 import json, sys
-cfg = json.load(sys.stdin)
+try:
+    cfg = json.load(sys.stdin)
+except json.JSONDecodeError:
+    # Compose printed something that is not a config. Fail as a refusal with the
+    # agent named, not as a traceback -- the operator needs to know the guard
+    # stopped them, not how it is implemented.
+    sys.exit(1)
 svc = cfg["services"]["hermes"]
 home = ""
 for v in svc.get("volumes", []):
@@ -25,7 +31,7 @@ for v in svc.get("volumes", []):
         home = v.get("source", "")
         break
 print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-")
-')"
+' 2>/dev/null)" || die "refusing to act: could not read a Compose config for $AGENT_NAME"
 
 [ "$got_project" = "$AGENT_PROJECT" ] \
     || die "refusing to act: compose resolved project '$got_project' but $AGENT_NAME expects '$AGENT_PROJECT'"

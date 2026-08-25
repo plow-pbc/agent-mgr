@@ -1,17 +1,11 @@
 import os
 
+from conftest import fake_docker
 
-def _fake_docker(tmp_path):
-    b = tmp_path / "bin"
-    b.mkdir(exist_ok=True)
+
+def _fake_docker(tmp_path, name="rowan"):
     log = tmp_path / "argv.log"
-    (b / "docker").write_text(
-        "#!/usr/bin/env bash\n"
-        f'printf "%s\\n" "$*" >> {log}\n'
-        'case "$*" in *"ps --status running --quiet"*) echo deadbeef ;; esac\n'
-        "exit 0\n"
-    )
-    (b / "docker").chmod(0o755)
+    b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name, log=log)
     return b, log
 
 

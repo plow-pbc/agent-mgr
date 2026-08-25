@@ -18,6 +18,10 @@ set -euo pipefail
 load_agent "${1:?usage: reload-if-running <name> <what>}"
 what="${2:-what was just written}"
 
+# Before touching a running stack. A restart aimed by a retargeting override
+# lands on a sibling's container, and this runs right after a credential write.
+"$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
+
 # Separated from the empty case deliberately. Piping straight into `grep -q .`
 # treats a compose that REFUSED TO RUN the same as one reporting no container:
 # it prints nothing on stdout, the pipeline reads as "no gateway is running", so
