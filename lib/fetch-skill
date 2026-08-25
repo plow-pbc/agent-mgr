@@ -7,51 +7,52 @@
 # versus `curl raw` and in file count. `gh api` serves public and private repos
 # alike, so it is the single code path.
 #
-# Fetched into a temp dir and moved into place. Fetching straight at the
-# destination truncates a running agent's skill before the first byte arrives,
-# so a deleted SHA would leave it empty -- and the checks below would report
-# that, having already caused it.
+# The whole tree at the pinned ref, staged and swapped -- see the tarball
+# comment below for why a per-file listing could not honour its own pin.
 set -euo pipefail
 home="${1:?usage: fetch-skill <home> <repo> <ref> <dest> [srcpath]}"
 repo="${2:?}"; ref="${3:?}"; dest="${4:?}"; src="${5:-}"
 
 [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "the skill ref must be a 40-char SHA, got: $ref" >&2; exit 1; }
 skill_name="${dest##*/}"
-prefix="${src:+$src/}"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
-# The whole skill directory, not only SKILL.md. The two installers this replaced
-# differed in file count, and dropping the multi-file half broke a consumer in
-# this very repo: check-connectors execs plow_connector.py, which a SKILL.md-only
-# install never puts there. The container is not always the instructions-only
-# half -- that is true of a skill whose code runs on the Mac, not of one whose
-# code runs in the container.
-files="$(gh api "repos/$repo/contents/${src:-.}?ref=$ref" --jq '.[] | select(.type=="file") | .name')"
-printf '%s\n' "$files" | grep -qx 'SKILL.md' \
-    || { echo "$repo@${ref:0:7}${src:+ ($src)} has no SKILL.md -- is that the right path?" >&2; exit 1; }
+# A whole-tree snapshot at the pinned ref, then one directory swap.
+#
+# The previous version listed the directory and installed the files in it, which
+# meant three ways to record a SHA while installing something else: nested
+# directories were silently dropped (property-hunt keeps references/ and
+# scripts/ that way), the copy overlaid rather than replaced so a file deleted
+# upstream survived forever, and a mid-loop failure left a half-written skill.
+# A tarball is one request, carries the tree, and lets the install be a rename.
+gh api "repos/$repo/tarball/$ref" > "$tmp/src.tgz" \
+    || { echo "could not fetch $repo@${ref:0:7}" >&2; exit 1; }
+mkdir -p "$tmp/tree"
+# --strip-components=1: GitHub wraps the tree in an <owner>-<repo>-<sha>/ dir.
+tar -xzf "$tmp/src.tgz" -C "$tmp/tree" --strip-components=1 \
+    || { echo "$repo@${ref:0:7} did not unpack as a tarball" >&2; exit 1; }
 
-for f in $files; do
-    gh api "repos/$repo/contents/${prefix}$f?ref=$ref" --jq '.content' | base64 -d > "$tmp/$f"
-done
-
-[ -s "$tmp/SKILL.md" ] || { echo "fetched an empty SKILL.md from $repo@${ref:0:7}" >&2; exit 1; }
-# The name line, not just non-emptiness: a wrong path or a moved skill returns a
+src="$tmp/tree${src:+/$src}"
+[ -d "$src" ] || { echo "$repo@${ref:0:7} has no ${5:-repository root} to install" >&2; exit 1; }
+[ -s "$src/SKILL.md" ] || { echo "$repo@${ref:0:7}${5:+ ($5)} has no SKILL.md -- is that the right path?" >&2; exit 1; }
+# The name line, not just presence: a wrong path or a moved skill returns a
 # perfectly valid file that is not the one this agent pinned.
-grep -qE "^name: $skill_name\$" "$tmp/SKILL.md" \
+grep -qE "^name: $skill_name\$" "$src/SKILL.md" \
     || { echo "fetched a file that is not the $skill_name skill" >&2; exit 1; }
 
 target="$home/skills/$dest"
-mkdir -p "$target"
-count=0
-for f in $files; do
-    # Executable bit from the name: a skill's .py is invoked directly by the
-    # agent, and an unreadable 644 script fails as "no such file" from inside
-    # the container, which is the least informative failure available.
-    case "$f" in
-        *.py|*.sh) install -m 755 "$tmp/$f" "$target/$f" ;;
-        *)         install -m 644 "$tmp/$f" "$target/$f" ;;
-    esac
-    count=$((count + 1))
-done
-printf 'installed %s at %s (%d file(s), from %s@%s)\n' "$skill_name" "$target" "$count" "$repo" "${ref:0:7}"
+# Staged beside the destination, then swapped. Installing in place would leave a
+# running agent reading a half-written skill for the duration of the copy, and
+# a failure partway through would leave it there permanently.
+staging="$target.incoming.$$"
+rm -rf "$staging"
+mkdir -p "$(dirname "$target")"
+cp -a "$src" "$staging"
+# Scripts are invoked directly by the agent; an unreadable 644 fails from inside
+# the container as "no such file", the least informative failure available.
+find "$staging" -type f \( -name '*.py' -o -name '*.sh' \) -exec chmod 755 {} +
+rm -rf "$target"
+mv "$staging" "$target"
+printf 'installed %s at %s (%s file(s), from %s@%s)\n' \
+    "$skill_name" "$target" "$(find "$target" -type f | wc -l | tr -d ' ')" "$repo" "${ref:0:7}"

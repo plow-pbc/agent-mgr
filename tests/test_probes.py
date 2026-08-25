@@ -80,3 +80,49 @@ def test_check_latch_will_not_answer_from_the_host_when_the_gateway_is_down(run,
     r = run("check-latch", "property", env=_bin(tmp_path, "property", running=False))
     assert r.returncode != 0
     assert "not running" in r.stderr
+
+
+def _connectors_bin(tmp_path, name="rowan", *, script_present=True, gmail="ok", slack="ok"):
+    """A docker whose `exec` answers the script-presence test and each probe."""
+    import os
+    b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name)
+    (b / "docker").write_text(
+        (b / "docker").read_text().replace(
+            "esac",
+            '  *"test -f /opt/data/skills/plow-connectors/plow_connector.py"*)\n'
+            f'    exit {0 if script_present else 1} ;;\n'
+            f'  *gmail*) echo \'{gmail}\'; exit {0 if gmail != "FAIL" else 1} ;;\n'
+            f'  *slack*) echo \'{slack}\'; exit {0 if slack != "FAIL" else 1} ;;\n'
+            "esac", 1))
+    (b / "docker").chmod(0o755)
+    return {"PATH": f"{b}:{os.environ['PATH']}"}
+
+
+def test_check_connectors_reports_each_connector(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    r = run("check-connectors", "rowan",
+            env=_connectors_bin(tmp_path, gmail="connected:true", slack="connected:false"))
+    assert r.returncode == 0, r.stderr
+    assert "gmail: connected:true" in r.stdout
+    # connected:false is a real answer, not a failure -- it means the connector
+    # is not linked to that Plow account yet.
+    assert "slack: connected:false" in r.stdout
+
+
+def test_a_connector_whose_probe_cannot_run_makes_the_command_fail(run, instance, tmp_path):
+    """The one-connector-fails exit path: a probe that did not run is not the
+    same as a connector reporting it is unlinked."""
+    run("register", "rowan", str(instance("rowan")))
+    r = run("check-connectors", "rowan", env=_connectors_bin(tmp_path, slack="FAIL"))
+    assert r.returncode != 0
+    assert "probe did not run" in r.stderr
+
+
+def test_a_missing_connector_skill_is_named_rather_than_reported_per_connector(run, instance, tmp_path):
+    """Without the presence check every connector reports the same generic 'no
+    such file', which is the least informative way to say 'not installed'."""
+    run("register", "rowan", str(instance("rowan")))
+    r = run("check-connectors", "rowan", env=_connectors_bin(tmp_path, script_present=False))
+    assert r.returncode != 0
+    assert "plow-connectors skill is not installed" in r.stderr
+    assert "add-skill" in r.stderr, "the message should name the fix"

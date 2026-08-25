@@ -4,31 +4,38 @@ import os
 from conftest import fake_docker
 
 
-def _fake_bin(tmp_path, skill_name="property-hunt", extra_files=(), agent="property"):
-    """A gh that serves a real directory listing and per-file contents, so the
-    REAL fetch-skill runs end to end without a network call."""
+def _fake_bin(tmp_path, skill_name="property-hunt", extra_files=(), agent="property",
+              subdirs=(), src=None):
+    """A `gh` that serves a real tarball, so the REAL fetch-skill runs end to end.
+
+    A tarball rather than a contents listing because that is what the installer
+    now asks for -- and it is the only shape that can carry the nested
+    directories the per-file version silently dropped.
+    """
+    import io
+    import tarfile
+
     b = tmp_path / "bin"
     b.mkdir(exist_ok=True)
-    contents = {"SKILL.md": f"---\nname: {skill_name}\n---\n# {skill_name}\n"}
+    root = "plow-pbc-repo-abc1234"
+    prefix = f"{root}/{src}/" if src else f"{root}/"
+    members = {f"{prefix}SKILL.md": f"---\nname: {skill_name}\n---\n# {skill_name}\n"}
     for name, body in extra_files:
-        contents[name] = body
-    listing = "\n".join(contents)
-    cases = "\n".join(
-        '  *"contents/%s?ref"*|*"contents/"*"/%s?ref"*) echo %s ;;'
-        % (n, n, base64.b64encode(v.encode()).decode())
-        for n, v in contents.items()
-    )
-    (b / "gh").write_text(
-        "#!/usr/bin/env bash\n"
-        'case "$*" in\n'
-        f'{cases}\n'
-        f'  *contents*) printf "%s\\n" "{listing}" ;;\n'
-        'esac\n'
-    )
+        members[f"{prefix}{name}"] = body
+    for name, body in subdirs:
+        members[f"{prefix}{name}"] = body
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, body in members.items():
+            data = body.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    (tmp_path / "skill.tgz").write_bytes(buf.getvalue())
+
+    (b / "gh").write_text(f'#!/usr/bin/env bash\ncat {tmp_path / "skill.tgz"}\n')
     (b / "gh").chmod(0o755)
-    # No gateway running: add-skill installs, then reload-if-running exits 0
-    # with nothing to reload. The config still has to parse -- every path goes
-    # through resolve-guard now.
     fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{agent}", name=agent,
                 running=False)
     return {"PATH": f"{b}:{os.environ['PATH']}"}
@@ -127,15 +134,63 @@ def test_a_fetched_script_is_executable(run, instance, tmp_path):
     assert script.stat().st_mode & 0o111, "the script is not executable"
 
 
-def test_a_directory_with_no_skill_md_is_refused_by_name(run, instance, tmp_path):
+def test_a_tree_with_no_skill_md_is_refused_by_name(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
-    b = tmp_path / "bin"
-    b.mkdir(exist_ok=True)
-    (b / "gh").write_text('#!/usr/bin/env bash\nprintf "README.md\\n"\n')
-    (b / "gh").chmod(0o755)
-    (b / "docker").write_text("#!/usr/bin/env bash\nexit 0\n")
-    (b / "docker").chmod(0o755)
+    env = _fake_bin(tmp_path, skill_name="ignored", agent="rowan")
+    # Rebuild the tarball without a SKILL.md.
+    import io
+    import tarfile
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = b"# not a skill\n"
+        info = tarfile.TarInfo("plow-pbc-repo-abc1234/README.md")
+        info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    (tmp_path / "skill.tgz").write_bytes(buf.getvalue())
     r = run("add-skill", "rowan", "plow-pbc/seed-hermes-plow", "--ref", "a" * 40,
-            "--dest", "plow-connectors", env={"PATH": f"{b}:{os.environ['PATH']}"})
+            "--dest", "plow-connectors", env=env)
     assert r.returncode != 0
     assert "no SKILL.md" in r.stderr
+
+
+def test_a_nested_directory_is_installed_not_silently_dropped(run, instance, tmp_path):
+    """property-hunt keeps references/ and scripts/. A per-file listing recorded
+    its pin while installing a tree that did not contain them."""
+    run("register", "property", str(instance("property")))
+    r = run("add-skill", "property", "plow-pbc/property-hunt", "--ref", "a" * 40,
+            "--dest", "productivity/property-hunt",
+            env=_fake_bin(tmp_path, subdirs=[
+                ("scripts/scrape.ts", "export const x = 1\n"),
+                ("references/notes.md", "# notes\n"),
+            ]))
+    assert r.returncode == 0, r.stderr
+    d = tmp_path / "home" / ".hermes-property" / "skills" / "productivity" / "property-hunt"
+    assert (d / "scripts" / "scrape.ts").exists(), "a nested directory was dropped"
+    assert (d / "references" / "notes.md").exists()
+
+
+def test_a_file_removed_upstream_does_not_survive_the_next_install(run, instance, tmp_path):
+    """An overlay leaves the old tree in place, so a skill keeps executing code
+    the pinned ref deleted."""
+    run("register", "property", str(instance("property")))
+    run("add-skill", "property", "plow-pbc/property-hunt", "--ref", "a" * 40,
+        "--dest", "productivity/property-hunt",
+        env=_fake_bin(tmp_path, extra_files=[("old.py", "print('stale')\n")]))
+    d = tmp_path / "home" / ".hermes-property" / "skills" / "productivity" / "property-hunt"
+    assert (d / "old.py").exists()
+    run("add-skill", "property", "plow-pbc/property-hunt", "--ref", "b" * 40,
+        "--dest", "productivity/property-hunt", env=_fake_bin(tmp_path))
+    assert not (d / "old.py").exists(), "a file the new ref deleted survived"
+    assert (d / "SKILL.md").exists()
+
+
+def test_a_subpath_install_takes_only_that_subtree(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    r = run("add-skill", "rowan", "plow-pbc/seed-hermes-plow", "--ref", "a" * 40,
+            "--dest", "plow-connectors", "--src", "ref/hermes-skill/plow-connectors",
+            env=_fake_bin(tmp_path, skill_name="plow-connectors", agent="rowan",
+                          src="ref/hermes-skill/plow-connectors",
+                          extra_files=[("plow_connector.py", "print('ok')\n")]))
+    assert r.returncode == 0, r.stderr
+    d = tmp_path / "home" / ".hermes-rowan" / "skills" / "plow-connectors"
+    assert (d / "SKILL.md").exists() and (d / "plow_connector.py").exists()
