@@ -15,17 +15,20 @@ load_agent "${1:?usage: resolve-guard <name>}"
 
 resolved="$(compose config --format json)" || die "compose could not resolve a config for $AGENT_NAME"
 
-read -r got_container got_home <<<"$(printf '%s' "$resolved" | python3 -c '
+read -r got_project got_container got_home <<<"$(printf '%s' "$resolved" | python3 -c '
 import json, sys
-svc = json.load(sys.stdin)["services"]["hermes"]
+cfg = json.load(sys.stdin)
+svc = cfg["services"]["hermes"]
 home = ""
 for v in svc.get("volumes", []):
     if v.get("target") == "/opt/data":
         home = v.get("source", "")
         break
-print(svc.get("container_name", "-"), home or "-")
+print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-")
 ')"
 
+[ "$got_project" = "$AGENT_PROJECT" ] \
+    || die "refusing to act: compose resolved project '$got_project' but $AGENT_NAME expects '$AGENT_PROJECT'"
 [ "$got_container" = "$AGENT_CONTAINER" ] \
     || die "refusing to act: compose resolved container '$got_container' but $AGENT_NAME expects '$AGENT_CONTAINER'"
 [ "$got_home" = "$AGENT_HOME" ] \

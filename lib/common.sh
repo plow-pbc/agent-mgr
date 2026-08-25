@@ -75,6 +75,15 @@ USAGE
 # same failure class that once rewrote a live home to uid 501:20.
 AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE"
 
+# Compose's own environment variables, unset for the same reason and with a
+# sharper edge: COMPOSE_PROJECT_NAME outranks the template's `name:` attribute,
+# so a stale one in the caller's shell files this agent's stack under another
+# agent's project. container_name and the /opt/data source both still resolve
+# exactly as expected, so nothing downstream notices -- `up` creates a stack
+# under a foreign project against this agent's live home, and `down` then
+# reports success having stopped nothing.
+COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES"
+
 load_agent() {
     local name="${1:-}"
     [ -n "$name" ] || die "which agent? try 'agent-mgr ls'"
@@ -87,7 +96,7 @@ load_agent() {
     [ -f "$descriptor" ] || die "$dir has no agent.env -- an instance repo needs one"
 
     # shellcheck disable=SC2086
-    unset $AGENT_KEYS
+    unset $AGENT_KEYS $COMPOSE_KEYS
     set -a
     # shellcheck source=/dev/null
     . "$descriptor"
@@ -115,7 +124,7 @@ load_agent() {
 compose() {
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
-    docker compose "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
+    docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
 }
 
 # Refuse to act unless a gateway is actually up. Separated from the empty case
