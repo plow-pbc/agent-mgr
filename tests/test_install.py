@@ -131,3 +131,69 @@ def test_the_fleet_template_is_used_when_an_instance_ships_none(run, instance, t
     run("restore", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
     assert "PLOW_CHAT_TOKEN" in env and "DOMO_MCP_TOKEN" in env
+
+
+def test_restore_is_the_whole_deploy_including_the_instances_own_step(run, instance, tmp_path):
+    """One command, one owner. The alternative -- agent-mgr doing its half and
+    the README telling the operator to run the rest in order -- moves ownership
+    to whoever reads the docs, which is not an owner at all."""
+    repo = instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/seed.sh\n")
+    (repo / "scripts").mkdir()
+    hook = repo / "scripts" / "seed.sh"
+    hook.write_text(f'#!/usr/bin/env bash\ntouch {tmp_path / "hook-ran"}\n')
+    hook.chmod(0o755)
+    run("register", "str", str(repo))
+    r = run("restore", "str")
+    assert r.returncode == 0, r.stderr
+    home = tmp_path / "home" / ".hermes-str"
+    assert (home / "config.yaml").exists(), "config"
+    assert (home / ".env").exists(), "dotenv skeleton"
+    assert (tmp_path / "hook-ran").exists(), "the instance's own restore step never ran"
+
+
+def test_a_failing_hook_fails_the_restore(run, instance, tmp_path):
+    """A hook refuses for a reason -- a missing corpus, a failed composition.
+    Swallowing it leaves the caller believing the deploy landed."""
+    repo = instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/seed.sh\n")
+    (repo / "scripts").mkdir()
+    hook = repo / "scripts" / "seed.sh"
+    hook.write_text('#!/usr/bin/env bash\necho "no vault" >&2\nexit 1\n')
+    hook.chmod(0o755)
+    run("register", "str", str(repo))
+    r = run("restore", "str")
+    assert r.returncode != 0
+    assert "did NOT land" in r.stderr
+
+
+def test_a_declared_hook_that_is_missing_is_named(run, instance):
+    run("register", "str", str(instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/gone.sh\n")))
+    r = run("restore", "str")
+    assert r.returncode != 0
+    assert "restore hook" in r.stderr and "gone.sh" in r.stderr
+
+
+def test_an_agent_with_no_hook_restores_fine(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    assert run("restore", "rowan").returncode == 0
+    assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
+
+
+def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance, tmp_path):
+    """It used to be a second command the caller had to remember in order."""
+    marker = tmp_path / "plugin-installed"
+    # Its own directory: conftest's run fixture rewrites a no-op curl into
+    # tmp_path/bin on every invocation, which would clobber this one.
+    b = tmp_path / "plugin-bin"
+    b.mkdir(exist_ok=True)
+    (b / "curl").write_text(
+        "#!/usr/bin/env bash\n"
+        'out=""\n'
+        'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done\n'
+        f'printf "#!/usr/bin/env bash\\ntouch {marker}\\n" > "$out"\n'
+    )
+    (b / "curl").chmod(0o755)
+    import os
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    assert marker.exists(), "restore did not install the plugin"

@@ -22,6 +22,10 @@ def run(registry, tmp_path):
         e["AGENT_MGR_REGISTRY"] = str(registry)
         e["HOME"] = str(tmp_path / "home")
         (tmp_path / "home").mkdir(exist_ok=True)
+        # restore installs the plugin, so a hermetic curl is on PATH for every
+        # invocation unless a test overrides PATH deliberately.
+        b = fake_curl(tmp_path)
+        e["PATH"] = f"{b}:{e['PATH']}"
         if env:
             e.update(env)
         return subprocess.run(
@@ -84,3 +88,34 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     (b / "docker").write_text("\n".join(x for x in parts if x))
     (b / "docker").chmod(0o755)
     return b
+
+
+def shlex_quote(s):
+    import shlex
+    return shlex.quote(s)
+
+
+def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
+    """A `curl -o <path>` that writes a no-op plugin installer.
+
+    restore installs the plugin, so the real path curls upstream. Stubbing curl
+    keeps the suite hermetic while still exercising agent-mgr's own fetch,
+    ref-validation and `bash <installer>` steps.
+    """
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    script = "#!/usr/bin/env bash\n"
+    if fail:
+        script += "exit 22\n"
+    else:
+        script += (
+            'out=""\n'
+            'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done\n'
+            f'[ -n "$out" ] && printf %s {shlex_quote(body)} > "$out"\n'
+            "exit 0\n"
+        )
+    (b / "curl").write_text(script)
+    (b / "curl").chmod(0o755)
+    return b
+
+

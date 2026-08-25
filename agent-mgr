@@ -33,7 +33,7 @@ case "$cmd" in
     resolve)
         load_agent "${1:-}"
         for k in $AGENT_KEYS AGENT_DESCRIPTOR; do
-            printf '%s=%s\n' "$k" "${!k}"
+            printf '%s=%s\n' "$k" "${!k-}"
         done
         ;;
     up|down|restart|logs)
@@ -55,35 +55,43 @@ case "$cmd" in
         [ -f "$AGENT_CONFIG" ] || die "no config at $AGENT_CONFIG -- an instance repo needs one, or set AGENT_CONFIG in its agent.env"
         mkdir -p "$AGENT_HOME"
         umask 077
+
         # The instance's own example when it ships one: an agent with extra
         # credentials (a PMS token, a lock API key) knows its dotenv contract
         # better than the fleet template does, and a skeleton missing those keys
-        # is a first-run that looks complete and is not.
+        # is a first run that looks complete and is not. Never clobbers.
         skeleton="$AGENT_DIR/.env.example"
         [ -f "$skeleton" ] || skeleton="$AGENT_MGR_ROOT/templates/env.example"
         [ -f "$AGENT_HOME/.env" ] || install -m 600 "$skeleton" "$AGENT_HOME/.env"
+
+        # Plugin before config, deliberately: the installer enables itself by
+        # patching a `plugins:` block into whatever config.yaml it finds, so
+        # installing the canonical copy afterwards makes it win unconditionally
+        # rather than depending on the installer staying idempotent.
+        install_plow_plugin
+
         # Compared before the copy, because after it they are always identical.
-        # restore is the idempotent installer and the first line of the
-        # documented bring-up, so bouncing a live gateway on a byte-identical
-        # copy drops an in-flight chat turn for nothing.
         if cmp -s "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"; then changed=; else changed=1; fi
         install -m 600 "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"
         echo "restored config.yaml to $AGENT_HOME"
-        # config.yaml is boot-read, the same as auth.json and .env. Without this
-        # the installed file says one thing and the running gateway holds
-        # another from its own boot.
-        [ -z "$changed" ] || "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the config just installed"
+
+        # The instance's own half, sequenced here so there is one deploy entry
+        # point. Fatal: a hook that refuses -- a missing corpus, a failed
+        # composition -- must not leave the caller believing the deploy landed.
+        if [ -n "$AGENT_RESTORE_HOOK" ]; then
+            [ -x "$AGENT_RESTORE_HOOK" ] || die "$AGENT_NAME declares a restore hook at $AGENT_RESTORE_HOOK, which is missing or not executable"
+            ( cd "$AGENT_DIR" && "$AGENT_RESTORE_HOOK" ) || die "${AGENT_NAME}'s restore hook failed -- the deploy did NOT land"
+        fi
+
+        # Once, at the end. config.yaml, the plugin and whatever the hook wrote
+        # are all boot-read, so reloading between them would bounce a live
+        # gateway several times for one deploy.
+        "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "what the restore installed"
         ;;
     install-plugin)
         load_agent "${1:-}"
-        ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
-        # A SHA, never a branch: a branch would silently re-point a running
-        # agent on the next upstream push, and this plugin holds the chat token.
-        [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
-        tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
-        curl -fsSL "https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow/$ref/ref/scripts/install_direct_mount.sh" -o "$tmp"
-        PLOW_CHAT_PLUGIN_REF="$ref" bash "$tmp" --data-dir "$AGENT_HOME"
+        install_plow_plugin
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the plugin just installed"
         ;;
     agent)

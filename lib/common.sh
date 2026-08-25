@@ -73,7 +73,7 @@ USAGE
 # variables ahead of --env-file: a stale AGENT_HOME exported in the caller's
 # shell would otherwise silently mount a different agent's home, which is the
 # same failure class that once rewrote a live home to uid 501:20.
-AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG"
+AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK"
 
 # Compose's own environment variables, unset for the same reason and with a
 # sharper edge: COMPOSE_PROJECT_NAME outranks the template's `name:` attribute,
@@ -147,13 +147,27 @@ load_agent() {
         /*) ;;
         *) AGENT_CONFIG="$dir/$AGENT_CONFIG" ;;
     esac
+    # An instance's own restore step, if it has one -- seeding a corpus,
+    # composing a prompt, whatever only that agent needs. agent-mgr sequences it
+    # after its own installs so there is ONE deploy entry point; without it the
+    # ordering falls to whoever reads the README, which is not an owner.
+    # Always defined, empty when the instance declares none: every key in
+    # AGENT_KEYS is printed by `resolve`, and an unset one is fatal under `set -u`.
+    : "${AGENT_RESTORE_HOOK:=}"
+    if [ -n "$AGENT_RESTORE_HOOK" ]; then
+        case "$AGENT_RESTORE_HOOK" in
+            /*) ;;
+            *) AGENT_RESTORE_HOOK="$dir/$AGENT_RESTORE_HOOK" ;;
+        esac
+    fi
     AGENT_DESCRIPTOR="$descriptor"
 
     HERMES_UID="$(id -u)"
     HERMES_GID="$(id -g)"
 
     export AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT \
-           AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_DESCRIPTOR HERMES_UID HERMES_GID
+           AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK \
+           AGENT_DESCRIPTOR HERMES_UID HERMES_GID
 }
 
 # Every Compose invocation goes through here so the file list, the override
@@ -183,4 +197,23 @@ require_running() {
         die "could not ask docker whether ${AGENT_NAME}'s gateway is running"
     fi
     [ -n "$running" ] || die "${AGENT_NAME}'s gateway is not running -- start it first: agent-mgr up $AGENT_NAME"
+}
+
+# The pinned Plow Chat plugin, into this agent's home. A function rather than
+# only a subcommand because `restore` sequences it too: one deploy entry point
+# means one place that knows the order, and duplicating the install inline would
+# make that two.
+#
+# Reloads nothing -- callers do, once, after everything boot-read has landed.
+install_plow_plugin() {
+    local ref
+    ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
+    # A SHA, never a branch: a branch would silently re-point a running agent on
+    # the next upstream push, and this plugin holds the chat token.
+    [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
+    local tmp; tmp="$(mktemp)"
+    curl -fsSL "https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow/$ref/ref/scripts/install_direct_mount.sh" -o "$tmp" \
+        || { rm -f "$tmp"; die "could not fetch the plugin installer at ${ref:0:7}"; }
+    PLOW_CHAT_PLUGIN_REF="$ref" bash "$tmp" --data-dir "$AGENT_HOME"
+    rm -f "$tmp"
 }
