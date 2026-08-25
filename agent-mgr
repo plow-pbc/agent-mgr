@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# agent-mgr -- one CLI for the Hermes agent fleet.
+#
+# Dispatch only. Every subcommand's behaviour lives in lib/, so the contract
+# tests can invoke the real thing rather than grep this file.
+set -euo pipefail
+
+AGENT_MGR_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+export AGENT_MGR_ROOT
+# shellcheck source=lib/common.sh
+. "$AGENT_MGR_ROOT/lib/common.sh"
+
+cmd="${1:-}"
+[ -n "$cmd" ] || { usage; exit 2; }
+shift
+
+case "$cmd" in
+    ls)
+        if [ -z "$(registry_list)" ]; then
+            echo "no agents registered -- run 'agent-mgr new <name>' or 'agent-mgr register <name> <dir>'"
+            exit 0
+        fi
+        printf '%-16s %s\n' NAME REPO
+        registry_list | while IFS=$'\t' read -r name dir; do
+            printf '%-16s %s\n' "$name" "$dir"
+        done
+        ;;
+    register)
+        [ $# -eq 2 ] || die "usage: agent-mgr register <name> <dir>"
+        registry_add "$1" "$2"
+        echo "registered $1 -> $(registry_lookup "$1")"
+        ;;
+    -h|--help|help) usage ;;
+    *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
+esac
