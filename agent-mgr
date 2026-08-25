@@ -52,16 +52,22 @@ case "$cmd" in
         ;;
     restore)
         load_agent "${1:-}"
-        [ -f "$AGENT_DIR/config.yaml" ] || die "$AGENT_DIR has no config.yaml -- an instance repo needs one"
+        [ -f "$AGENT_CONFIG" ] || die "no config at $AGENT_CONFIG -- an instance repo needs one, or set AGENT_CONFIG in its agent.env"
         mkdir -p "$AGENT_HOME"
         umask 077
-        [ -f "$AGENT_HOME/.env" ] || install -m 600 "$AGENT_MGR_ROOT/templates/env.example" "$AGENT_HOME/.env"
+        # The instance's own example when it ships one: an agent with extra
+        # credentials (a PMS token, a lock API key) knows its dotenv contract
+        # better than the fleet template does, and a skeleton missing those keys
+        # is a first-run that looks complete and is not.
+        skeleton="$AGENT_DIR/.env.example"
+        [ -f "$skeleton" ] || skeleton="$AGENT_MGR_ROOT/templates/env.example"
+        [ -f "$AGENT_HOME/.env" ] || install -m 600 "$skeleton" "$AGENT_HOME/.env"
         # Compared before the copy, because after it they are always identical.
         # restore is the idempotent installer and the first line of the
         # documented bring-up, so bouncing a live gateway on a byte-identical
         # copy drops an in-flight chat turn for nothing.
-        if cmp -s "$AGENT_DIR/config.yaml" "$AGENT_HOME/config.yaml"; then changed=; else changed=1; fi
-        install -m 600 "$AGENT_DIR/config.yaml" "$AGENT_HOME/config.yaml"
+        if cmp -s "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"; then changed=; else changed=1; fi
+        install -m 600 "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"
         echo "restored config.yaml to $AGENT_HOME"
         # config.yaml is boot-read, the same as auth.json and .env. Without this
         # the installed file says one thing and the running gateway holds

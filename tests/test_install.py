@@ -79,3 +79,55 @@ def test_no_template_carries_a_literal_credential():
             for key in ("PLOW_CHAT_TOKEN", "DOMO_MCP_TOKEN"):
                 if line.strip().startswith(f"{key}="):
                     assert line.strip() == f"{key}=", f"{name} ships a value for {key}"
+
+
+def test_an_agent_can_say_where_its_config_lives(run, instance, tmp_path):
+    """The rentals agent keeps config.yaml under runtime/, beside the vault seed
+    and SOUL it ships with. Without this it kept a second installer that
+    hardcoded both the path and the home -- two owners of the thing agent-mgr
+    exists to own."""
+    repo = instance("str", descriptor="AGENT_CONFIG=runtime/config.yaml\n", config=None)
+    (repo / "runtime").mkdir()
+    (repo / "runtime" / "config.yaml").write_text("model:\n  provider: openai-codex\n")
+    run("register", "str", str(repo))
+    r = run("restore", "str")
+    assert r.returncode == 0, r.stderr
+    assert "openai-codex" in (tmp_path / "home" / ".hermes-str" / "config.yaml").read_text()
+
+
+def test_a_relative_config_path_resolves_against_the_instance_repo(run, instance, tmp_path):
+    repo = instance("str", descriptor="AGENT_CONFIG=runtime/config.yaml\n", config=None)
+    (repo / "runtime").mkdir()
+    (repo / "runtime" / "config.yaml").write_text("model:\n  provider: x\n")
+    run("register", "str", str(repo))
+    assert f"AGENT_CONFIG={repo}/runtime/config.yaml" in run("resolve", "str").stdout
+
+
+def test_a_missing_config_names_the_path_it_looked_at(run, instance):
+    """The old message named a directory, which is useless when the whole point
+    is that the file is somewhere else."""
+    run("register", "str", str(instance("str", descriptor="AGENT_CONFIG=runtime/config.yaml\n",
+                                        config=None)))
+    r = run("restore", "str")
+    assert r.returncode != 0
+    assert "runtime/config.yaml" in r.stderr
+    assert "AGENT_CONFIG" in r.stderr
+
+
+def test_an_instance_dotenv_example_wins_over_the_fleet_template(run, instance, tmp_path):
+    """An agent with extra credentials knows its dotenv contract better than the
+    fleet template does; a skeleton missing those keys is a first run that looks
+    complete and is not."""
+    repo = instance("str")
+    (repo / ".env.example").write_text("HOSTEX_TOKEN=\nSEAM_API_KEY=\nPLOW_CHAT_TOKEN=\n")
+    run("register", "str", str(repo))
+    run("restore", "str")
+    env = (tmp_path / "home" / ".hermes-str" / ".env").read_text()
+    assert "HOSTEX_TOKEN" in env and "SEAM_API_KEY" in env
+
+
+def test_the_fleet_template_is_used_when_an_instance_ships_none(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+    assert "PLOW_CHAT_TOKEN" in env and "DOMO_MCP_TOKEN" in env

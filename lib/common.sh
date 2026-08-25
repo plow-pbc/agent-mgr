@@ -73,7 +73,7 @@ USAGE
 # variables ahead of --env-file: a stale AGENT_HOME exported in the caller's
 # shell would otherwise silently mount a different agent's home, which is the
 # same failure class that once rewrote a live home to uid 501:20.
-AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE"
+AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG"
 
 # Compose's own environment variables, unset for the same reason and with a
 # sharper edge: COMPOSE_PROJECT_NAME outranks the template's `name:` attribute,
@@ -138,13 +138,22 @@ load_agent() {
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"
     : "${AGENT_IMAGE:=nousresearch/hermes-agent@$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/image.ref")}"
+    # Where this agent's declarative config lives. Relative resolves against the
+    # instance repo, so an agent whose config sits under runtime/ (the rentals
+    # agent does, beside the vault seed and SOUL it ships with) says so in one
+    # line instead of keeping a second installer that hardcodes the path.
+    : "${AGENT_CONFIG:=config.yaml}"
+    case "$AGENT_CONFIG" in
+        /*) ;;
+        *) AGENT_CONFIG="$dir/$AGENT_CONFIG" ;;
+    esac
     AGENT_DESCRIPTOR="$descriptor"
 
     HERMES_UID="$(id -u)"
     HERMES_GID="$(id -g)"
 
     export AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT \
-           AGENT_TZ AGENT_IMAGE AGENT_DESCRIPTOR HERMES_UID HERMES_GID
+           AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_DESCRIPTOR HERMES_UID HERMES_GID
 }
 
 # Every Compose invocation goes through here so the file list, the override
