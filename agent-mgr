@@ -227,6 +227,32 @@ case "$cmd" in
         done
         exit "$rc"
         ;;
+    new)
+        name="${1:-}"; [ -n "$name" ] || die "usage: agent-mgr new <name> [dir]"
+        case "$name" in ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: $name" ;; esac
+        dir="${2:-$PWD/$name-hermes-agent}"
+        [ -e "$dir/agent.env" ] && die "$dir is already an instance repo -- refusing to overwrite it"
+        mkdir -p "$dir"
+        install -m 644 "$AGENT_MGR_ROOT/templates/agent.env" "$dir/agent.env"
+        install -m 644 "$AGENT_MGR_ROOT/templates/config.yaml" "$dir/config.yaml"
+        mkdir -p "$HOME/.hermes-$name"
+        registry_add "$name" "$dir"
+        cat <<EOF
+scaffolded $name at $dir
+  home:     $HOME/.hermes-$name
+
+bring it up:
+  agent-mgr restore $name          # config.yaml + a .env skeleton into its home
+  agent-mgr install-plugin $name   # the Plow Chat plugin, from the pinned SHA
+  agent-mgr activate $name         # prints a code; text it from the agent's phone
+  agent-mgr up $name
+  agent-mgr sign-in $name          # model OAuth, in a browser
+
+then, if it drives a Mac through Latch, put DOMO_DEVICE_UID and DOMO_MCP_TOKEN
+in $HOME/.hermes-$name/.env and run:
+  agent-mgr check-latch $name
+EOF
+        ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac
