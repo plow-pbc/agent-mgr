@@ -20,14 +20,38 @@ skill_name="${dest##*/}"
 prefix="${src:+$src/}"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
-gh api "repos/$repo/contents/${prefix}SKILL.md?ref=$ref" --jq '.content' | base64 -d > "$tmp/SKILL.md"
+
+# The whole skill directory, not only SKILL.md. The two installers this replaced
+# differed in file count, and dropping the multi-file half broke a consumer in
+# this very repo: check-connectors execs plow_connector.py, which a SKILL.md-only
+# install never puts there. The container is not always the instructions-only
+# half -- that is true of a skill whose code runs on the Mac, not of one whose
+# code runs in the container.
+files="$(gh api "repos/$repo/contents/${src:-.}?ref=$ref" --jq '.[] | select(.type=="file") | .name')"
+printf '%s\n' "$files" | grep -qx 'SKILL.md' \
+    || { echo "$repo@${ref:0:7}${src:+ ($src)} has no SKILL.md -- is that the right path?" >&2; exit 1; }
+
+for f in $files; do
+    gh api "repos/$repo/contents/${prefix}$f?ref=$ref" --jq '.content' | base64 -d > "$tmp/$f"
+done
+
 [ -s "$tmp/SKILL.md" ] || { echo "fetched an empty SKILL.md from $repo@${ref:0:7}" >&2; exit 1; }
-# The name line, not just non-emptiness: a wrong path or a moved skill returns
-# a perfectly valid file that is not the one this agent pinned.
+# The name line, not just non-emptiness: a wrong path or a moved skill returns a
+# perfectly valid file that is not the one this agent pinned.
 grep -qE "^name: $skill_name\$" "$tmp/SKILL.md" \
     || { echo "fetched a file that is not the $skill_name skill" >&2; exit 1; }
 
 target="$home/skills/$dest"
 mkdir -p "$target"
-install -m 644 "$tmp/SKILL.md" "$target/SKILL.md"
-printf 'installed %s at %s (from %s@%s)\n' "$skill_name" "$target" "$repo" "${ref:0:7}"
+count=0
+for f in $files; do
+    # Executable bit from the name: a skill's .py is invoked directly by the
+    # agent, and an unreadable 644 script fails as "no such file" from inside
+    # the container, which is the least informative failure available.
+    case "$f" in
+        *.py|*.sh) install -m 755 "$tmp/$f" "$target/$f" ;;
+        *)         install -m 644 "$tmp/$f" "$target/$f" ;;
+    esac
+    count=$((count + 1))
+done
+printf 'installed %s at %s (%d file(s), from %s@%s)\n' "$skill_name" "$target" "$count" "$repo" "${ref:0:7}"

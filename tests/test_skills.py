@@ -2,13 +2,27 @@ import base64
 import os
 
 
-def _fake_bin(tmp_path, skill_name="property-hunt"):
-    """A gh that returns a base64 SKILL.md and a docker that reports nothing
-    running, so the REAL fetch-skill runs end to end without a network call."""
-    body = base64.b64encode(f"---\nname: {skill_name}\n---\n# {skill_name}\n".encode()).decode()
+def _fake_bin(tmp_path, skill_name="property-hunt", extra_files=()):
+    """A gh that serves a real directory listing and per-file contents, so the
+    REAL fetch-skill runs end to end without a network call."""
     b = tmp_path / "bin"
     b.mkdir(exist_ok=True)
-    (b / "gh").write_text(f"#!/usr/bin/env bash\necho '{body}'\n")
+    contents = {"SKILL.md": f"---\nname: {skill_name}\n---\n# {skill_name}\n"}
+    for name, body in extra_files:
+        contents[name] = body
+    listing = "\n".join(contents)
+    cases = "\n".join(
+        '  *"contents/%s?ref"*|*"contents/"*"/%s?ref"*) echo %s ;;'
+        % (n, n, base64.b64encode(v.encode()).decode())
+        for n, v in contents.items()
+    )
+    (b / "gh").write_text(
+        "#!/usr/bin/env bash\n"
+        'case "$*" in\n'
+        f'{cases}\n'
+        f'  *contents*) printf "%s\\n" "{listing}" ;;\n'
+        'esac\n'
+    )
     (b / "gh").chmod(0o755)
     (b / "docker").write_text("#!/usr/bin/env bash\nexit 0\n")
     (b / "docker").chmod(0o755)
@@ -80,3 +94,43 @@ def test_an_unknown_option_is_refused_rather_than_ignored(run, instance, tmp_pat
             env=_fake_bin(tmp_path))
     assert r.returncode != 0
     assert "unknown option" in r.stderr
+
+
+def test_a_skill_whose_code_runs_in_the_container_gets_its_script_too(run, instance, tmp_path):
+    """check-connectors execs plow_connector.py. A SKILL.md-only install would
+    leave that command permanently broken with a generic "no such file"."""
+    run("register", "rowan", str(instance("rowan")))
+    r = run("add-skill", "rowan", "plow-pbc/seed-hermes-plow", "--ref", "a" * 40,
+            "--dest", "plow-connectors",
+            env=_fake_bin(tmp_path, skill_name="plow-connectors",
+                          extra_files=[("plow_connector.py", "#!/usr/bin/env python3\nprint('ok')\n")]))
+    assert r.returncode == 0, r.stderr
+    d = tmp_path / "home" / ".hermes-rowan" / "skills" / "plow-connectors"
+    assert (d / "SKILL.md").exists()
+    assert (d / "plow_connector.py").exists(), "the executable half was dropped"
+
+
+def test_a_fetched_script_is_executable(run, instance, tmp_path):
+    """An unreadable 644 script fails as 'no such file' from inside the
+    container, which is the least informative failure available."""
+    run("register", "rowan", str(instance("rowan")))
+    run("add-skill", "rowan", "plow-pbc/seed-hermes-plow", "--ref", "a" * 40,
+        "--dest", "plow-connectors",
+        env=_fake_bin(tmp_path, skill_name="plow-connectors",
+                      extra_files=[("plow_connector.py", "print('ok')\n")]))
+    script = tmp_path / "home" / ".hermes-rowan" / "skills" / "plow-connectors" / "plow_connector.py"
+    assert script.stat().st_mode & 0o111, "the script is not executable"
+
+
+def test_a_directory_with_no_skill_md_is_refused_by_name(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    (b / "gh").write_text('#!/usr/bin/env bash\nprintf "README.md\\n"\n')
+    (b / "gh").chmod(0o755)
+    (b / "docker").write_text("#!/usr/bin/env bash\nexit 0\n")
+    (b / "docker").chmod(0o755)
+    r = run("add-skill", "rowan", "plow-pbc/seed-hermes-plow", "--ref", "a" * 40,
+            "--dest", "plow-connectors", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "no SKILL.md" in r.stderr

@@ -213,6 +213,12 @@ case "$cmd" in
     check-connectors)
         load_agent "${1:-}"
         require_running
+        # Checked once, by name. Without this every connector reports the same
+        # generic "probe did not run -- no such file or directory", which is the
+        # least informative way to say "the skill is not installed".
+        compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes \
+            test -f /opt/data/skills/plow-connectors/plow_connector.py 2>/dev/null \
+            || die "the plow-connectors skill is not installed in $AGENT_NAME -- run: agent-mgr add-skill $AGENT_NAME plow-pbc/seed-hermes-plow --dest plow-connectors --src ref/hermes-skill/plow-connectors"
         rc=0
         for c in gmail slack; do
             # `connected:false` is a real answer, not a failure -- it means the
@@ -231,15 +237,35 @@ case "$cmd" in
         name="${1:-}"; [ -n "$name" ] || die "usage: agent-mgr new <name> [dir]"
         case "$name" in ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: $name" ;; esac
         dir="${2:-$PWD/$name-hermes-agent}"
-        [ -e "$dir/agent.env" ] && die "$dir is already an instance repo -- refusing to overwrite it"
+        # On the NAME first. Scaffolding an already-registered name at a fresh
+        # directory passes any directory-scoped check and then silently repoints
+        # the registry -- and because the template descriptor is all comments,
+        # the new row resolves to the SAME home, so the next documented step
+        # (`restore`) installs the template config over a live agent's own and
+        # reloads its gateway.
+        if existing="$(registry_lookup "$name" 2>/dev/null)"; then
+            die "$name is already registered at $existing -- pick another name, or use 'agent-mgr register' to repoint it"
+        fi
+        # Either file, not just one: this command writes both, and a directory
+        # holding a hand-written config.yaml would otherwise pass the refusal and
+        # have it replaced by the template.
+        for f in agent.env config.yaml; do
+            [ -e "$dir/$f" ] && die "$dir already has $f -- refusing to overwrite it"
+        done
         mkdir -p "$dir"
         install -m 644 "$AGENT_MGR_ROOT/templates/agent.env" "$dir/agent.env"
         install -m 644 "$AGENT_MGR_ROOT/templates/config.yaml" "$dir/config.yaml"
-        mkdir -p "$HOME/.hermes-$name"
         registry_add "$name" "$dir"
+        # The home is NOT created here. install-plugin and activate both gate on
+        # it existing as their "run restore first" ordering check, and
+        # pre-creating it lets activate spend a one-time activation into a home
+        # restore has never prepared. restore creates it, which is its job.
+        # Reported from the resolver rather than restated, so the convention has
+        # one owner.
+        load_agent "$name"
         cat <<EOF
 scaffolded $name at $dir
-  home:     $HOME/.hermes-$name
+  home:     $AGENT_HOME (created by restore)
 
 bring it up:
   agent-mgr restore $name          # config.yaml + a .env skeleton into its home
@@ -249,7 +275,7 @@ bring it up:
   agent-mgr sign-in $name          # model OAuth, in a browser
 
 then, if it drives a Mac through Latch, put DOMO_DEVICE_UID and DOMO_MCP_TOKEN
-in $HOME/.hermes-$name/.env and run:
+in $AGENT_HOME/.env and run:
   agent-mgr check-latch $name
 EOF
         ;;
