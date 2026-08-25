@@ -14,6 +14,18 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = [ROOT / "agent-mgr", *sorted((ROOT / "lib").glob("*"))]
 
+# A single- or double-quoted span. Stripped before matching, because a real
+# invocation's `run` is a bare argument while the same word inside an error
+# message or a `case` glob is not one.
+QUOTED = re.compile(r"'[^']*'" + r'|"[^"]*"')
+INVOCATION = re.compile(r"\bcompose\b[^#]*\brun\b")
+
+
+def _invokes_compose_run(line):
+    if line.lstrip().startswith("#"):
+        return False
+    return bool(INVOCATION.search(QUOTED.sub("", line)))
+
 
 def test_no_source_file_invokes_compose_run():
     offenders = []
@@ -21,11 +33,18 @@ def test_no_source_file_invokes_compose_run():
         if not p.is_file():
             continue
         for i, line in enumerate(p.read_text().splitlines(), 1):
-            if line.lstrip().startswith("#"):
-                continue
-            if re.search(r"\bcompose\b[^#]*\brun\b", line):
+            if _invokes_compose_run(line):
                 offenders.append(f"{p.name}:{i}: {line.strip()}")
     assert not offenders, "compose run starts a rival gateway; use exec:\n" + "\n".join(offenders)
+
+
+def test_that_check_is_not_vacuous():
+    """Stripping quotes must not have blinded the guard to a real invocation."""
+    assert _invokes_compose_run('        compose run --rm hermes chat -q "$*"')
+    assert _invokes_compose_run('    docker compose --env-file x run --rm hermes')
+    assert not _invokes_compose_run(
+        """        *) die "refusing 'compose run' without --entrypoint" ;;""")
+    assert not _invokes_compose_run('        # docker compose run would start a rival')
 
 
 def _fake_docker(tmp_path, home, container="hermes-rowan", running=True):
@@ -102,3 +121,33 @@ def test_agent_with_no_prompt_is_refused(run, instance):
     r = run("agent", "rowan")
     assert r.returncode != 0
     assert "usage" in r.stderr
+
+
+def test_the_compose_passthrough_refuses_run_without_an_entrypoint(run, instance, tmp_path):
+    """The passthrough exists for domain recipes, so it must not become the hole
+    through which a rival gateway gets started."""
+    run("register", "rowan", str(instance("rowan")))
+    b, log = _fake_docker(tmp_path, tmp_path / "home" / ".hermes-rowan")
+    r = run("compose", "rowan", "run", "--rm", "hermes", "chat", "-q", "hi",
+            env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "second gateway" in r.stderr
+    assert not log.exists() or "chat" not in log.read_text()
+
+
+def test_the_compose_passthrough_allows_run_with_an_entrypoint(run, instance, tmp_path):
+    """--entrypoint means s6 never starts, so no gateway is booted."""
+    run("register", "rowan", str(instance("rowan")))
+    b, log = _fake_docker(tmp_path, tmp_path / "home" / ".hermes-rowan")
+    r = run("compose", "rowan", "run", "--rm", "--entrypoint", "bash", "hermes", "-c", "true",
+            env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    assert "--entrypoint bash" in log.read_text()
+
+
+def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    b, _ = _fake_docker(tmp_path, tmp_path / "home" / ".hermes-rowan", container="hermes")
+    r = run("compose", "rowan", "ps", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "refusing to act" in r.stderr

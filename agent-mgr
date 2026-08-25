@@ -279,6 +279,30 @@ in $AGENT_HOME/.env and run:
   agent-mgr check-latch $name
 EOF
         ;;
+    compose)
+        # Escape hatch for an agent's own DOMAIN recipes -- a one-off maintenance
+        # container, an on-demand end-to-end run -- so they do not have to
+        # restate agent-mgr's file list, override convention and env-file to
+        # reach the same service. Deployment stays defined in one place.
+        #
+        # HERMES_UID/GID are exported by load_agent, so a passthrough inherits
+        # the same ownership contract as every other subcommand.
+        #
+        # `run` through here MUST pass --entrypoint. Without it the image's s6
+        # entrypoint boots a gateway alongside the live one, which is the whole
+        # failure this tool exists to prevent; with it, s6 never starts.
+        load_agent "${1:-}"; shift
+        [ $# -ge 1 ] || die "usage: agent-mgr compose <name> <docker compose args...>"
+        case " $* " in
+            *" run "*)
+                case " $* " in
+                    *" --entrypoint "*) ;;
+                    *) die "refusing 'compose run' without --entrypoint: the image's s6 entrypoint would start a second gateway against ${AGENT_NAME}'s home" ;;
+                esac ;;
+        esac
+        "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
+        compose "$@"
+        ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac
