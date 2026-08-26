@@ -78,18 +78,22 @@ def test_a_pattern_is_a_name_that_matches_nothing_not_a_wildcard(run, instance, 
     assert not (tmp_path / "home" / f".hermes-{name}").exists(), "a phantom home was created"
 
 
-def test_a_hand_edited_row_can_still_be_dropped(run, instance, tmp_path, registry):
+@pytest.mark.parametrize("row", ["Property", "a\\tb"])
+def test_a_hand_edited_row_can_still_be_dropped(run, instance, tmp_path, registry, row):
     """Hand-editing is the documented pre-unregister practice, so rows outside
     [a-z0-9-] exist in the wild. Gating removal on the name made them
     undroppable -- and an unresolvable one refuses the bare-home agent, so the
     remedy the refusal names has to work on exactly the row that caused it."""
     run("register", "rowan", str(instance("rowan")))
     with registry.open("a") as f:
-        f.write("Property\t/nonexistent/property-repo\n")
-    assert "Property" in run("ls").stdout
+        f.write(f"{row}\t/nonexistent/repo\n")
+    assert row in run("ls").stdout
 
-    assert run("unregister", "Property").returncode == 0
-    assert "Property" not in run("ls").stdout
+    # The backslash row is the one that proves ENVIRON over -v: awk's -v
+    # processes escapes in the value, so `a\tb` would arrive as a tab and match
+    # no row -- undroppable, by the very command that exists to drop it.
+    assert run("unregister", row).returncode == 0, f"{row!r} could not be dropped"
+    assert row not in run("ls").stdout
     assert "rowan" in run("ls").stdout
 
 
