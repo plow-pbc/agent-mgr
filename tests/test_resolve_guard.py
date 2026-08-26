@@ -437,7 +437,6 @@ def test_a_resolver_that_fails_refuses_and_says_which_path(
     # regression this pins is a path going missing from between the others.
     assert refusal.format(home=tmp_path / "home" / ".hermes-rowan") in r.stderr
 
-
 def test_the_mismatch_names_the_path_docker_reported(run, instance, tmp_path):
     """Docker's raw `.Source`, not the normalised spelling of it. The guard
     normalises to compare, and while it assigned that result back over
@@ -449,17 +448,28 @@ def test_the_mismatch_names_the_path_docker_reported(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
-    assert foreign in r.stderr
+    # The fragment only the mismatch die produces. Three refusals in that
+    # function interpolate $mounted, so a bare `foreign in stderr` would pass on
+    # any of them -- including the resolver refusals the next test covers.
+    assert f"it mounts {foreign} at /opt/data" in r.stderr
 
 
-def test_a_resolver_failing_on_the_mounted_home_says_so_and_names_it(run, instance, tmp_path):
-    """The container guard's own refusal. Keyed on the path as well as the call:
-    failing every abspath would stop load_agent first, so only the mounted
-    home's resolution is broken here.
+@pytest.mark.parametrize("call, refusal", [
+    ("os.path.abspath(", "could not normalise the home it mounts ({p})"),
+    ("os.path.realpath(", "could not resolve the home it mounts ({p})"),
+])
+def test_a_resolver_failing_on_the_mounted_home_says_which_and_names_it(
+        run, instance, tmp_path, call, refusal):
+    """Both refusals in the container guard, which were byte-identical while
+    holding different values -- one raw, one normalised. That is what let a path
+    go missing from one of them unnoticed, so "normalise" versus "resolve" is
+    now the only thing telling an operator which resolver failed, and both
+    halves of that distinction are pinned here.
 
-    It says "normalise", not "resolve", because the line below it says
-    "resolve" -- the two were byte-identical while holding different values,
-    which is what let a path go missing from one of them unnoticed."""
+    Keyed on the path as well as the call: the guard is two functions past
+    load_agent, and failing every abspath stops there instead. `foreign` has no
+    `..`, so the normalised path equals the raw one and the realpath arm reaches
+    the second refusal with the same arrange."""
     foreign = "/home/other/.hermes-rowan"
     d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     all_cids=("theirs",), mounts={"theirs": foreign})
@@ -467,7 +477,7 @@ def test_a_resolver_failing_on_the_mounted_home_says_so_and_names_it(run, instan
     b.mkdir()
     (b / "python3").write_text(
         "#!/bin/sh\n"
-        'case "$*" in *"os.path.abspath("*)\n'
+        f'case "$*" in *"{call}"*)\n'
         f'  case "$*" in *"{foreign}"*) exit 1 ;; esac ;;\n'
         "esac\n"
         f'exec {sys.executable} "$@"\n'
@@ -477,4 +487,4 @@ def test_a_resolver_failing_on_the_mounted_home_says_so_and_names_it(run, instan
     run("register", "rowan", str(instance("rowan")))
     r = run("restart", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
     assert r.returncode != 0
-    assert f"could not normalise the home it mounts ({foreign})" in r.stderr
+    assert refusal.format(p=foreign) in r.stderr

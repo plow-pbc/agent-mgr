@@ -42,7 +42,9 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # and fails on one of those two strings to make exactly one of these helpers
 # fail while the other keeps working. That is what reaches the refusals PAST
 # load_agent -- with no python3 at all, load_agent's own refusal fires first
-# and the guards are never entered.
+# and the guards are never entered. For `abspath` that is not enough on its
+# own, since load_agent resolves through it too: a stub aimed at the container
+# guard has to key on the mounted path as well, or it stops two functions early.
 # A second caller of either call, in any file -- lib/resolve-guard and
 # agent-mgr run python3 too -- silently moves which invocation that test kills.
 #
