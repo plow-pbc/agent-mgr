@@ -603,10 +603,16 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     that happens to have Homebrew's flock would have passed too, which is its own
     reason not to depend on it.)
 
-    Not a portability proof -- a tripwire on forms this repo has MEASURABLY been
-    bitten by. The only real check is running the suite on a Mac; a denylist over
-    shell source cannot be complete, and each speculative entry bought a new
-    "your pattern misses spelling X" round without pinning anything real.
+    Two entries, and it stays two. Both are COMMAND NAMES, so a word boundary
+    is a complete match -- there is no second spelling to miss.
+
+    Everything else was tried and removed. `sed -i`, `declare -A`, the bash 3.2
+    empty-array guard: each names a form with many spellings, each took a review
+    round to find the one the pattern missed, and each would take another. A
+    denylist over shell source cannot decide "portable to bash 3.2 / BSD
+    userland" -- only an interpreter can. The real check is running this suite
+    under bash 3.2 or on a macOS runner (plow-pbc/agent-mgr#26); this is the
+    fast local signal for the two that already bit, not a substitute for it.
 
     Measured on macOS 26.5.2 (`so@mbp`, 2026-08-26) rather than assumed:
       /bin/bash          3.2.57  -- the 4.0+ syntax below is a hard failure
@@ -630,20 +636,6 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
         # yet, which a first restore needs, so bare `realpath "$p"` IS the #19
         # break. The lookbehind is what skips os.path.realpath( in a python3 -c.
         "realpath": r"(?<![\w.])realpath\b",
-        # /bin/bash is 3.2.57 on macOS 26.5, and every script here is #!/usr/bin/env bash.
-        # The -A class is spelled many ways -- -Ag, -gA, -Ar, typeset -A -- and
-        # all are equally 4-only, so match any flag cluster containing a capital
-        # A. Case-sensitive, so a plain indexed `-a` stays legal.
-        "bash 4+ only syntax": r"\b(declare|typeset|local)\s+-[A-Za-z]*A[A-Za-z]*\b"
-                               r"|\b(mapfile|readarray)\b"
-                               r"|\$\{[A-Za-z_0-9]+(,,?|\^\^?)",
-        # The one array this code documents as possibly-empty. common.sh guards
-        # it as ${AGENT_HOOK_ENV[@]+"${...[@]}"} because bash before 4.4 treats
-        # an empty array as unset under `set -u` -- that guard reads like
-        # removable ceremony, and deleting it passes here and kills restore and
-        # every guarded transition on the 12.3 floor. A blanket bare-[@] rule
-        # cannot do this job: other arrays here are legitimately never empty.
-        "AGENT_HOOK_ENV unguarded": r'(?<!\+)"\$\{AGENT_HOOK_ENV\[@\]\}"',
     }
     scripts = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
     for script in scripts:
