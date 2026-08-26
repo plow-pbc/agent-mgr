@@ -189,8 +189,13 @@ cannot resolve it from the dotenv the way it resolves everything else. So
 `load_agent` reads that one key from the same file:
 
 ```sh
-printf 'AGENT_TZ=America/Chicago\n' >> ~/.hermes-rowan/.env
+printf '\nAGENT_TZ=America/Chicago\n' >> ~/.hermes-rowan/.env
 ```
+
+The leading newline is not decoration. A dotenv the gateway or a person last
+wrote may not end in one, and a bare `>>` would then append onto the final line
+— turning `PLOW_CHAT_TOKEN=…` into `PLOW_CHAT_TOKEN=…AGENT_TZ=…` and taking the
+instance off its chat, not just off its clock. An extra blank line is skipped.
 
 Precedence is **dotenv > the repo's `agent.env` > convention**, and the dotenv is
 read after the home is known, so it cannot move its own home.

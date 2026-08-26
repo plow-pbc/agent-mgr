@@ -170,7 +170,14 @@ parse_env_file() {
     # this empty, and bash treats an empty array as unset under `set -u` until
     # 4.4 -- so on the 3.2 that macOS still ships, `restore` and every guarded
     # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
-    while IFS= read -r line; do
+    # `|| [ -n "$line" ]` so an unterminated final line is still seen. read
+    # returns non-zero at EOF even when it filled $line, and that was tolerable
+    # while this only parsed agent.env, which agent-mgr writes from its own
+    # template. It is not tolerable for an instance's own dotenv: that file is
+    # maintained by hand and by the gateway, so a last line with no newline is
+    # ordinary -- and dropping it silently is the exact class the report below
+    # exists to close.
+    while IFS= read -r line || [ -n "$line" ]; do
         case "$line" in \#*|'') continue ;; esac
         key="${line%%=*}"
         value="${line#*=}"
@@ -202,7 +209,11 @@ parse_env_file() {
             # fixed pattern matches every line -- reporting a malformed key that
             # was never written.
             if [ -n "$_k" ] && printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
-                echo "agent-mgr: $file: ignoring malformed '$key' -- write it as $_k=<value>: unindented, no 'export', no spaces around the =" >&2
+                if printf '%s' "$allow" | grep -Fqw -- "$_k"; then
+                    echo "agent-mgr: $file: ignoring malformed '$key' -- write it as $_k=<value>: unindented, no 'export', no spaces around the =" >&2
+                else
+                    echo "agent-mgr: $file: ignoring '$key' -- this file may set only: $allow; $_k belongs in the agent's agent.env" >&2
+                fi
             fi
             continue
         fi

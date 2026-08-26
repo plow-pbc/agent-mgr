@@ -380,3 +380,20 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
         f"so the container would run on the shared descriptor's clock"
     )
     assert "America/Los_Angeles" not in saw
+
+
+def test_an_unterminated_final_line_is_still_read(run, instance, tmp_path):
+    """The dotenv is maintained by hand and by the gateway, so a last line with
+    no trailing newline is ordinary. `read` returns non-zero at EOF even having
+    filled $line, so without the guard the zone silently falls back."""
+    run("register", "rowan", str(instance("rowan")))
+    h = tmp_path / "home" / ".hermes-rowan"
+    h.mkdir(parents=True, exist_ok=True)
+    (h / ".env").write_text("AGENT_TZ=America/Chicago")  # no trailing newline
+    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
+
+
+def test_an_unterminated_descriptor_line_is_still_read(run, instance):
+    """Same guard, the other file."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ=America/Chicago")))
+    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
