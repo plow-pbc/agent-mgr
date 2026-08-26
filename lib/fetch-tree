@@ -115,6 +115,30 @@ target="$home/$root/$dest"
 # which macOS does not ship, so it broke `restore`, `install-plugin` and
 # `add-skill` on the Mac this repo supports -- reintroducing, one merge later,
 # exactly the class #19 closed. `main` has never had one.
+
+# Prove the destination is still inside the home BEFORE anything destructive --
+# and before the mkdir, which would itself follow a planted link and create the
+# tree outside.
+#
+# $dest is already rejected by component, so it cannot traverse on its own. What
+# it cannot cover is a planted PARENT: `plugins` and `skills` live in the home,
+# which is bind-mounted at /opt/data, so a compromised gateway can replace one
+# with a symlink and redirect everything below. That matters more here than it
+# did before, because this seam DELETES: the plugin install it replaces only ever
+# ran mkdir -p and wrote files, so extending the rm -rf/mv path to the plugins
+# root is a real escalation rather than the same shape moved.
+#
+# One resolution rather than a check per component: realpath resolves the whole
+# existing prefix, so a link anywhere along it lands outside and is caught by the
+# single comparison. A destination that does not exist yet resolves to itself,
+# which is the ordinary first install.
+home_real="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$home")"
+target_real="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$target")"
+case "$target_real" in
+    "$home_real"/*) ;;
+    *) echo "refusing to install $tree_name: $target resolves to $target_real, outside ${home_real}. A parent directory in the home is a symlink -- the container can write there, and this install would rm -rf and rename through it on the host." >&2; exit 1 ;;
+esac
+
 mkdir -p "$(dirname "$target")"
 
 staging="$target.incoming"

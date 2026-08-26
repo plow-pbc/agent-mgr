@@ -593,52 +593,14 @@ def test_a_rollback_copy_is_promoted_before_the_next_run_can_fail(
 
 
 def test_no_host_side_script_depends_on_a_gnu_only_tool():
-    """This class has now cost the Mac twice, and the suite runs on Linux.
+    """No host-side script may depend on a tool absent from the macOS floor.
 
-    #19 was `realpath -m`, which does not exist on BSD/macOS and took 178 of 220
-    tests with it. One merge later this PR added `flock`, which is util-linux and
-    which macOS does not ship, breaking restore, install-plugin and add-skill on
-    the macOS 12.3 floor README commits to. Both landed green here, because
-    everything exists on Linux; both were found by an operator on a Mac. (A Mac
-    that happens to have Homebrew's flock would have passed too, which is its own
-    reason not to depend on it.)
-
-    Two entries, and it stays two. Both are COMMAND NAMES, so a word boundary
-    is a complete match -- there is no second spelling to miss.
-
-    Everything else was tried and removed from HERE. `sed -i` and `declare -A`
-    each name a form with many spellings, each took a review round to find the
-    one the pattern missed, and each would take another. The bash 3.2
-    empty-array guard left for the same reason but did not go away: it is
-    re-stated as a positive invariant in
-    test_the_possibly_empty_array_is_always_expansion_guarded, which is the
-    shape that works -- a denylist could not spell it; an invariant has
-    nothing to spell. A
-    denylist over shell source cannot decide "portable to bash 3.2 / BSD
-    userland" -- only an interpreter can. The real check is running this suite
-    under bash 3.2 or on a macOS runner (plow-pbc/agent-mgr#26); this is the
-    fast local signal for the two that already bit, not a substitute for it.
-
-    Measured on macOS 26.5.2 (`so@mbp`, 2026-08-26) rather than assumed:
-      flock     /opt/homebrew/bin/flock -- Homebrew only, not system, so a Mac
-                without it fails and one with it would have passed the break
-      /bin/bash 3.2.57 -- the floor is real and CURRENT, but nothing here
-                checks bash-version syntax; that is #26's job, not this test's
-
-    Checked and deliberately NOT added: bare `mktemp`, which a review flagged as
-    BSD-hostile. It exits 0 on 26.5, but that is a capability observed fourteen
-    majors above the floor and says nothing about Monterey, so the seven call
-    sites stay an open question on #26 rather than a cleared one. The obvious
-    remedy is also wrong: `mktemp -t name` exits 1 on GNU coreutils ("too few
-    X's"), so it would trade a hypothetical Mac break for a certain Linux one.
-
-    Deliberately absent: `sed -i` (never appears here, and a regex cannot
-    reliably span a sed script -- `;` and `|` inside the expression defeat any
-    character-class bridge), `stat -c` / `date -d` (neither command appears),
-    and `readlink -f`, which is what SETS the 12.3 floor -- that is the release
-    where readlink grew -f, and the entrypoint resolves itself through it before
-    anything else is sourced. Denying it would redden agent-mgr:8 on the very
-    platform this test defends.
+    This has broken twice -- #19's `realpath -m`, then a `flock` added and cut
+    within this PR -- and a Linux-only suite cannot see it. Two entries only:
+    both are command names, where a word boundary is a complete match. Anything
+    needing spelling enumeration belongs to #26, which runs the suite where the
+    constraint is real; `readlink -f` is excluded because it is what SETS the
+    12.3 floor and the entrypoint depends on it.
     """
     import re
     banned = {
@@ -663,31 +625,16 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
 
 
 def test_the_possibly_empty_array_is_always_expansion_guarded():
-    """`${AGENT_HOOK_ENV[@]}` must never appear without its `+` guard.
+    """`${AGENT_HOOK_ENV[@]}` must never be expanded without its `+` guard.
 
-    bash before 4.4 treats an empty array as unset under `set -u`, and macOS
-    ships 3.2 (measured: 3.2.57 on 26.5). This array is empty for any agent with
-    no extra descriptor keys, so the bare expansion killed `restore` and every
-    guarded transition with "AGENT_HOOK_ENV[@]: unbound variable" -- common.sh
-    records it. The safe spelling, ${AGENT_HOOK_ENV[@]+"${AGENT_HOOK_ENV[@]}"},
-    reads like removable ceremony, and simplifying it passes on Linux.
+    The array is empty for an agent with no extra descriptor keys, and bash
+    before 4.4 -- which macOS ships -- treats that as unset under `set -u`, so
+    the bare expansion kills `restore`. common.sh owns why; this pins that the
+    guard survives, since it reads like removable ceremony.
 
-    Stated as a POSITIVE invariant -- every mention of the array is guarded --
-    rather than as a pattern per bad spelling. That is the whole point: quoted,
-    unquoted, `env`-prefixed or not: the expansion has no spelling this can
-    miss, which is what the denylist above could not manage for this form.
-
-    What it enumerates, stated so the claim does not exceed the check: the
-    subscript (`[@]` / `[*]`) and the guard (`+` / `:+`), both normalised before
-    counting, and `${#...}` / `${!...}` references dropped as non-value forms.
-    The assertion is a per-line BALANCE, not a per-occurrence proof -- a bare
-    expansion offset by an extra guard mention on the same line would pass.
-
-    That list stops here. Six review rounds each found one more adjacent
-    spelling, which is the signal that a text check cannot prove a RUNTIME
-    property of bash 3.2. #26 -- running this suite under 3.2 or on a macOS
-    runner -- owns the invariant; this is the cheap local approximation of it,
-    and any further spelling found by inspection is a round #26 removes.
+    Subscript (`[@]`/`[*]`) and guard (`+`/`:+`) are normalised and `${#...}`
+    references dropped, so no spelling of the expansion escapes; the assertion
+    is a per-line balance rather than a per-occurrence proof. #26 owns the rest.
     """
     import re
     root_files = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
@@ -730,3 +677,26 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
                 f"{script.name}:{n} expands AGENT_HOOK_ENV[@] without the `+` "
                 "guard -- empty under `set -u` on the bash 3.2 macOS ships, so "
                 "this passes here and breaks restore on the operator's Mac")
+
+
+def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp_path):
+    """The publication seam must not rm -rf or rename outside the agent's home.
+
+    `plugins/` and `skills/` live in the home, which compose bind-mounts at
+    /opt/data, so a compromised gateway can replace one with a symlink. The
+    install then resolves through it and deletes host-side, as the operator --
+    and `--dest` being rejected by component does not cover a planted PARENT.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True, exist_ok=True)
+    outside = tmp_path / "home" / "not-the-agents"
+    outside.mkdir()
+    (outside / "keepme").write_text("must survive\n")
+    (home / "plugins").symlink_to("../not-the-agents")
+
+    r = run("restore", "rowan")
+    assert r.returncode != 0, "the install followed a planted parent symlink"
+    assert "outside" in r.stderr, f"refused, but not for this reason: {r.stderr}"
+    assert (outside / "keepme").read_text() == "must survive\n", \
+        "the install deleted or replaced a host directory outside the home"
