@@ -113,3 +113,8 @@ def test_a_numeric_looking_name_is_not_the_same_row_as_another(run, instance, tm
     assert run("resolve", "7").stdout.count("AGENT_DIR=") == 1
     assert "/7-repo" in run("resolve", "7").stdout
     assert "/007-repo" in run("resolve", "007").stdout
+
+    # And the rewrite side: a numeric compare would have unregister 7 drop 007,
+    # which is the same door register 7 would have silently deleted it through.
+    assert run("unregister", "7").returncode == 0
+    assert "007" in run("ls").stdout
