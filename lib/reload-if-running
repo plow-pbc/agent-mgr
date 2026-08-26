@@ -32,6 +32,9 @@ if ! running="$(compose ps --status running --quiet hermes)"; then
 fi
 # No running gateway is the normal case during first bring-up: nothing to do.
 [ -n "$running" ] || exit 0
+# Through compose_transition: a reload IS a transition, and this is the path
+# every write-then-reload subcommand takes. Routing it around the veto let four
+# of them restart the container mid-ingest.
 echo "restarting ${AGENT_NAME}'s gateway so it loads ${what}..."
-compose restart hermes \
+compose_transition restart hermes \
   || echo "${what} is written, but the gateway did not restart -- run 'agent-mgr restart ${AGENT_NAME}'." >&2

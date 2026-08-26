@@ -195,6 +195,30 @@ compose() {
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
 }
 
+# Compose subcommands that stop or replace the container. `start`, `pause` and
+# `unpause` are here because they interrupt a running process just as surely as
+# `down` does -- the earlier list omitted them, and the earlier classification
+# flattened "$*", which matched the word anywhere in a prompt or a filename.
+COMPOSE_TRANSITIONS="up down start stop restart kill rm create pause unpause"
+
+# Every route to a container transition goes through here, so the instance's
+# veto cannot be bypassed by adding a call site that forgets it.
+compose_transition() {
+    require_transition_allowed
+    compose "$@"
+}
+
+# The subcommand of a compose argv, or empty. The first word that IS one --
+# what precedes it is the project name, file flags and their values.
+compose_subcommand() {
+    local w
+    for w in "$@"; do
+        case " $COMPOSE_TRANSITIONS logs ps config exec version " in
+            *" $w "*) printf '%s\n' "$w"; return ;;
+        esac
+    done
+}
+
 # Refuse to act unless the resolved config is this agent's AND a gateway is up.
 #
 # The guard runs here rather than at each call site: sign-in and the reload paths

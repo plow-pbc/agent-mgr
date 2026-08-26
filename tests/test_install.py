@@ -1,3 +1,5 @@
+import os
+import pytest
 import stat
 from pathlib import Path
 
@@ -199,6 +201,13 @@ def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance,
     assert marker.exists(), "restore did not install the plugin"
 
 
+def _transition_env(tmp_path, log=None):
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan",
+                    name="rowan", log=log)
+    return {"PATH": f"{b}:{os.environ['PATH']}"}
+
+
 def _guarded(instance, run, tmp_path, *, refuses):
     """An instance whose pre-transition guard allows or refuses."""
     repo = instance("rowan", descriptor="AGENT_PRE_TRANSITION=scripts/guard.sh\n")
@@ -258,3 +267,43 @@ def test_an_agent_with_no_guard_transitions_freely(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     assert run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"}).returncode == 0
+
+
+@pytest.mark.parametrize("args", [
+    ["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
+    ["compose", "rowan", "up", "-d", "--force-recreate"],
+    ["compose", "rowan", "start"], ["compose", "rowan", "pause"],
+    ["compose", "rowan", "unpause"], ["compose", "rowan", "stop"],
+])
+def test_no_route_to_a_transition_bypasses_the_veto(run, instance, tmp_path, args):
+    """Every route goes through compose_transition, so a new call site cannot
+    forget the veto. start/pause/unpause interrupt a running process as surely
+    as down does, and the earlier list omitted all three."""
+    _guarded(instance, run, tmp_path, refuses=True)
+    r = run(*args, env=_transition_env(tmp_path))
+    assert r.returncode != 0, f"{args} transitioned past a refusing guard"
+    assert "refused" in r.stderr
+
+
+def test_a_reload_is_a_transition_too(run, instance, tmp_path):
+    """restore writes and then reloads. Routing the reload around the veto let
+    four write-then-reload subcommands restart the container mid-ingest."""
+    repo = _guarded(instance, run, tmp_path, refuses=False)
+    # Allow the restore's own pre-write veto, then refuse by the time it reloads.
+    (repo / "scripts" / "guard.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        f'n=$(cat {tmp_path}/count 2>/dev/null || echo 0); echo $((n+1)) > {tmp_path}/count\n'
+        '[ "$n" = 0 ] || { echo "a nightly started" >&2; exit 1; }\n')
+    (repo / "scripts" / "guard.sh").chmod(0o755)
+    r = run("restore", "rowan", env=_transition_env(tmp_path))
+    assert r.returncode != 0
+    assert "refused" in r.stderr
+
+
+def test_the_subcommand_is_classified_not_the_flattened_argv(run, instance, tmp_path):
+    """`up` can appear in a prompt, a filename or a flag value. Matching the
+    flattened "$*" made those look like transitions."""
+    _guarded(instance, run, tmp_path, refuses=True)
+    r = run("compose", "rowan", "exec", "hermes", "echo", "please up the volume",
+            env=_transition_env(tmp_path))
+    assert r.returncode == 0, r.stderr
