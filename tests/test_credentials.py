@@ -37,14 +37,14 @@ def test_activate_refuses_a_home_that_is_not_this_agents(run, instance):
     run("register", "rowan", str(instance("rowan", descriptor="AGENT_HOME=/etc\n")))
     r = run("activate", "rowan")
     assert r.returncode != 0
-    assert "refuses" in r.stderr
+    assert "refusing to write" in r.stderr
 
 
 def test_activate_refuses_a_siblings_conventional_home(run, instance):
     run("register", "rowan", str(instance("rowan", descriptor="AGENT_HOME=/tmp/.hermes-property\n")))
     r = run("activate", "rowan")
     assert r.returncode != 0
-    assert "refuses" in r.stderr
+    assert "refusing to write" in r.stderr
 
 
 def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instance, tmp_path):

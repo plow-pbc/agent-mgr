@@ -14,6 +14,24 @@ home="${1:?usage: fetch-skill <home> <repo> <ref> <dest> [srcpath]}"
 repo="${2:?}"; ref="${3:?}"; dest="${4:?}"; src="${5:-}"
 
 [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "the skill ref must be a 40-char SHA, got: $ref" >&2; exit 1; }
+
+# The destination is joined onto the agent's home and the result is rm -rf'd
+# during the swap below, so a traversing dest is a delete primitive: `--dest
+# ../../.ssh` normalises to $HOME/.ssh. Rejected by component, not by pattern --
+# a substring check on ".." also rejects a legitimate "..foo".
+case "$dest" in
+    /*) echo "the skill destination must be relative, got: $dest" >&2; exit 1 ;;
+esac
+IFS='/' read -ra _parts <<< "$dest"
+for _p in "${_parts[@]}"; do
+    case "$_p" in
+        .|..) echo "the skill destination may not traverse, got: $dest" >&2; exit 1 ;;
+    esac
+done
+case "$src" in
+    /*) echo "the skill source path must be relative, got: $src" >&2; exit 1 ;;
+    *../*|*/..) echo "the skill source path may not traverse, got: $src" >&2; exit 1 ;;
+esac
 skill_name="${dest##*/}"
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -52,7 +70,20 @@ cp -a "$src" "$staging"
 # Scripts are invoked directly by the agent; an unreadable 644 fails from inside
 # the container as "no such file", the least informative failure available.
 find "$staging" -type f \( -name '*.py' -o -name '*.sh' \) -exec chmod 755 {} +
-rm -rf "$target"
-mv "$staging" "$target"
+# Backup, publish, then drop the backup -- never a window with nothing
+# installed. The previous form removed the target and then moved the staging
+# tree in, so a SIGTERM or a failed mv between the two left the agent with no
+# skill at all, which is worse than the stale one it replaced.
+backup=""
+if [ -e "$target" ]; then
+    backup="$target.previous.$$"
+    mv "$target" "$backup"
+fi
+if ! mv "$staging" "$target"; then
+    [ -n "$backup" ] && mv "$backup" "$target"
+    echo "could not publish $skill_name; the previous copy is unchanged" >&2
+    exit 1
+fi
+[ -n "$backup" ] && rm -rf "$backup"
 printf 'installed %s at %s (%s file(s), from %s@%s)\n' \
     "$skill_name" "$target" "$(find "$target" -type f | wc -l | tr -d ' ')" "$repo" "${ref:0:7}"

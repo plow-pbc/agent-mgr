@@ -239,3 +239,26 @@ install_plow_plugin() {
     PLOW_CHAT_PLUGIN_REF="$ref" bash "$tmp" --data-dir "$AGENT_HOME"
     rm -f "$tmp"
 }
+
+# Refuse to write into a home that is not this agent's.
+#
+# The conventional home always carries the agent's own name, so it is always
+# allowed. A bare `.hermes` is the legacy shape and is allowed only when the
+# descriptor SAYS SO -- a copied descriptor that inherited a sibling's name
+# fails the first test, and one that fell back to the convention can never
+# produce a bare `.hermes` at all.
+#
+# Required before EVERY direct write, not just activate. resolve-guard proves
+# Compose agrees with the descriptor, which a copied descriptor naming a
+# sibling's home satisfies perfectly -- it is self-consistent and wrong. This is
+# the check that catches that, and restore, install-plugin and add-skill all
+# write into the home without going near Compose.
+require_own_home() {
+    case "$AGENT_HOME" in
+        *"/.hermes-$AGENT_NAME") return 0 ;;
+        */.hermes)
+            grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
+            die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
+    esac
+    die "refusing to write to $AGENT_HOME -- that is not ${AGENT_NAME}'s own home"
+}

@@ -52,6 +52,7 @@ case "$cmd" in
         ;;
     restore)
         load_agent "${1:-}"
+        require_own_home
         [ -f "$AGENT_CONFIG" ] || die "no config at $AGENT_CONFIG -- an instance repo needs one, or set AGENT_CONFIG in its agent.env"
         mkdir -p "$AGENT_HOME"
         umask 077
@@ -90,6 +91,7 @@ case "$cmd" in
         ;;
     install-plugin)
         load_agent "${1:-}"
+        require_own_home
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
         install_plow_plugin
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the plugin just installed"
@@ -122,13 +124,7 @@ case "$cmd" in
         # only when the descriptor SAYS SO -- a copied descriptor that inherited
         # a sibling's name fails the first test, and one that fell back to the
         # convention can never produce a bare `.hermes` at all.
-        case "$AGENT_HOME" in
-            *"/.hermes-$AGENT_NAME") ;;
-            */.hermes)
-                grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" \
-                    || die "activate refuses to target $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
-            *) die "activate refuses to target $AGENT_HOME -- that is not ${AGENT_NAME}'s own home" ;;
-        esac
+        require_own_home
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
         ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
         [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
@@ -169,6 +165,7 @@ case "$cmd" in
                 *) die "unknown option: $1" ;;
             esac
         done
+        require_own_home
         [ -n "$skill_ref" ] || skill_ref="$(gh api "repos/$skill_repo/commits/HEAD" --jq .sha)"
         [[ "$skill_ref" =~ ^[0-9a-f]{40}$ ]] || die "the skill ref must be a 40-char SHA, got: $skill_ref"
         : "${skill_dest:=${skill_repo##*/}}"

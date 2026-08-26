@@ -108,3 +108,42 @@ def test_the_guard_refuses_cleanly_when_compose_cannot_produce_a_config(run, ins
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
     assert "Traceback" not in r.stderr
+
+
+def _sibling_home(instance, run, name, tmp_path):
+    """A descriptor copied from a sibling: self-consistent, and wrong."""
+    repo = instance(name, descriptor=f"AGENT_HOME={tmp_path}/home/.hermes-rowan\n")
+    run("register", name, str(repo))
+    return repo
+
+
+def test_restore_will_not_write_into_a_siblings_home(run, instance, tmp_path):
+    """resolve-guard proves Compose agrees with the descriptor, which a copied
+    descriptor naming a sibling's home satisfies perfectly. restore never goes
+    near Compose, so only the ownership check catches it."""
+    _sibling_home(instance, run, "property", tmp_path)
+    r = run("restore", "property")
+    assert r.returncode != 0
+    assert "not property's own home" in r.stderr
+
+
+def test_install_plugin_will_not_write_into_a_siblings_home(run, instance, tmp_path):
+    _sibling_home(instance, run, "property", tmp_path)
+    r = run("install-plugin", "property")
+    assert r.returncode != 0
+    assert "refusing to write" in r.stderr
+
+
+def test_add_skill_will_not_write_into_a_siblings_home(run, instance, tmp_path):
+    _sibling_home(instance, run, "property", tmp_path)
+    r = run("add-skill", "property", "plow-pbc/x", "--ref", "a" * 40, "--dest", "s")
+    assert r.returncode != 0
+    assert "refusing to write" in r.stderr
+
+
+def test_the_legacy_bare_home_is_still_allowed_when_declared(run, instance, tmp_path):
+    """The rentals agent predates the convention; an explicit declaration is
+    deliberate, and the convention can never produce a bare .hermes."""
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    r = run("restore", "str")
+    assert r.returncode == 0, r.stderr

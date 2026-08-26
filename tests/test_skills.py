@@ -194,3 +194,53 @@ def test_a_subpath_install_takes_only_that_subtree(run, instance, tmp_path):
     assert r.returncode == 0, r.stderr
     d = tmp_path / "home" / ".hermes-rowan" / "skills" / "plow-connectors"
     assert (d / "SKILL.md").exists() and (d / "plow_connector.py").exists()
+
+
+def test_a_traversing_destination_is_refused(run, instance, tmp_path):
+    """The dest is joined onto the agent's home and the result is rm -rf'd during
+    the swap, so `--dest ../../.ssh` is a delete primitive pointed at $HOME."""
+    ssh = tmp_path / "home" / ".ssh"
+    ssh.mkdir(parents=True)
+    (ssh / "authorized_keys").write_text("ssh-ed25519 AAAA operator\n")
+    run("register", "rowan", str(instance("rowan")))
+    r = run("add-skill", "rowan", "plow-pbc/x", "--ref", "a" * 40,
+            "--dest", "../../.ssh", env=_fake_bin(tmp_path, agent="rowan"))
+    assert r.returncode != 0
+    assert "may not traverse" in r.stderr
+    assert (ssh / "authorized_keys").exists(), "the operator's keys were deleted"
+
+
+def test_an_absolute_destination_is_refused(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    r = run("add-skill", "rowan", "plow-pbc/x", "--ref", "a" * 40,
+            "--dest", "/etc/cron.d", env=_fake_bin(tmp_path, agent="rowan"))
+    assert r.returncode != 0
+    assert "must be relative" in r.stderr
+
+
+def test_a_dotted_name_is_not_mistaken_for_traversal(run, instance, tmp_path):
+    """Rejected by component, not by substring: `..foo` is a legitimate name."""
+    run("register", "rowan", str(instance("rowan")))
+    r = run("add-skill", "rowan", "plow-pbc/x", "--ref", "a" * 40, "--dest", "..foo",
+            env=_fake_bin(tmp_path, skill_name="..foo", agent="rowan"))
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_failed_publish_leaves_the_previous_skill_installed(run, instance, tmp_path):
+    """Deleting the target before publishing meant a SIGTERM between the two left
+    the agent with no skill at all -- worse than the stale one it replaced."""
+    run("register", "rowan", str(instance("rowan")))
+    env = _fake_bin(tmp_path, skill_name="s", agent="rowan")
+    run("add-skill", "rowan", "plow-pbc/x", "--ref", "a" * 40, "--dest", "s", env=env)
+    d = tmp_path / "home" / ".hermes-rowan" / "skills" / "s"
+    assert (d / "SKILL.md").exists()
+    # Make the publish fail: a directory in the way that mv cannot replace.
+    (d / "SKILL.md").write_text("---\nname: s\n---\nthe good copy\n")
+    import os
+    os.chmod(d.parent, 0o555)
+    try:
+        r = run("add-skill", "rowan", "plow-pbc/x", "--ref", "b" * 40, "--dest", "s", env=env)
+        assert r.returncode != 0
+    finally:
+        os.chmod(d.parent, 0o755)
+    assert (d / "SKILL.md").read_text().endswith("the good copy\n"), "the previous copy was lost"
