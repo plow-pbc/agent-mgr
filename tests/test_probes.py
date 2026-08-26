@@ -232,13 +232,10 @@ def test_no_doc_hardcodes_the_conventional_dotenv_path():
     into four operator-facing files before anyone noticed, twice. A doc that
     hardcodes the conventional path sends that operator to a file nothing reads.
 
-    Reads the rule off lib/common.sh rather than restating it, so the probe
-    cannot drift from the code the way the docs did.
+    No source-string assertion guarding it: if the read ever moves,
+    test_the_dotenv_follows_a_declared_home fails on behaviour, which is the
+    stronger signal and the one that cannot be satisfied by a matching string.
     """
-    common = (ROOT / "lib" / "common.sh").read_text()
-    assert 'parse_env_file "$AGENT_HOME/.env"' in common, (
-        "the dotenv read moved; this probe is pinned to the wrong expression"
-    )
     offenders = []
     for rel in ("README.md", "docs/HOWTO.md", "templates/agent.env",
                 "templates/compose.yml"):
