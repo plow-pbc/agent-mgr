@@ -16,6 +16,12 @@ ln -sf ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
 `~/.local/bin` must be on your `PATH`. If the clone has no `agent-mgr` script at
 its root, the CLI has not landed on `main` yet.
 
+It runs on the Linux host the fleet lives on and on a Mac, where the floor is
+**macOS 12.3** — the release whose `readlink` grew `-f`, which the entrypoint
+uses to resolve itself through the symlink above before anything else is
+sourced. Everything after that point is portable, and `python3` and `docker`
+have to be on `PATH`.
+
 ```sh
 agent-mgr new rowan          # scaffold the agent's repo, both platforms wired
 agent-mgr restore rowan      # the whole deploy: config, plugin, restore hook

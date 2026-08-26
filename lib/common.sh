@@ -429,7 +429,15 @@ require_running_container_is_ours() {
     # deliberately supports -- so picking one and trusting it identified an
     # arbitrary member of the set and ignored the rest. Any foreign mount
     # refuses; this agent's own one-offs mount its own home and pass.
-    local cid
+    # Resolved ONCE, above the loop, and into a local -- both deliberate. A bare
+    # assignment carries the substitution's status, so under `set -e` a
+    # canonical_path that cannot run stops the command here. Inline in the `if`
+    # below it could not: `set -e` is suspended inside a condition, so a failed
+    # call on both sides compared "" to "", matched, and `continue`d past the
+    # refusal for a container mounting a FOREIGN home. The twin in
+    # require_own_home fails closed on the same input; this one inverted.
+    local cid self
+    self="$(canonical_path "$AGENT_HOME")"
     for cid in $cids; do
     mounted="$(docker inspect --format \
         '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
@@ -439,9 +447,9 @@ require_running_container_is_ours() {
     # spellings again -- one of them from a source we do not control.
     [ -z "$mounted" ] || mounted="$(normalized_path "$mounted")"
     # Same-directory question, so resolved on both sides like the collision loop.
-    if [ -n "$mounted" ] \
-        && [ "$(canonical_path "$mounted")" = "$(canonical_path "$AGENT_HOME")" ]; then
-        continue
+    if [ -n "$mounted" ]; then
+        local m; m="$(canonical_path "$mounted")"
+        [ "$m" = "$self" ] && continue
     fi
     # No removal command here, deliberately, and no branch that could produce
     # one. The obvious discriminator -- does the foreign home exist? -- is
@@ -581,7 +589,11 @@ require_own_home() {
     # the rentals agent's repo would stop `str` resolving, and a copycat
     # declaring the same bare `.hermes` would then pass and write config and
     # credentials into a live agent's mounted home.
-    local other odir ohome skipped=0 skipped_named=
+    # Invariant across the loop -- the sibling load_agent below runs in a
+    # subshell, so it cannot move this one -- and resolving it per row cost an
+    # interpreter start per registry row.
+    local other odir ohome skipped=0 skipped_named= self
+    self="$(canonical_path "$AGENT_HOME")"
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
         # `|| true` is load-bearing under set -e: a bare assignment carries the
@@ -616,7 +628,7 @@ require_own_home() {
         # match neither accepted shape. This one asks "is it the same
         # directory", and two spellings reaching one directory through a symlink
         # is exactly the aliasing this loop exists to catch.
-        [ "$(canonical_path "$ohome")" = "$(canonical_path "$AGENT_HOME")" ] \
+        [ "$(canonical_path "$ohome")" = "$self" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
