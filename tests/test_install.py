@@ -606,9 +606,14 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     Two entries, and it stays two. Both are COMMAND NAMES, so a word boundary
     is a complete match -- there is no second spelling to miss.
 
-    Everything else was tried and removed. `sed -i`, `declare -A`, the bash 3.2
-    empty-array guard: each names a form with many spellings, each took a review
-    round to find the one the pattern missed, and each would take another. A
+    Everything else was tried and removed from HERE. `sed -i` and `declare -A`
+    each name a form with many spellings, each took a review round to find the
+    one the pattern missed, and each would take another. The bash 3.2
+    empty-array guard left for the same reason but did not go away: it is
+    re-stated as a positive invariant in
+    test_the_possibly_empty_array_is_always_expansion_guarded, which is the
+    shape that works -- a denylist could not spell it; an invariant has
+    nothing to spell. A
     denylist over shell source cannot decide "portable to bash 3.2 / BSD
     userland" -- only an interpreter can. The real check is running this suite
     under bash 3.2 or on a macOS runner (plow-pbc/agent-mgr#26); this is the
