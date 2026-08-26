@@ -78,11 +78,6 @@ def _docker_the_suite_owns(path):
     return bool(found) and pathlib.Path(found).is_relative_to(SUITE_TMP)
 
 
-def spawn(argv, env, **kw):
-    """Convenience wrapper: the suite's usual capture_output/text defaults."""
-    return subprocess.run(argv, capture_output=True, text=True, env=env, **kw)
-
-
 @pytest.fixture(scope="session", autouse=True)
 def _no_real_docker_on_path(tmp_path_factory):
     """Take the real `docker` off PATH for the whole suite.
@@ -119,16 +114,13 @@ def _no_real_docker_on_path(tmp_path_factory):
     # subprocess.run the `run` fixture never saw.
     #
     # Popen rather than run: run, call, check_call and check_output all funnel
-    # through it, so one wrapper covers every entry point -- including a module
-    # that bound `from subprocess import run` at import time, which collection
-    # has already done by the time this fixture is set up.
+    # through it, so one wrapper covers every entry point for the same money.
     real_popen = subprocess.Popen
 
     def guarded_popen(*a, **kw):
         env = kw.get("env")
-        # `is not None`, not `and "PATH" in env`: an explicit env WITHOUT a PATH
-        # is a violation too, not an exemption -- it resolves no docker at all,
-        # and a test meaning to inherit the shadow should say os.environ.
+        # Any explicit env, not just one carrying a PATH: an env without one
+        # resolves no docker at all, which is not an exemption either.
         if env is not None and not _ALLOW_REAL_DOCKER:
             assert _docker_the_suite_owns(env.get("PATH", "")), (
                 f"this env resolves docker to "
@@ -185,7 +177,8 @@ def run(registry, tmp_path):
         e["PATH"] = f"{b}:{e['PATH']}"
         if env:
             e.update(env)
-        return spawn([str(ROOT / "agent-mgr"), *args], e, check=check)
+        return subprocess.run([str(ROOT / "agent-mgr"), *args],
+                              capture_output=True, text=True, env=e, check=check)
 
     return _run
 
