@@ -155,16 +155,15 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 # own dotenv. A second parser is what this file already paid for once: the
 # peer parser in require_own_home stripped only double quotes, so a sibling
 # declaring its home with single quotes compared unequal and the collision
-# it existed to catch went undetected. Quote stripping, $HOME expansion, the
-# identifier check and the allowlist all have to agree between the two files
-# or the second is a different dialect.
+# it existed to catch went undetected. The grammar above is measured against
+# compose-go; a second copy of it would drift from that measurement.
 #
 # $2 is the allowlist of keys that reach THIS process. $3 = "hooks" collects
 # everything else into AGENT_HOOK_ENV; the dotenv passes nothing, so a key
 # it may not set is dropped rather than smuggled through to the hooks.
 parse_env_file() {
     local file="$1" allow="$2" collect="${3:-}"
-    local line key value _k _ok
+    local line key value _rest
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
     # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
     # this empty, and bash treats an empty array as unset under `set -u` until
@@ -172,55 +171,91 @@ parse_env_file() {
     # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
     # `|| [ -n "$line" ]` so an unterminated final line is still seen. read
     # returns non-zero at EOF even when it filled $line, and that was tolerable
-    # while this only parsed agent.env, which agent-mgr writes from its own
-    # template. It is not tolerable for an instance's own dotenv: that file is
-    # maintained by hand and by the gateway, so a last line with no newline is
-    # ordinary -- and dropping it silently is the exact class the report below
-    # exists to close.
+    # while this parsed only agent.env, which agent-mgr writes from its own
+    # template. It is not for an instance's own dotenv: that file is maintained
+    # by hand and by the gateway, so a last line with no newline is ordinary.
     while IFS= read -r line || [ -n "$line" ]; do
+        # Normalized the way compose-go's dotenv parser normalizes, because
+        # Compose reads this SAME file through --env-file (see compose()) and
+        # the two disagreeing about one file is the failure to avoid. Measured
+        # against a real `docker compose --env-file`: leading whitespace, an
+        # `export ` prefix, and space around the `=` are all accepted there and
+        # read as the bare key. Refusing them here would make agent-mgr fail on
+        # a descriptor Compose reads without complaint -- and via
+        # require_own_home's fail-closed arm, fail every OTHER agent's
+        # direct-write commands too.
+        line="${line#"${line%%[![:space:]]*}"}"
         case "$line" in \#*|'') continue ;; esac
+        case "$line" in
+            export[[:space:]]*)
+                line="${line#export}"
+                line="${line#"${line%%[![:space:]]*}"}" ;;
+        esac
+
+        case "$line" in
+            *=*) ;;
+            # Not a declaration at all. Skipped, and parsing continues -- this
+            # parser's existing contract, whose concern is that such a line is
+            # never EXECUTED rather than that it is fatal.
+            *) continue ;;
+        esac
         key="${line%%=*}"
         value="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
 
-        # One rejection path, so every near-miss of a key this tool owns is
-        # reported rather than only the spellings that happen to reach here.
+        # What remains after normalization must be a real identifier. This is
+        # where the execution hole was: a malformed key matched the allowlist as
+        # a PATTERN and reached `printf -v`, where an array subscript is
+        # evaluated arithmetically and arithmetic performs command substitution.
+        # Compose errors on these too, so refusing is the agreeing behaviour.
+        case "$key" in
+            ''|*[!A-Za-z0-9_]*) die "$file: malformed key: $key" ;;
+        esac
+
+        # The value grammar, ported from compose-go in one pass rather than a
+        # rule per review round -- measured against a real `docker compose
+        # --env-file`, because Compose reads this same file and the two
+        # disagreeing about it is the whole failure mode:
         #
-        # A declaration is `IDENTIFIER=`, unindented, no `export`. Compose reads
-        # this same file through --env-file with a parser that rejects all three
-        # deviations too, so tolerating any of them would make agent-mgr and
-        # Compose disagree about one file -- a worse failure than refusing it.
+        #   VAL # c        -> VAL          (inline comment starts at SPACE-hash)
+        #   VAL# c         -> VAL# c       (no space: not a comment)
+        #   a#b            -> a#b          (ditto)
+        #   "VAL # c"      -> VAL # c      (quotes protect it)
+        #   'VAL # c'      -> VAL # c
+        #   "VAL" trailing -> VAL          (anything after the closing quote is dropped)
+        #   VAL␠␠          -> VAL          (unquoted trailing space trimmed)
+        #   "VAL␠␠"        -> VAL␠␠        (quoted trailing space kept)
         #
-        # Silence is right for a key this tool does not own and wrong for one it
-        # does: `AGENT_TZ = x`, `  AGENT_TZ=x` and `export AGENT_TZ=x` would all
-        # vanish, and the value would fall back to its default, which looks
-        # exactly like a line never written.
-        _ok=1
-        case "$line" in [A-Za-z_]*=*) ;; *) _ok=0 ;; esac
-        case "$key" in *[!A-Za-z0-9_]*) _ok=0 ;; esac
-        if [ "$_ok" = 0 ]; then
-            # Strip on ANY following whitespace, before the collapse: `#export `
-            # matches one literal space, so `export<TAB>AGENT_TZ` would survive
-            # as `exportAGENT_TZ` and never match -- the silent drop this exists
-            # to stop, in the one spelling nobody thinks to write by hand.
-            _k="${key#"${key%%[![:space:]]*}"}"
-            case "$_k" in export[[:space:]]*) _k="${_k#export}" ;; esac
-            _k="${_k//[[:space:]]/}"
-            # A blank or whitespace-only line collapses to "", and an empty
-            # fixed pattern matches every line -- reporting a malformed key that
-            # was never written.
-            if [ -n "$_k" ] && printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
-                if printf '%s' "$allow" | grep -Fqw -- "$_k"; then
-                    echo "agent-mgr: $file: ignoring malformed '$key' -- write it as $_k=<value>: unindented, no 'export', no spaces around the =" >&2
-                else
-                    echo "agent-mgr: $file: ignoring '$key' -- this file may set only: $allow; $_k belongs in the agent's agent.env" >&2
-                fi
-            fi
-            continue
-        fi
-        # One layer of surrounding quotes, the way a dotenv file is usually written.
+        # An unterminated quote is refused, because Compose refuses it -- and
+        # accepting what Compose rejects is the dangerous direction: the
+        # descriptor would resolve here and break the deploy that reads it.
+        #
+        # Single-quote literalness ('a\nb' stays literal) already agrees; that
+        # was measured, not assumed.
+        #
+        # ONE rule is deliberately not ported: escape processing inside DOUBLE
+        # quotes ("a\nb" -> a<newline>b). It is the only divergence left and the
+        # only inert one -- every AGENT_* value is a zone, a path or an image
+        # digest, so a value needing an escape is not one this parser has a use
+        # for. Recorded rather than discovered, so a future need starts from
+        # fact.
         case "$value" in
-            \"*\") value="${value#\"}"; value="${value%\"}" ;;
-            "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
+            \"*)
+                _rest="${value#\"}"
+                case "$_rest" in
+                    *\"*) value="${_rest%%\"*}" ;;
+                    *) die "$file: unterminated quote in value for $key" ;;
+                esac ;;
+            "'"*)
+                _rest="${value#\'}"
+                case "$_rest" in
+                    *"'"*) value="${_rest%%\'*}" ;;
+                    *) die "$file: unterminated quote in value for $key" ;;
+                esac ;;
+            *)
+                case "$value" in *" #"*) value="${value%%" #"*}" ;; esac
+                value="${value%"${value##*[![:space:]]}"}" ;;
         esac
         value="${value//\$\{HOME\}/$HOME}"
         value="${value//\$HOME/$HOME}"
@@ -313,8 +348,8 @@ load_agent() {
 
     # The instance's own dotenv -- the file the operator already keeps per
     # person, mounted at /opt/data, holding its Plow token and Latch credential.
-    # Read here: AFTER the home is known, BEFORE the default below, so
-    # precedence is  this file > the shared descriptor > convention.
+    # Read AFTER the home is known and BEFORE the default below, so precedence
+    # is  this file > the shared descriptor > convention.
     #
     # This is what lets ONE repo serve several people, and it is deliberately
     # almost nothing. config.yaml interpolates ${VAR} from this same dotenv at
@@ -324,12 +359,10 @@ load_agent() {
     # sees it and cannot resolve it from the file the way it resolves the rest.
     #
     # AGENT_TZ alone, and that matters -- this file holds credentials. One
-    # non-secret value is taken into agent-mgr's process; TZ still reaches the
-    # container through `environment:`, so nothing from here goes to Compose and
-    # the no-credential-through-compose contract is untouched. Identity is
-    # already derived above, so a dotenv cannot move its own home even by
-    # accident, and `hooks` is not passed, so an unowned key is dropped rather
-    # than forwarded.
+    # non-secret value enters agent-mgr's process; TZ still reaches the container
+    # through `environment:`, so nothing here goes to Compose and the
+    # no-credential-through-compose contract is untouched. Identity is derived
+    # above, so a dotenv cannot move its own home.
     if [ -f "$AGENT_HOME/.env" ]; then
         parse_env_file "$AGENT_HOME/.env" AGENT_TZ
     fi

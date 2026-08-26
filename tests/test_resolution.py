@@ -3,7 +3,6 @@ import pathlib
 import pytest
 
 from conftest import fake_docker
-
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
@@ -216,70 +215,119 @@ def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_mark
     assert not injection_marker.exists(), (
         "a descriptor key executed host code -- the parser is a shell again"
     )
-    assert r.returncode == 0, r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    # Refused rather than skipped: the key is malformed, and a malformed
+    # declaration is a repository error.
+    assert r.returncode != 0
+    assert "malformed" in r.stderr
 
 
-def test_only_a_declared_key_reaches_the_assignment(run, instance):
-    """`grep -w` matches a word-bounded SUBSTRING of the space-joined allowlist,
-    so a multi-token key is an exact match: `AGENT_TZ AGENT_IMAGE` is inside
-    AGENT_KEYS. It reached `printf -v`, which rejects the name, and under set -e
-    that killed load_agent -- every subcommand for the agent died on a raw bash
-    error instead of the documented path.
-    """
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ AGENT_IMAGE=x\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, f"the CLI died on a malformed key: {r.stderr}"
-    assert "not a valid identifier" not in r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
-    assert "AGENT_IMAGE=nousresearch/hermes-agent@sha256:" in r.stdout
-
-
-def test_a_malformed_spelling_of_an_owned_key_is_reported(run, instance):
-    """`AGENT_TZ = x` is the common hand-written form and is not valid dotenv.
-
-    Refusing it is right -- Compose reads the same file through --env-file with
-    a parser that rejects it too. Refusing it *silently* is not: the value falls
-    back to the default and looks exactly like a line never written.
-    """
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ = America/Chicago\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "malformed" in r.stderr and "AGENT_TZ" in r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
-
-
-def test_an_unowned_malformed_key_stays_quiet(run, instance):
-    """This tool does not own STR_VAULT, so it has no standing to comment on
-    how that repo spells it."""
-    run("register", "rowan", str(instance("rowan", descriptor="STR VAULT=x\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert r.stderr.strip() == ""
-
-
-@pytest.mark.parametrize("spelling", [
-    "AGENT_TZ = America/Chicago",   # spaces around =
-    "  AGENT_TZ=America/Chicago",   # indented
-    "export AGENT_TZ=America/Chicago",  # shell-style export
-    "export\tAGENT_TZ=America/Chicago",  # export + tab, not one space
-    "\tAGENT_TZ=America/Chicago",        # tab-indented
+@pytest.mark.parametrize("line", [
+    "STR VAULT=x",             # a key this tool does not own, with a space in it
+    "AGENT_TZ AGENT_IMAGE=x",  # multi-token: matched the allowlist as a substring
 ])
-def test_every_near_miss_of_an_owned_key_is_reported(run, instance, spelling):
-    """Three ways to almost-declare a key this tool owns, all invalid dotenv.
+def test_a_malformed_declaration_is_refused(run, instance, line):
+    """Refused, not classified.
 
-    Compose's --env-file rejects all three too, so accepting any would make the
-    two disagree about one file. Dropping them silently is the failure: the
-    value falls back to its default and looks like a line never written.
+    Every one of these is invalid dotenv, and Compose rejects the same lines
+    through --env-file -- so tolerating any would let agent-mgr and Compose
+    disagree about one file. Dying is also the only behaviour that cannot go
+    wrong quietly; the alternative was a second partial grammar here, sorting
+    near-misses of an owned key from malformed unowned lines, to write a better
+    message for a line nobody should have written.
     """
-    run("register", "rowan", str(instance("rowan", descriptor=f"{spelling}\n")))
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode != 0, f"accepted a malformed declaration: {line!r}"
+    assert "malformed key" in r.stderr
+
+
+@pytest.mark.parametrize("line", [
+    "# AGENT_TZ=America/Chicago is the default",
+    "  # AGENT_TZ=America/Chicago is the default",   # indented, and carries an =
+    "\t# commented out: AGENT_IMAGE=pinned",
+    "   ",
+])
+def test_comments_and_blanks_are_skipped_however_indented(run, instance, line):
+    """A commented-out setting usually carries an `=`, and a comment indented
+    inside a block is ordinary -- Compose skips both. Refusing one as a
+    malformed key would make a descriptor agent-mgr's own template could contain
+    unreadable."""
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\nAGENT_TZ=UTC\n")))
     r = run("resolve", "rowan")
     assert r.returncode == 0, r.stderr
-    assert "malformed" in r.stderr and "AGENT_TZ" in r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    assert "AGENT_TZ=UTC" in r.stdout
 
 
-# --- per-instance timezone, from the instance's own dotenv ------------------
+def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instance, tmp_path):
+    """The amplification, pinned so the trade-off is deliberate rather than
+    discovered.
+
+    `require_own_home` is fail-closed by design: it refuses when it cannot prove
+    no sibling claims this home, and a descriptor it cannot parse is exactly
+    that case. Refusing a malformed key therefore reaches past the repo that
+    contains it -- a stray space in agent B blocks direct-write commands on
+    agent A.
+
+    Kept rather than softened: the alternative is guessing a home out of a
+    descriptor that could not be read, which is the fail-open this guard exists
+    to prevent. The refusal names the sibling, the reason and the remedy, which
+    is what makes it survivable.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "broken", str(instance("broken", descriptor="AGENT_TZ AGENT_IMAGE=x\n")))
+    r = run("restore", "rowan")
+    assert r.returncode != 0
+    assert "could not resolve broken" in r.stderr
+    assert "malformed key" in r.stderr
+    assert "unregister broken" in r.stderr, "the refusal must name the way out"
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("AGENT_TZ = America/Chicago", "America/Chicago"),        # spaces around =
+    ("  AGENT_TZ=America/Chicago", "America/Chicago"),        # indented
+    ("\tAGENT_TZ=America/Chicago", "America/Chicago"),        # tab-indented
+    ("export AGENT_TZ=America/Chicago", "America/Chicago"),   # shell-style export
+    ("export\tAGENT_TZ=America/Chicago", "America/Chicago"),  # export + tab
+    ("AGENT_TZ=America/Chicago   ", "America/Chicago"),       # trailing space: trimmed
+    ("AGENT_TZ =  America/Chicago  ", "America/Chicago"),     # both sides
+    ('AGENT_TZ="America/Chicago  "', "America/Chicago  "),    # quoted: spaces KEPT
+    ("AGENT_TZ=America/Chicago # the default", "America/Chicago"),   # inline comment
+    ("AGENT_TZ=America/Chicago# no space", "America/Chicago# no space"),  # not a comment
+    ('AGENT_TZ="America/Chicago # kept"', "America/Chicago # kept"),      # quotes protect
+    ("AGENT_TZ='America/Chicago # kept'", "America/Chicago # kept"),
+    ('AGENT_TZ="America/Chicago" trailing', "America/Chicago"),  # dropped after close quote
+])
+def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line, expected):
+    """Parity with compose-go, measured rather than assumed.
+
+    Compose reads this same file through --env-file, and a real
+    `docker compose --env-file` accepts all five of these and reads them as the
+    bare key. Refusing them here would make agent-mgr fail on a descriptor
+    Compose reads without complaint -- and through require_own_home's
+    fail-closed arm, fail every OTHER registered agent's direct-write commands
+    over one repo's indentation.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    # Exact line, not a substring: a substring check cannot tell a normalized
+    # value from one carrying trailing whitespace, which is the half that was
+    # unpinned when this test was written.
+    assert f"AGENT_TZ={expected}\n" in r.stdout
+
+
+@pytest.mark.parametrize("line", [
+    'AGENT_TZ="America/Chicago',
+    "AGENT_TZ='America/Chicago",
+    'AGENT_TZ="America/Chicago\'',
+])
+def test_an_unterminated_quote_is_refused(run, instance, line):
+    """Compose refuses these, so accepting them is the dangerous direction:
+    the descriptor would resolve here and break the deploy that reads it."""
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode != 0, f"accepted an unterminated quote: {line!r}"
+    assert "unterminated quote" in r.stderr
 
 
 def _home_env(tmp_path, name, text):
@@ -288,28 +336,6 @@ def _home_env(tmp_path, name, text):
     h.mkdir(parents=True, exist_ok=True)
     (h / ".env").write_text(text)
     return h / ".env"
-
-
-def test_no_dotenv_changes_nothing(run, instance, tmp_path):
-    run("register", "rowan", str(instance("rowan")))
-    before = run("resolve", "rowan").stdout
-    _home_env(tmp_path, "someone-else", "AGENT_TZ=America/Chicago\n")
-    assert run("resolve", "rowan").stdout == before
-
-
-def test_the_dotenv_sets_this_instances_zone(run, instance, tmp_path):
-    run("register", "rowan", str(instance("rowan")))
-    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
-    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
-
-
-def test_the_dotenv_beats_the_shared_descriptor(run, instance, tmp_path):
-    """The whole point: one repo, several people, different clocks."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ=America/Los_Angeles\n")))
-    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
-    out = run("resolve", "rowan").stdout
-    assert "AGENT_TZ=America/Chicago" in out
-    assert "America/Los_Angeles" not in out
 
 
 def test_two_instances_of_one_repo_take_their_own_zones(run, instance, tmp_path):
@@ -344,7 +370,21 @@ def test_the_dotenv_is_read_never_executed(run, instance, tmp_path, injection_ma
     _home_env(tmp_path, "rowan", f"AGENT_T[$(touch {injection_marker})Z]=1\n")
     r = run("resolve", "rowan")
     assert not injection_marker.exists()
-    assert r.returncode == 0, r.stderr
+    # Refused, like the descriptor: a malformed key is a malformed key whichever
+    # file it is in, and the dotenv goes through the same parser.
+    assert r.returncode != 0
+    assert "malformed key" in r.stderr
+
+
+def test_an_unterminated_final_line_is_still_read(run, instance, tmp_path):
+    """The dotenv is maintained by hand and by the gateway, so a last line with
+    no trailing newline is ordinary. `read` returns non-zero at EOF even having
+    filled $line, so without the guard the zone silently falls back."""
+    run("register", "rowan", str(instance("rowan")))
+    h = tmp_path / "home" / ".hermes-rowan"
+    h.mkdir(parents=True, exist_ok=True)
+    (h / ".env").write_text("AGENT_TZ=America/Chicago")  # no trailing newline
+    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
 
 
 def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
@@ -382,43 +422,3 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
     assert "America/Los_Angeles" not in saw
 
 
-def test_an_unterminated_final_line_is_still_read(run, instance, tmp_path):
-    """The dotenv is maintained by hand and by the gateway, so a last line with
-    no trailing newline is ordinary. `read` returns non-zero at EOF even having
-    filled $line, so without the guard the zone silently falls back."""
-    run("register", "rowan", str(instance("rowan")))
-    h = tmp_path / "home" / ".hermes-rowan"
-    h.mkdir(parents=True, exist_ok=True)
-    (h / ".env").write_text("AGENT_TZ=America/Chicago")  # no trailing newline
-    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
-
-
-def test_an_unterminated_descriptor_line_is_still_read(run, instance):
-    """Same guard, the other file."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ=America/Chicago")))
-    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
-
-
-@pytest.mark.parametrize("line,expect", [
-    # A key the dotenv MAY set, spelled wrong -> tell them the spelling.
-    ("AGENT_TZ = America/Chicago", "malformed"),
-    ("export\tAGENT_TZ=America/Chicago", "malformed"),
-    # A key agent-mgr owns but this file may NOT set -> a spelling fix would be
-    # useless, so say where it belongs instead.
-    ("export AGENT_IMAGE=pinned", "this file may set only"),
-    ("AGENT_HOME = /opt/hijack", "this file may set only"),
-])
-def test_the_dotenv_says_which_kind_of_wrong_a_key_is(run, instance, tmp_path, line, expect):
-    """Two different mistakes with two different remedies.
-
-    Reachable only from the dotenv call site, where the allowlist is narrower
-    than AGENT_KEYS -- from the descriptor the two collapse and the second
-    branch cannot fire.
-    """
-    run("register", "rowan", str(instance("rowan")))
-    _home_env(tmp_path, "rowan", f"{line}\n")
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert expect in r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
-    assert "hijack" not in r.stdout and "pinned" not in r.stdout
