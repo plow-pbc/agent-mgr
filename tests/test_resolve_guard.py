@@ -177,3 +177,16 @@ def test_sign_in_will_not_mint_into_a_siblings_home(run, instance, tmp_path):
     r = run("sign-in", "property")
     assert r.returncode != 0
     assert "refusing to write" in r.stderr
+
+
+def test_a_quoted_sibling_home_is_still_a_collision(run, instance, tmp_path):
+    """The scan resolves through load_agent, not a second parser. A sibling
+    writing AGENT_HOME='$HOME/.hermes' stayed quoted under the sed/strip
+    version, compared unequal to the same resolved path, and the collision went
+    unseen -- letting restore or sign-in write into that sibling's live home."""
+    (tmp_path / "home" / ".hermes").mkdir(parents=True, exist_ok=True)
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME='$HOME/.hermes'\n")))
+    run("register", "copycat", str(instance("copycat", descriptor='AGENT_HOME="$HOME/.hermes"\n')))
+    r = run("restore", "copycat")
+    assert r.returncode != 0
+    assert "str is already registered there" in r.stderr

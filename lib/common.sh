@@ -199,7 +199,7 @@ compose() {
 # `unpause` are here because they interrupt a running process just as surely as
 # `down` does -- the earlier list omitted them, and the earlier classification
 # flattened "$*", which matched the word anywhere in a prompt or a filename.
-COMPOSE_TRANSITIONS="up down start stop restart kill rm create pause unpause"
+COMPOSE_TRANSITIONS="up down start stop restart kill rm create pause unpause scale"
 
 # Every route to a container transition goes through here, so the instance's
 # veto cannot be bypassed by adding a call site that forgets it.
@@ -281,11 +281,13 @@ require_own_home() {
     local other odir ohome
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
-        [ -f "$odir/agent.env" ] || continue
-        ohome="$(sed -n 's/^[[:space:]]*AGENT_HOME=//p' "$odir/agent.env" | tail -1)"
-        ohome="${ohome%\"}"; ohome="${ohome#\"}"
-        ohome="${ohome//\$\{HOME\}/$HOME}"; ohome="${ohome//\$HOME/$HOME}"
-        [ -n "$ohome" ] || ohome="$HOME/.hermes-$other"
+        # Resolved by load_agent in a subshell, not by a second parser here. A
+        # sibling writing AGENT_HOME='$HOME/.hermes' stayed quoted under the
+        # sed/strip version, compared unequal to the same resolved path, and the
+        # collision went unseen -- one descriptor grammar, or the two disagree
+        # exactly where it matters.
+        ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" || continue
+        [ -n "$ohome" ] || continue
         [ "$ohome" = "$AGENT_HOME" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)

@@ -274,6 +274,8 @@ def test_an_agent_with_no_guard_transitions_freely(run, instance, tmp_path):
     ["compose", "rowan", "up", "-d", "--force-recreate"],
     ["compose", "rowan", "start"], ["compose", "rowan", "pause"],
     ["compose", "rowan", "unpause"], ["compose", "rowan", "stop"],
+    # scale hermes=0 stops the live gateway just as surely as `down` does.
+    ["compose", "rowan", "scale", "hermes=0"],
 ])
 def test_no_route_to_a_transition_bypasses_the_veto(run, instance, tmp_path, args):
     """Every route goes through compose_transition, so a new call site cannot
