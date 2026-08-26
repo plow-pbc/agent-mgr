@@ -49,6 +49,13 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # A second caller of either call, in any file -- lib/resolve-guard and
 # agent-mgr run python3 too -- silently moves which invocation that test kills.
 #
+# `-I` on both, and on lib/resolve-guard's parser: it drops PYTHONPATH and the
+# user site directory, so none of these three interpreters can be handed a
+# `sitecustomize` to import. It buys less than it looks -- anyone who can set
+# PYTHONPATH can shadow `python3` on PATH outright, which is exactly how the
+# tests reach these refusals -- but they are fixed one-liners that want nothing
+# from the environment, and no test pins the flag, so this note is what keeps it.
+#
 # And the rule every caller of these two follows, stated once here because
 # stating it at each site is what let one site be fixed and another missed:
 # NEVER assign either one's output to the variable its refusal names. A failed
@@ -475,13 +482,20 @@ require_running_container_is_ours() {
         '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
         "$cid")" \
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
-    # Same canonicalisation as AGENT_HOME, or the comparison is between two
-    # spellings again -- one of them from a source we do not control. Then the
-    # same-directory question, resolved on both sides like the collision loop.
+    # Resolved before comparing, or this is a comparison between two spellings
+    # again -- one of them from a source we do not control. Both sides end at
+    # realpath; AGENT_HOME reaches it already abspath'd by load_agent, which
+    # only diverges from this one for a `..` following a symlink, and a
+    # Compose-reported source arrives cleaned.
     if [ -n "$mounted" ]; then
-        # Straight to canonical_path: realpath collapses `..` on its way to
-        # resolving symlinks, so normalising first asked a second interpreter
-        # the same question. `mounted` itself is never assigned from the
+        # Straight to canonical_path, which resolves the whole path itself. Not
+        # because the two compose to the same answer -- they do not, and the
+        # order matters: abspath collapses `..` lexically, realpath applies it
+        # after following symlinks, so `/a/link/..` yields `/a` one way and the
+        # link's parent the other. It is that a `.Source` reaches us lexically
+        # cleaned by Compose, so the extra call bought a second interpreter and
+        # a second refusal branch and no different answer.
+        # `mounted` itself is never assigned from the
         # substitution -- the never-assign rule beside normalized_path -- which
         # is what keeps docker's raw .Source for this refusal and for the
         # mismatch die below, where an operator matches it against

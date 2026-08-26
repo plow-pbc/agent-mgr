@@ -22,7 +22,7 @@ require_own_home
 
 resolved="$(compose config --format json)" || die "compose could not resolve a config for $AGENT_NAME"
 
-read -r got_project got_container got_home got_image got_build got_pull <<<"$(printf '%s' "$resolved" | python3 -c '
+read -r got_project got_container got_home got_image got_build got_pull <<<"$(printf '%s' "$resolved" | python3 -I -c '
 import json, sys
 try:
     cfg = json.load(sys.stdin)
