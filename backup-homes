@@ -18,6 +18,7 @@ dest="${1:?usage: backup-homes <dest>}"
 # honours the umask -- the first ones taken here by hand came out 0664.
 umask 077
 
+n=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
     name="$(basename "$home")"
@@ -35,7 +36,23 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     #
     # ${name#.} so the archives are visible to a plain `ls` -- a backup nobody
     # can see is one nobody checks.
+    #
+    # Written to .part and renamed on success. Straight at the final name, any
+    # interruption -- SIGINT, reboot, ENOSPC -- leaves a truncated archive that
+    # `ls` cannot tell from a good one, and the retention job then prunes the
+    # good ones around it. A FIXED .part name, not a unique one: at most one
+    # stale file per home per day, truncated by the next run. (Making it unique
+    # is what turned this into an unbounded invisible leak in #22.)
+    out="$dest/${name#.}-$(date -u +%Y%m%d).tar.gz"
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
-        -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%d).tar.gz" . \
+        -C "$home" -czf "$out.part" . \
         || [ $? -eq 1 ]
+    mv "$out.part" "$out"
+    n=$((n + 1))
 done
+
+# A run that matches nothing must not report success. Under the nightly cron the
+# likely cause is a crontab installed under a different account, so $HOME is not
+# the operator's -- and every run would then report success having written
+# nothing, discovered only at restore time.
+[ "$n" -gt 0 ] || { echo "backup-homes: no homes matched $HOME/.hermes*" >&2; exit 1; }

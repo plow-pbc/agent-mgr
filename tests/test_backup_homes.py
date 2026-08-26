@@ -12,7 +12,12 @@ SCRIPT = Path(__file__).resolve().parent.parent / "backup-homes"
 
 
 def run(home_root, dest):
+    # umask 022 forced on the child: it would otherwise inherit the runner's,
+    # and on a host that already defaults to 0077 the mode assertion below
+    # passes with `umask 077` deleted from the script — silently ceasing to
+    # guard the credential exposure it exists for.
     return subprocess.run([str(SCRIPT), str(dest)], capture_output=True, text=True,
+                          preexec_fn=lambda: os.umask(0o022),
                           env={"HOME": str(home_root),
                                # The suite poisons PATH with its own docker stub
                                # and refuses any env that does not carry it.
@@ -48,3 +53,15 @@ def test_the_archives_are_not_readable_by_other_accounts(tmp_path):
     assert run(root, dest).returncode == 0
     mode = next(dest.glob("*.tar.gz")).stat().st_mode & 0o777
     assert mode & 0o077 == 0, f"archive is {oct(mode)}"
+
+
+def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path):
+    """Under the nightly cron the likely cause is a crontab installed under a
+    different account, so $HOME is not the operator's. Exiting 0 there means
+    every run reports success having written nothing, discovered at restore."""
+    root, dest = tmp_path / "empty-home", tmp_path / "dest"
+    root.mkdir(), dest.mkdir()
+
+    r = run(root, dest)
+    assert r.returncode != 0
+    assert "no homes matched" in r.stderr
