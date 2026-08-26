@@ -266,9 +266,23 @@ case "$cmd" in
         # this agent's PMS token and lock key live in the same file.
         tmp="$(mktemp "$env_file.XXXXXX")"
         trap 'rm -f "$tmp"' EXIT
-        uid="$uid" tok="$tok" awk -F= '
-            $1=="DOMO_DEVICE_UID" { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1; next }
-            $1=="DOMO_MCP_TOKEN"  { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1; next }
+        # Every spelling a reader of this file tolerates, collapsed to one
+        # canonical line. A bare `$1=="KEY"` match saw only `KEY=` at column 0,
+        # so a pre-existing `export KEY=` or an indented one -- both plausible,
+        # because until this commit the docs told the operator to hand-edit this
+        # file -- matched nothing and the END arm APPENDED a second declaration.
+        # That leaves the old, probably revoked, token on disk underneath the
+        # new one, and the readers then disagree about which is live:
+        # check-latch's read_key takes the first `^KEY=` line while a
+        # last-declaration-wins parser takes the other. Matching every spelling
+        # and printing the first hit only also drops any duplicate already
+        # there, so the file this command touches ends with exactly one.
+        uid="$uid" tok="$tok" awk '
+            function declares(line, key) {
+                return line ~ ("^[ \t]*(export[ \t]+)?" key "[ \t]*=")
+            }
+            declares($0, "DOMO_DEVICE_UID") { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
+            declares($0, "DOMO_MCP_TOKEN")  { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
             { print }
             END {
                 if (!u) print "DOMO_DEVICE_UID=" ENVIRON["uid"]

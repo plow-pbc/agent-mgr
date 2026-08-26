@@ -77,14 +77,31 @@ LATCH_CONFIG = (
 )
 
 
-def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path):
+@pytest.mark.parametrize(
+    "starting_dotenv",
+    [
+        "HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n",
+        # No DOMO_* at all -- the append arm. An agent whose own .env.example
+        # omits them starts here, and nothing else in the suite reaches it.
+        "HOSTEX_TOKEN=keep-me\n",
+        # The spellings a hand-edited file arrives in, which is how every one of
+        # these was written before this command existed. Each must be replaced
+        # in place, not left underneath an appended second declaration.
+        "HOSTEX_TOKEN=keep-me\nexport DOMO_DEVICE_UID=stale\n  DOMO_MCP_TOKEN = stale\n",
+        # Already duplicated. The upsert collapses it rather than adding a third.
+        "HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nexport DOMO_MCP_TOKEN=staler\n",
+    ],
+    ids=["pre-seeded-empty", "absent", "hand-edited-spellings", "already-duplicated"],
+)
+def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path, starting_dotenv):
     """The dotenv is shared -- the rentals agent keeps a PMS token and a lock API
     key in the same file -- so an upsert that rewrote the file would take those
-    with it."""
+    with it. And whatever spelling a key arrives in, exactly one declaration may
+    survive: two readers of this file disagree about which of a pair is live."""
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
     run("restore", "rowan")
     env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env_file.write_text("HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n")
+    env_file.write_text(starting_dotenv)
     b, _ = _fake_docker(tmp_path)
     r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n",
             env={"PATH": f"{b}:{os.environ['PATH']}"})
@@ -93,8 +110,11 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
     assert "DOMO_DEVICE_UID=dev_abc" in body
     assert "DOMO_MCP_TOKEN=tok_xyz" in body
     assert "HOSTEX_TOKEN=keep-me" in body
-    # One row each, not a second appended beside the empty one it replaced.
+    # One declaration each, in any spelling -- not a second appended beside the
+    # one it was meant to replace, and no stale value left underneath.
     assert body.count("DOMO_MCP_TOKEN=") == 1
+    assert body.count("DOMO_DEVICE_UID=") == 1
+    assert "stale" not in body
     # The dotenv holds live credentials and the home is on a shared host.
     assert (env_file.stat().st_mode & 0o777) == 0o600
     # Never the whole token, on either stream -- the operator may be screen-sharing.
