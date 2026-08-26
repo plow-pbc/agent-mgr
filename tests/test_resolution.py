@@ -500,8 +500,9 @@ def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
 ):
     """The refusal is scoped to keys where empty is a silent substitution.
 
-    Both hooks default to empty -- `: "${X:=}"`, an explicit '' arm in the path
-    loop, and a `[ -n "$X" ] || return 0` short-circuit -- so `AGENT_RESTORE_HOOK=`
+    Both hooks default to empty -- load_agent defines them from AGENT_HOOKS, the
+    path loop has an explicit '' arm, and pre_transition short-circuits on
+    `[ -n "$X" ] || return 0` -- so `AGENT_RESTORE_HOOK=`
     is the natural way to write "this agent has no restore step", and nothing is
     substituted behind the operator's back. Refusing it would brick that agent
     and, through require_own_home's fail-closed arm, every other one.

@@ -205,9 +205,9 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     # keys are agent-supplied executables rather than derived values, and the
     # path loop walks it, so a hook cannot reach the resolver without passing
     # through here.
-    loop = re.search(r'^EMPTY_MEANS_UNSET="([A-Z_ ]+)"$',
+    loop = re.search(r'^AGENT_HOOKS="([A-Z_ ]+)"$',
                      (root / "lib" / "common.sh").read_text(), re.M)
-    assert loop, "EMPTY_MEANS_UNSET moved -- this probe reads it to know what to check"
+    assert loop, "AGENT_HOOKS moved -- this probe reads it to know what to check"
     # The TABLE, not the file: a hook mentioned only in prose or an example block
     # would satisfy a whole-README grep while the row the contract lives in stays
     # missing -- which is the way a third hook would realistically land.
@@ -216,7 +216,16 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     rows = "\n".join(l for l in section[1].splitlines() if l.startswith("|"))
     assert rows, "the agent-repo section no longer has a table"
     descriptor = (root / "templates" / "agent.env").read_text()
+    # A hook added here but not to AGENT_KEYS is not scrubbed from the caller's
+    # shell, not printed by `resolve`, and not exported -- all silent, and this
+    # list being "the one place a hook is added" is exactly what makes forgetting
+    # the other one likely.
+    keys = re.search(r'^AGENT_KEYS="([A-Z_ ]+)"$',
+                     (root / "lib" / "common.sh").read_text(), re.M)
+    assert keys, "AGENT_KEYS moved -- this probe reads it"
     for hook in loop.group(1).split():
+        assert hook in keys.group(1).split(), (
+            f"{hook} is a declared hook but AGENT_KEYS does not carry it")
         assert f"`{hook}`" in rows, (
             f"{hook} is a declared hook but the agent-repo table does not name it")
         # The descriptor is where an author actually meets the hook: AGENT_PRE_TRANSITION
