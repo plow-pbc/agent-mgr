@@ -276,7 +276,7 @@ compose() {
     # not -- they disagreed on wording and the passthrough's was redundant for
     # anything reaching compose_transition.
     compose_fetch_is_safe "$@" \
-        || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull always' has no such escape. this closes the fetch agent-mgr could issue; resolve-guard separately requires a built service to set pull_policy: never or build, which closes the one Compose issues on its own."
+        || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull always' has no such escape. this closes the fetch agent-mgr could issue; resolve-guard separately requires a built service to set 'pull_policy: never' (or 'build'), which closes the one Compose issues on its own."
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"

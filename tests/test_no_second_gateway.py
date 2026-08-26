@@ -536,7 +536,7 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     assert "--ignore-buildable" in r.stderr
     # The tail too: it points at the OTHER door, and a message claiming this
     # refusal is the whole guarantee is the framing this branch retracted.
-    assert "pull_policy: never or build" in r.stderr
+    assert "'pull_policy: never' (or 'build')" in r.stderr
 
     # `pull` is not the only door: up/run/create all take --pull always, which
     # is the same substitution by a different route.
