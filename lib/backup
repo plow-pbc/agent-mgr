@@ -21,12 +21,15 @@ home="${2:?}"; dest="${3:?}"; keep="${4:?}"
 # the first real run: four archives, all group- and world-readable.
 umask 077
 
-# Named by the AGENT NAME, not the home's basename. require_own_home admits the
-# legacy `*/.hermes` shape for any agent that declares it and only refuses two
-# agents resolving to the SAME directory -- so two agents with distinct homes
-# ending in the same component would otherwise write one filename, and `--all`
-# would silently overwrite the first with the second and exit 0. The name is
-# also what the operator typed, which is what they will look for.
+# Named by the AGENT NAME, not the home's basename. backup takes
+# require_home_shape, which admits the legacy `*/.hermes` shape on the
+# descriptor's declaration alone and carries no collision check -- so two agents
+# with distinct homes ending in the same component would otherwise write one
+# filename, and `--all` would silently overwrite the first with the second and
+# exit 0. Naming by the name is what keeps them apart. (Nothing downstream
+# refuses two descriptors aliasing ONE directory either; that trade is recorded
+# on require_home_shape.) The name is also what the operator typed, which is
+# what they will look for.
 stamp="$(date -u +%Y%m%d)"
 archive="$dest/$name-$stamp.tar.gz"
 
