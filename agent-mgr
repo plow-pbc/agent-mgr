@@ -62,8 +62,10 @@ case "$cmd" in
         ;;
     restore)
         load_agent "${1:-}"
-        # resolve-guard calls require_own_home itself, so the direct call here
-        # was the same registry walk twice per command.
+        # Here, at the top, rather than reached through reload-if-running on
+        # the last line: it owns the image rule and the ownership check, and a
+        # command that installs everything before refusing has already done the
+        # thing the refusal exists to prevent.
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         require_transition_allowed
         # Preflight everything this command depends on BEFORE it writes
@@ -120,8 +122,7 @@ case "$cmd" in
         ;;
     install-plugin)
         load_agent "${1:-}"
-        # resolve-guard calls require_own_home itself, so the direct call here
-        # was the same registry walk twice per command.
+        # Before the write, as in restore.
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
         install_plow_plugin
@@ -200,8 +201,7 @@ case "$cmd" in
                 *) die "unknown option: $1" ;;
             esac
         done
-        # resolve-guard calls require_own_home itself, so the direct call here
-        # was the same registry walk twice per command.
+        # Before the write, as in restore.
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         [ -n "$skill_ref" ] || skill_ref="$(gh api "repos/$skill_repo/commits/HEAD" --jq .sha)"
         [[ "$skill_ref" =~ ^[0-9a-f]{40}$ ]] || die "the skill ref must be a 40-char SHA, got: $skill_ref"
@@ -285,7 +285,7 @@ case "$cmd" in
         # least informative way to say "the skill is not installed".
         compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes \
             test -f /opt/data/skills/plow-connectors/plow_connector.py 2>/dev/null \
-            || die "the plow-connectors skill is not installed in $AGENT_NAME -- run: agent-mgr add-skill $AGENT_NAME plow-pbc/seed-hermes-plow --dest plow-connectors --src ref/hermes-skill/plow-connectors"
+            || die "the plow-connectors skill is not installed in $AGENT_NAME -- run: agent-mgr add-skill $AGENT_NAME plow-pbc/hermes-plow-chat --dest plow-connectors --src ref/hermes-skill/plow-connectors"
         rc=0
         for c in gmail slack; do
             # `connected:false` is a real answer, not a failure -- it means the

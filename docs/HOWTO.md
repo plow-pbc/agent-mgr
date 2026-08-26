@@ -81,7 +81,7 @@ code — it lives in that agent's repo and needs no pin, because there is no
 second copy to keep in step.
 
 ```sh
-agent-mgr add-skill rowan plow-pbc/seed-hermes-plow --dest plow-connectors \
+agent-mgr add-skill rowan plow-pbc/hermes-plow-chat --dest plow-connectors \
     --src ref/hermes-skill/plow-connectors
 ```
 

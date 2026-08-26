@@ -296,23 +296,21 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     ({"image": "nousresearch/hermes-agent:latest"}, True,
      "a pulled tag re-resolves on the next pull, and this container holds the "
      "agent's credentials", "neither a digest nor built here"),
-    ({"build": True, "pull_policy": "never"}, False,
+    ({"build": True}, False,
      "the rentals agent's shape, and refusing it broke every command", ""),
-    ({"build": True, "image": "nousresearch/hermes-agent:latest",
-      "pull_policy": "never"}, False,
+    ({"build": True, "image": "nousresearch/hermes-agent:latest"}, False,
      "a built service is exempt whatever it is NAMED -- two attempts to derive "
      "safety from the reference string were both wrong, so the passthrough "
      "forces --ignore-buildable on pull and makes the exemption true instead", ""),
     ({}, False, "the fleet-wide digest", ""),
-    ({"build": True}, True,
-     "a build alone is not enough: Compose's default policy is `missing`, so an "
-     "ordinary up fetches the registry image the moment the local tag is absent",
-     "does not set pull_policy: never"),
+    ({"build": True, "pull_policy": "missing"}, False,
+     "an explicit `missing` still builds -- verified against a real compose, "
+     "with an image naming an unresolvable registry", ""),
     ({"build": True, "pull_policy": "always"}, True,
-     "and a policy that refetches is the same hole declared explicitly",
-     "does not set pull_policy: never"),
-    ({"build": True, "pull_policy": "build"}, False,
-     "`build` is the other policy that never fetches", ""),
+     "and a policy that refetches IS the hole -- it fetches over the top of "
+     "what this host built", "sets pull_policy: always"),
+    ({"build": True, "pull_policy": "never"}, False,
+     "an explicit never is fine too, just not required", ""),
 ])
 def test_the_image_rule_reads_what_compose_resolved(
         run, instance, tmp_path, kw, refused, why, expect):

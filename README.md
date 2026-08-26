@@ -119,12 +119,12 @@ near-miss: keep it for this agent's own recipes and tests, never to restate
 an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image
 by `sha256:` digest — never a tag or a branch. (One exception: an image this host
 **builds**, which may carry any tag — the rentals agent's
-`sams-str-hermes-agent:local`, say. That holds because `agent-mgr` refuses
-`compose pull` without `--ignore-buildable`, so a fetch through this tool cannot
-replace what the host built, rather than because of anything about the name: a
-bare name is fetchable too, since Docker resolves it against Hub's implicit
-`library/`. `resolve-guard` checks what Compose *resolves*, so an override
-cannot slip a pulled tag past it.) A moving ref re-points a running
+`sams-str-hermes-agent:local`, say. A `build:` service does not fetch a missing
+image, it builds it, so there is nothing mutable to substitute. What is refused
+is a build that *also* declares a refetching `pull_policy`, and a `pull` or
+`--pull always` through this tool that would fetch over the top of what the host
+built. `resolve-guard` checks what Compose **resolves**, so an override cannot
+slip a pulled tag past it.) A moving ref re-points a running
 agent on the next upstream push, and these carry the chat token and drive a
 filesystem. Copying the artifact in instead makes the agent's repo a fork of it
 — which is what
