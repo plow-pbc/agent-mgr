@@ -86,39 +86,46 @@ does. (The leading newline is not decoration; *One repo, several people* in the
 container**, so it refuses until one is running. `activate` does not care — it
 writes to the home and reloads only if something is up.
 
-Then two codes out, two answers back:
+Then a strictly sequential exchange — each step finishes before the next starts,
+because two of them block:
 
 | | who | what |
 |---|---|---|
-| 1 | you | `agent-mgr activate bob` — prints `Plow Activate: <code>`, then reloads the gateway if one is up |
-| 2 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code, then waits |
-| 3 | **them** | open the URL in *their* browser, enter the device code |
-| 4 | **them** | text the activation code **from the handset that should own the agent** |
+| 1 | you | `agent-mgr activate bob` — prints `Plow Activate: <code>`, then **polls until it is texted** |
+| 2 | **them** | text that code **from the handset that should own the agent** |
+| 3 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code, then **waits on the browser** |
+| 4 | **them** | open the URL in *their* browser, enter the code |
 | 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
 | 6 | you | put the pair in **their** instance's dotenv — `$AGENT_HOME/.env`, which `agent-mgr resolve bob` prints — then `check-latch bob` and `restart bob` |
 
-Steps 1 and 2 send together; 3 and 4 come back together.
-
 Steps 5 and 6 assume **their** Mac is already running Plow Latch, which is a
-prerequisite you cannot satisfy for them. If this agent drives no Mac, skip
-both and delete the `latch:` block from its `config.yaml` — per the section
-above, a declared latch with no credential is a broken agent rather than an
-unconfigured one.
+prerequisite you cannot satisfy for them. If this agent drives no Mac, skip both
+and delete the `latch:` block from its `config.yaml` — per the section above, a
+declared latch with no credential is a broken agent rather than an unconfigured
+one.
 
-**`activate` first, and let it finish.** `sign-in` holds a `compose exec`
-session open in the container while it waits, and **any** command that restarts
-that container drops it — `activate` and `restore` both end by reloading a
-running gateway, and `restart` is the whole point of itself. So run nothing
-against this agent from a second terminal while a `sign-in` is waiting. If one
-lands anyway, re-run `sign-in`: it costs nothing, unlike the step above it.
-Which is why:
+**Neither code can be sent ahead.** `activate` does not return when it prints
+the code; it polls `/v1/auth/activate/redeem` until the text arrives, and the
+credential it writes is what the gateway reload at the end of it loads. `sign-in`
+likewise holds a `compose exec` open until the browser step completes. So this
+is one conversation, not a batch — and both halves need the person present, the
+first at their handset and the second at a browser.
 
-**Do not run 1 and 2 until they say they are at their phone.** Both codes are
-short-lived — minutes, not hours — and the activation is a **one-time spend**:
-mint it while they are away from their desk and you cannot mint it again.
-Wait for "I'm here", then send both.
+**Nothing else touches this agent while either one is waiting.** `sign-in`'s
+session lives inside the container, and anything that restarts it drops that
+session — `activate` and `restore` both reload a running gateway, and `restart`
+is itself. The trap is `activate`'s own failure message, which tells you to run
+`agent-mgr restart`: do that *before* starting `sign-in`, never during. If a
+restart lands anyway, re-run `sign-in` — it costs nothing, unlike the step above
+it.
 
-**Step 4 is the account boundary, and it is decided by the handset.** `POST
+**Start only when they are ready.** The activation code carries a server-side
+TTL, and `activate`'s poll window is sized to match it — long enough to be
+comfortable, short enough that minting it the night before does not work. It is
+also a **one-time spend**: mint it while they are away and you cannot mint it
+again.
+
+**Step 2 is the account boundary, and the handset decides it.** `POST
 /v1/auth/activate` carries no credential; the binding is whoever texts the code
 back. A code texted by the wrong person binds the agent to the wrong account,
 one time, permanently.
@@ -130,7 +137,7 @@ drives their Mac. Nothing here prevents that, and it is the ordinary route
 today; just treat it as disclosed and re-mint from Latch once the agent is up.
 Re-minting is free. The exposure is not.
 
-**Tell them where their credentials live**, before step 4 rather than after:
+**Tell them where their credentials live**, before step 2 rather than after:
 their Plow token, and through it their mailbox, sit in `$AGENT_HOME/.env` on
 this host — readable by whoever runs `agent-mgr`, which is not them.
 
