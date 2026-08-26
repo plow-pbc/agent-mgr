@@ -285,7 +285,7 @@ case "$cmd" in
         # One spelling in, one spelling out -- the same `KEY=value` at column 0
         # that dotenv_read is the only reader of. Every other key is carried
         # through untouched: this agent's PMS token and lock API key live here.
-        printf '%s\n' "$current" \
+        updated="$(printf '%s\n' "$current" \
             | uid="$uid" tok="$tok" awk -F= '
                 $1 == "DOMO_DEVICE_UID" { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
                 $1 == "DOMO_MCP_TOKEN"  { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
@@ -293,7 +293,15 @@ case "$cmd" in
                 END {
                     if (!u) print "DOMO_DEVICE_UID=" ENVIRON["uid"]
                     if (!t) print "DOMO_MCP_TOKEN="  ENVIRON["tok"]
-                }' \
+                }')" \
+            || die "refusing to write ${AGENT_NAME}'s dotenv -- the upsert failed. Nothing was written."
+        # The transform is isolated for the same reason the read is, and it is
+        # the more expensive half to get wrong: in one pipeline an awk that dies
+        # mid-stream still leaves `owned-file write` reading its stdin to EOF and
+        # atomically publishing the truncated result over the real dotenv --
+        # taking this agent's PMS token and lock API key with it, unrecoverably,
+        # with pipefail reporting the failure only after the replacement landed.
+        printf '%s\n' "$updated" \
             | "$AGENT_MGR_ROOT/lib/owned-file" write "$AGENT_HOME" .env 600
         echo "wrote DOMO_DEVICE_UID and DOMO_MCP_TOKEN (...${tok: -3}) to $env_file"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the credential just written"

@@ -34,6 +34,7 @@ this repo keeps deleting.
 """
 
 import os
+import stat
 import sys
 
 
@@ -59,7 +60,12 @@ def main(argv):
     try:
         if op == "read":
             try:
-                fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+                # O_NONBLOCK because O_NOFOLLOW rules out a symlink and nothing
+                # else: a FIFO planted at the leaf would park this open forever,
+                # wedging the command with no diagnostic, and a character device
+                # would hand back attacker-chosen bytes to republish into the
+                # home. With it the open returns and fstat can say what this is.
+                fd = os.open(leaf, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
             except OSError as exc:
                 # ELOOP is the planted link; anything else is an ordinary
                 # missing or unreadable file. Both are named rather than
@@ -67,6 +73,9 @@ def main(argv):
                 # to re-mint and revoke a live one.
                 die("cannot read %s/%s: %s" % (home, leaf, exc))
             with os.fdopen(fd, "rb") as handle:
+                st = os.fstat(handle.fileno())
+                if not stat.S_ISREG(st.st_mode):
+                    die("refusing to read %s/%s: not a regular file" % (home, leaf))
                 sys.stdout.buffer.write(handle.read())
             return
 
@@ -82,13 +91,18 @@ def main(argv):
                 die("cannot create %s/%s: %s" % (home, tmp, exc))
             try:
                 with os.fdopen(fd, "wb") as handle:
+                    # On the DESCRIPTOR, never the name. A path-based chmod is a
+                    # re-lookup, it follows links, and this temp name is
+                    # predictable -- so a gateway looping on it could rename it
+                    # away and plant a symlink in time to redirect the mode
+                    # change onto an operator-owned path, then have the rename
+                    # below publish that link as the leaf. fchmod cannot be
+                    # redirected: it names the file this process created.
+                    # Needed at all because O_CREAT's mode is masked by umask.
+                    os.fchmod(handle.fileno(), mode)
                     handle.write(data)
                     handle.flush()
                     os.fsync(handle.fileno())
-                # The mode is set at create, but a permissive umask cannot
-                # widen it and an existing file's mode is not inherited --
-                # this file holds live credentials on a shared host.
-                os.chmod(tmp, mode, dir_fd=dir_fd)
                 os.rename(tmp, leaf, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
             except OSError as exc:
                 try:
