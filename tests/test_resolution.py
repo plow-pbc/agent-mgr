@@ -87,17 +87,44 @@ def test_a_descriptor_cannot_run_a_command_through_a_later_line(run, instance, t
     assert "AGENT_TZ=UTC" in r.stdout
 
 
-def test_a_descriptor_cannot_set_a_variable_outside_the_agent_namespace(run, instance):
-    """Override-only variables belong to Compose's --env-file parser, not to
-    this one -- narrowing what a descriptor can reach in the CLI's own process."""
-    repo = instance("rowan", descriptor="PATH=/tmp/evil\nAGENT_TZ=UTC\n")
+def test_a_descriptor_cannot_set_the_loader_or_the_command_lookup(run, instance):
+    """An instance's own variables reach its hook, but never these: a PATH from a
+    descriptor would reach every docker, curl and gh this tool runs afterwards --
+    the shell execution the parse exists to prevent, by a different door."""
+    repo = instance("rowan", descriptor="PATH=/tmp/evil\nLD_PRELOAD=/tmp/x.so\nAGENT_TZ=UTC\n")
     run("register", "rowan", str(repo))
     r = run("resolve", "rowan")
     assert r.returncode == 0, r.stderr
     assert "/tmp/evil" not in r.stdout
+    assert "ignoring PATH" in r.stderr and "ignoring LD_PRELOAD" in r.stderr
+    assert "AGENT_TZ=UTC" in r.stdout, "the rest of the descriptor still applies"
 
 
 def test_home_expansion_still_works_because_the_template_documents_it(run, instance, tmp_path):
     repo = instance("str", descriptor="AGENT_HOME=${HOME}/.hermes\n")
     run("register", "str", str(repo))
     assert f"AGENT_HOME={tmp_path / 'home'}/.hermes\n" in run("resolve", "str").stdout
+
+
+def test_an_instances_own_variables_reach_its_hook(run, instance, tmp_path):
+    """An override-only variable like STR_VAULT is what an instance's compose
+    override and its restore hook are written against. Exporting it here is what
+    lets the hook stop keeping a second copy of a path the descriptor owns."""
+    out = tmp_path / "seen"
+    repo = instance("str", descriptor=f"STR_VAULT=$HOME/hermes-vault\nAGENT_RESTORE_HOOK=h.sh\n")
+    hook = repo / "h.sh"
+    hook.write_text(f'#!/usr/bin/env bash\nprintf "%s" "$STR_VAULT" > {out}\n')
+    hook.chmod(0o755)
+    run("register", "str", str(repo))
+    r = run("restore", "str")
+    assert r.returncode == 0, r.stderr
+    assert out.read_text() == f"{tmp_path / 'home'}/hermes-vault"
+
+
+def test_a_non_agent_variable_is_still_parsed_not_executed(run, instance, tmp_path):
+    """Widening the parser past AGENT_* must not widen it into a shell."""
+    canary = tmp_path / "pwned3"
+    run("register", "str", str(instance("str", descriptor=f'STR_VAULT=$(touch {canary})\n')))
+    r = run("resolve", "str")
+    assert r.returncode == 0, r.stderr
+    assert not canary.exists()

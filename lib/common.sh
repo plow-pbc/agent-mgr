@@ -114,7 +114,7 @@ load_agent() {
     while IFS= read -r line; do
         case "$line" in
             \#*|'') continue ;;
-            AGENT_*=*) ;;
+            [A-Za-z_]*=*) ;;
             *) continue ;;
         esac
         key="${line%%=*}"
@@ -126,6 +126,28 @@ load_agent() {
         esac
         value="${value//\$\{HOME\}/$HOME}"
         value="${value//\$HOME/$HOME}"
+        # Never these, whatever a descriptor says. Widening the export past
+        # AGENT_* would otherwise hand a registered repo the loader and the
+        # command lookup: a PATH here reaches every docker, curl and gh this
+        # tool runs afterwards, which is the shell execution the parse exists
+        # to prevent, arriving by a different door.
+        case "$key" in
+            PATH|HOME|SHELL|SHELLOPTS|BASHOPTS|BASH_ENV|ENV|IFS|CDPATH|GLOBIGNORE|PS4|LD_*|DYLD_*)
+                echo "agent-mgr: ignoring $key in $descriptor -- a descriptor may not set it" >&2
+                continue ;;
+        esac
+        # Everything else the descriptor declares is exported, not just AGENT_*.
+        # agent-mgr's own logic still reads only AGENT_*, but an instance's
+        # override-only variables (STR_VAULT and friends) are what its compose
+        # override and its restore hook are written against -- so exporting them
+        # here means the hook does not keep a second copy of a path the
+        # descriptor already owns.
+        #
+        # Safe because this is a parse, not a source: a value can still only be
+        # a literal with $HOME expanded. And it strengthens the guard rather
+        # than weakening it, since a stale value in the caller's shell is now
+        # overwritten by the descriptor's rather than surviving beside it.
+        export "$key=$value"
         printf '%s' "$AGENT_KEYS" | grep -qw "$key" || continue
         printf -v "$key" '%s' "$value"
     done < "$descriptor"
