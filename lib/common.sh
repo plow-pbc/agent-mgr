@@ -266,8 +266,12 @@ COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec
 #
 # These touch no running container: `config`, `version`, `ls`, `images`,
 # `build`, `pull` and `push` are file and image operations, and `run` starts a
-# throwaway beside the live one. `ps` is exempt because the identification
-# itself issues a `compose ps` -- gating it would recurse.
+# throwaway beside the live one. `ps` is exempt because it reads names and
+# status only, and the identification is ITSELF a `compose ps` -- gating it
+# would issue a second identical call for no added information. Not because
+# it would recurse: the check calls the `compose` shell function directly and
+# never re-enters this dispatch, so gating `ps` later is possible if a reason
+# appears.
 #
 # Anything not named here is gated, heard of or not. Missing an entry costs a
 # needless `compose ps`; missing one from a gate-these list skipped the check.
