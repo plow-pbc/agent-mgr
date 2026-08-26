@@ -111,12 +111,22 @@ destination — is a real failure and fails the command. (`--warning=no-file-cha
 would only hide the message; the status stays 1.)
 
 To restore one, stop the agent first — unpacking under a live gateway gives two
-writers to one session database:
+writers to one session database.
+
+**If the home was a symlink, recreate the link before you do anything else.**
+`agent-mgr resolve` reports `AGENT_HOME` as it was *declared* — `load_agent`
+normalises rather than canonicalises, so you get the link path, never its
+target. The dangerous case is the link gone and its target intact on the big
+disk: `mkdir -p` on that path exits 0, creates a plain directory where the link
+was, and the whole restore lands on the wrong volume with no error at all — the
+agent then comes up on a home it was never configured with. (A *dangling*
+symlink is safe; `mkdir -p` refuses it loudly with `File exists`.) So recreate
+the symlink first, and let the `mkdir -p` below be the no-op it should be.
 
 ```sh
 agent-mgr down rowan
 home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
-mkdir -p "$home"        # tar will not create it, and total loss is the case
+mkdir -p "$home"        # a no-op if the home is a live symlink — see the note above
 tar -C "$home" -xzf /path/to/rowan-20260826.tar.gz
 agent-mgr restore rowan # repo-owned config, plugin and skills win
 agent-mgr up rowan
@@ -124,24 +134,11 @@ agent-mgr up rowan
 
 The `mkdir` is not belt-and-braces: `tar -C` on a missing directory exits 2
 before extracting anything, and a home that is *gone* is the scenario this
-command exists for. The `restore` afterwards is what makes the archive's copy of
-`config.yaml` and the installed plugin lose to whatever the repo says today —
-those are the reproducible half, and the archive's copy is as old as the archive.
-
-**Read the path from the descriptor rather than typing `~/.hermes-rowan`.** A
-home symlinked onto a bigger disk is supported, and in the partial-loss case —
-the symlink gone, its target intact — a hardcoded `mkdir -p` silently creates a
-plain directory where the link was, lands the whole restore on the wrong volume
-with no error, and brings the agent up on a home it was never configured with.
-If the home is a symlink, recreate the link (or its target) before extracting;
-`mkdir -p` on the link path is what you do *not* want.
-
-The archive is **contents-rooted** — it holds `./` entries, not a
-`.hermes-rowan/` prefix — so it unpacks into a directory you name rather than
-splatting a name into `$HOME`. That falls out of archiving from *inside* the
-home, which is what makes a home symlinked onto a bigger disk back up at all:
-archiving from the parent stores that symlink as a symlink, and tar exits 0
-having captured no credentials, sessions or memories.
+command exists for. Reading the path from `resolve` rather than typing
+`~/.hermes-rowan` covers the other case — a home that simply lives somewhere
+else. The `restore` afterwards is what makes the archive's copy of `config.yaml`
+and the installed plugin lose to whatever the repo says today: those are the
+reproducible half, and the archive's copy is as old as the archive.
 
 Retention prunes by the date in the archive's **name**, not by mtime, and only
 names this command itself wrote. The destination is a directory you chose and
