@@ -691,12 +691,20 @@ def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp
     home = tmp_path / "home" / ".hermes-rowan"
     home.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "home" / "not-the-agents"
-    outside.mkdir()
-    (outside / "keepme").write_text("must survive\n")
+    # At the name the installer touches, and asserted on CONTENT, not existence.
+    # Both matter. A bystander file survives with or without the guard, since
+    # nothing here is named for it. But so does a colliding path checked only for
+    # existence: unguarded, `mv` renames this directory to .previous, the EXIT
+    # trap `rm -rf`s it, and the freshly installed tree recreates the same path
+    # with its own plugin.yaml -- so the file "still exists" while the operator's
+    # data is gone. The sentinel is what makes the assertion able to fail.
+    (outside / "plow-chat-platform").mkdir(parents=True)
+    (outside / "plow-chat-platform" / "plugin.yaml").write_text(
+        "name: plow-chat-platform\n# SENTINEL: the operator's own file\n")
     (home / "plugins").symlink_to("../not-the-agents")
 
     r = run("restore", "rowan")
     assert r.returncode != 0, "the install followed a planted parent symlink"
     assert "outside" in r.stderr, f"refused, but not for this reason: {r.stderr}"
-    assert (outside / "keepme").read_text() == "must survive\n", \
-        "the install deleted or replaced a host directory outside the home"
+    assert "SENTINEL" in (outside / "plow-chat-platform" / "plugin.yaml").read_text(), \
+        "the install renamed or replaced a host directory outside the home"

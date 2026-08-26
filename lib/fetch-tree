@@ -14,6 +14,13 @@
 # the traversal guards -- is identical for all of them, which is the argument for
 # one file rather than a second installer that re-earns each of those bugs.
 set -euo pipefail
+# For canonical_path. Resolving inline here instead would make a third call site
+# of the realpath helper, and common.sh documents that its python3 invocation
+# appears exactly once in anything this tool runs -- tests/test_resolve_guard.py
+# stubs python3 on that literal and depends on the uniqueness.
+[ -n "${AGENT_MGR_ROOT:-}" ] || { echo "fetch-tree: run me through agent-mgr" >&2; exit 1; }
+# shellcheck source=common.sh
+. "$AGENT_MGR_ROOT/lib/common.sh"
 home="${1:?usage: fetch-tree <home> <root> <manifest> <repo> <ref> <dest> [srcpath]}"
 root="${2:?}"; manifest="${3:?}"; repo="${4:?}"; ref="${5:?}"; dest="${6:?}"; src="${7:-}"
 
@@ -116,9 +123,16 @@ target="$home/$root/$dest"
 # `add-skill` on the Mac this repo supports -- reintroducing, one merge later,
 # exactly the class #19 closed. `main` has never had one.
 
-# Prove the destination is still inside the home BEFORE anything destructive --
-# and before the mkdir, which would itself follow a planted link and create the
-# tree outside.
+# Refuse a destination that already resolves outside the home, before the mkdir
+# -- which would otherwise follow a planted link and create the tree out there.
+#
+# Check-then-use, and that bound is real: this refuses a link present when the
+# check runs, NOT one the gateway plants during the seconds between here and the
+# swap below. Closing that needs the whole cleanup/copy/rename done relative to
+# an O_NOFOLLOW directory FD, which is #25's subject -- it applies equally to
+# the skills root this seam already served on main. What is bought here is the
+# pre-existing plant, which is the reachable case for a deploy the operator runs
+# by hand, at the cost of six lines.
 #
 # $dest is already rejected by component, so it cannot traverse on its own. What
 # it cannot cover is a planted PARENT: `plugins` and `skills` live in the home,
@@ -132,8 +146,8 @@ target="$home/$root/$dest"
 # existing prefix, so a link anywhere along it lands outside and is caught by the
 # single comparison. A destination that does not exist yet resolves to itself,
 # which is the ordinary first install.
-home_real="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$home")"
-target_real="$(python3 -I -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$target")"
+home_real="$(canonical_path "$home")"
+target_real="$(canonical_path "$target")"
 case "$target_real" in
     "$home_real"/*) ;;
     *) echo "refusing to install $tree_name: $target resolves to $target_real, outside ${home_real}. A parent directory in the home is a symlink -- the container can write there, and this install would rm -rf and rename through it on the host." >&2; exit 1 ;;
