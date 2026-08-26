@@ -193,14 +193,6 @@ load_agent() {
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"
     : "${AGENT_IMAGE:=nousresearch/hermes-agent@$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/image.ref")}"
-    # The default is a digest; an override must be one too. A tag re-resolves on
-    # the next pull, silently replacing the runtime that holds this agent's chat
-    # token and drives a filesystem -- which is the exact-ref rule the README
-    # states and nothing enforced on this path.
-    case "$AGENT_IMAGE" in
-        *@sha256:[0-9a-f][0-9a-f]*) ;;
-        *) die "AGENT_IMAGE must pin a digest (...@sha256:...), got: $AGENT_IMAGE" ;;
-    esac
     # Where this agent's declarative config lives. Relative resolves against the
     # agent repo, so an agent whose config sits under runtime/ (the rentals
     # agent does, beside the vault seed and SOUL it ships with) says so in one

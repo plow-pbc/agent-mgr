@@ -35,6 +35,7 @@ case "$*" in
     cat <<JSON
 {"name": "${AGENT_PROJECT:-unset}",
  "services": {"hermes": {"container_name": "${AGENT_CONTAINER:-unset}",
+   "image": "${AGENT_IMAGE:-nousresearch/hermes-agent@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc}",
    "volumes": [{"target": "/opt/data", "source": "${AGENT_HOME:-unset}"}]}}}
 JSON
     ;;
@@ -197,7 +198,7 @@ def instance(tmp_path):
 
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
-                exists=None, all_cids=(), mounts=None):
+                exists=None, all_cids=(), mounts=None, image=None, build=False):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -213,13 +214,18 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     b.mkdir(exist_ok=True)
     container = container.replace("<name>", name)
     project = project.replace("<name>", name)
-    cfg = json.dumps({
-        "name": project,
-        "services": {"hermes": {
-            "container_name": container,
-            "volumes": [{"target": "/opt/data", "source": str(home)}],
-        }},
-    })
+    svc = {
+        "container_name": container,
+        "volumes": [{"target": "/opt/data", "source": str(home)}],
+    }
+    # The image Compose would resolve. A digest by default, because that is what
+    # the fleet pins; `image=` or `build=True` let a test say otherwise.
+    if build:
+        svc["build"] = {"context": "."}
+        svc["image"] = image or f"hermes-{name}:local"
+    else:
+        svc["image"] = image or "nousresearch/hermes-agent@sha256:" + "c" * 64
+    cfg = json.dumps({"name": project, "services": {"hermes": svc}})
     parts = [
         "#!/usr/bin/env bash",
         f'case "$*" in *inspect*) echo "{mount}"; exit 0 ;; esac' if mount is not None else "",

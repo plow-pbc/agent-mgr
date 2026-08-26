@@ -9,6 +9,8 @@ resolves to the LIVE compose project (plow-pbc/agent-mgr#13).
 """
 import os
 
+import pytest
+
 from conftest import fake_docker
 
 
@@ -221,69 +223,24 @@ def test_an_unresolvable_sibling_does_not_open_the_legacy_home(run, instance, tm
 
 
 
-def test_the_legacy_owner_is_refused_by_a_stale_row_and_unregister_clears_it(
-        run, instance, tmp_path):
-    """The direction that reaches a deployed agent. `str` legitimately owns the
-    bare `.hermes`; an unrelated dead row makes the collision check incomplete,
-    so its own writes are refused -- and the way out has to actually work.
-    `register` cannot serve: it refuses a directory that no longer exists, which
-    is precisely the state the stale row is in."""
-    import shutil
-    dead = instance("dead")
-    run("register", "dead", str(dead))
-    shutil.rmtree(dead)
-    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-
-    r = run("restore", "str")
-    assert r.returncode != 0, "the incomplete check did not refuse"
-    assert "unregister" in r.stderr, "the refusal did not name a remedy that works"
-
-    assert run("unregister", "dead").returncode == 0
-    r = run("restore", "str")
-    assert r.returncode == 0, f"unregister did not clear the refusal: {r.stderr}"
-
-
-def test_an_unresolvable_sibling_refuses_every_home(run, instance, tmp_path):
-    """Refuses unconditionally, and the narrowing that was tried three times is
-    the thing being declined here.
-
-    Every proxy for "could this home alias" was wrong in a new direction,
-    because aliasing is a relation between TWO paths: no property of this home
-    says anything about the home of a sibling we could not resolve, and that
-    sibling's home is precisely the information missing. A proxy would need the
-    fact whose absence triggered the check. Self-canonicality also fails on any
-    host with a symlinked $HOME, which is ordinary.
-
-    So the choice is refuse or proceed, this is the one check whose job is to
-    fail closed, and the availability cost is paid down by the message rather
-    than by guessing.
-    """
-    import shutil
-    dead = instance("dead")
-    run("register", "dead", str(dead))
-    shutil.rmtree(dead)
-    run("register", "plain", str(instance("plain")))
-
-    r = run("restore", "plain")
-    assert r.returncode != 0, "an incomplete collision set was trusted"
-    assert "cannot prove no one else claims that home" in r.stderr
-    assert "could not resolve dead" in r.stderr, "the skipped row was not named"
-
-    assert run("unregister", "dead").returncode == 0
-    assert run("restore", "plain").returncode == 0, "unregister did not clear it"
 
 def test_the_refusal_carries_the_real_reason_and_the_right_remedy(run, instance, tmp_path):
     """load_agent refuses a present, healthy, RUNNING agent whose descriptor
     fails validation just as readily as one whose repo is gone -- a tag-pinned
     AGENT_IMAGE being the likeliest. Telling that operator to unregister a live
     agent is worse than saying nothing, so the reason has to reach them."""
-    run("register", "bad", str(instance(
-        "bad", descriptor="AGENT_IMAGE=nousresearch/hermes-agent:latest\n")))
+    # Present repo, unreadable descriptor: load_agent refuses it, but the agent
+    # is still there, so 'unregister' would be the wrong thing to tell anyone.
+    bad = instance("bad")
+    (bad / "agent.env").unlink()
+    (bad / "agent.env").mkdir()
+    run("register", "bad", str(bad))
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
     r = run("restore", "str")
     assert r.returncode != 0
-    assert "must pin a digest" in r.stderr, "the operator was not told WHY bad failed"
-    assert "Fix that descriptor if the agent is still there" in r.stderr
+    assert "could not resolve bad" in r.stderr, "the skipped sibling was not named"
+    assert "Fix that descriptor if the agent is still there" in r.stderr, (
+        "an operator whose sibling is alive was told to unregister it")
 
 def test_two_conventional_homes_aliasing_one_directory_collide(run, instance, tmp_path):
     """The case that invalidated the old invariant, on the shape where the
@@ -299,3 +256,57 @@ def test_two_conventional_homes_aliasing_one_directory_collide(run, instance, tm
     r = run("restore", "copycat")
     assert r.returncode != 0, "two conventional names reached one directory undetected"
     assert "rowan is already registered there" in r.stderr
+
+
+@pytest.mark.parametrize(("name", "descriptor"), [
+    ("str", "AGENT_HOME=$HOME/.hermes\n"),
+    ("plain", ""),
+])
+def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descriptor):
+    """Both shapes, one contract: an incomplete collision set is not trusted,
+    and the remedy named in the refusal actually clears it.
+
+    Not narrowed to homes that "could alias" -- three attempts at that proxy
+    were each wrong in a new direction, because aliasing is a relation between
+    two paths and nothing about this home says anything about the home of a
+    sibling we could not resolve.
+    """
+    import shutil
+    dead = instance("dead")
+    run("register", "dead", str(dead))
+    shutil.rmtree(dead)
+    run("register", name, str(instance(name, descriptor=descriptor)))
+
+    r = run("restore", name)
+    assert r.returncode != 0, "an incomplete collision set was trusted"
+    assert "cannot prove no one else claims that home" in r.stderr
+    assert "could not resolve dead" in r.stderr, "the skipped row was not named"
+
+    assert run("unregister", "dead").returncode == 0
+    assert run("restore", name).returncode == 0, "unregister did not clear it"
+
+
+@pytest.mark.parametrize(("kw", "refused", "why"), [
+    ({"image": "nousresearch/hermes-agent:latest"}, True,
+     "a pulled tag re-resolves on the next pull, and this container holds the "
+     "agent's credentials"),
+    ({"build": True}, False,
+     "a derived image never pulls, so its local tag names an artifact this host "
+     "built -- the rentals agent's shape, and refusing it broke every command"),
+    ({}, False, "the fleet-wide digest"),
+])
+def test_the_image_rule_reads_what_compose_resolved(run, instance, tmp_path, kw, refused, why):
+    """On the resolved-Compose seam, not the descriptor variable. Checking
+    AGENT_IMAGE in load_agent was wrong in both directions: it refused the
+    supported `build:` shape outright, while an override replacing
+    `hermes.image` sailed past it."""
+    import os
+    from conftest import fake_docker
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan", **kw)
+    r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    if refused:
+        assert r.returncode != 0, f"accepted a mutable image: {why}"
+        assert "is not a digest" in r.stderr
+    else:
+        assert r.returncode == 0, f"refused a legitimate image ({why}): {r.stderr}"

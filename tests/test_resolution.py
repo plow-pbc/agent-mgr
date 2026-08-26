@@ -168,28 +168,4 @@ def test_an_instance_variable_still_reaches_its_hook(run, instance, tmp_path):
     assert seen.read_text() == "/tmp/v"
 
 
-def test_a_descriptor_may_not_downgrade_the_image_to_a_tag(run, instance):
-    """The default is a digest and the README states an exact ref, but an
-    override reached Compose unchecked -- so a later pull could silently replace
-    the runtime holding this agent's chat token."""
-    run("register", "rowan", str(instance(
-        "rowan", descriptor="AGENT_IMAGE=nousresearch/hermes-agent:latest\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode != 0, "a tag was accepted as the pinned runtime"
-    assert "must pin a digest" in r.stderr
 
-
-def test_a_siblings_tag_pinned_descriptor_degrades_to_a_refusal(run, instance, tmp_path):
-    """The guard lives in load_agent, which the collision loop calls for every
-    sibling -- so a tag-pinned sibling makes the set incomplete. That must
-    surface as a named refusal on the legacy arm, not pass silently."""
-    run("register", "bad", str(instance(
-        "bad", descriptor="AGENT_IMAGE=nousresearch/hermes-agent:latest\n")))
-    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    r = run("restore", "str")
-    assert r.returncode != 0
-    # The REFUSAL, not the warning above it: that line is echoed before
-    # `continue` whether or not `skipped` is honoured, so deleting the
-    # fail-closed arm left this green.
-    assert "cannot prove no one else claims that home" in r.stderr
-    assert "could not resolve bad" in r.stderr, "the skipped sibling was not named"

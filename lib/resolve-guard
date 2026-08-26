@@ -22,7 +22,7 @@ require_own_home
 
 resolved="$(compose config --format json)" || die "compose could not resolve a config for $AGENT_NAME"
 
-read -r got_project got_container got_home <<<"$(printf '%s' "$resolved" | python3 -c '
+read -r got_project got_container got_home got_image got_build <<<"$(printf '%s' "$resolved" | python3 -c '
 import json, sys
 try:
     cfg = json.load(sys.stdin)
@@ -37,7 +37,8 @@ for v in svc.get("volumes", []):
     if v.get("target") == "/opt/data":
         home = v.get("source", "")
         break
-print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-")
+print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
+      svc.get("image", "-"), "build" if svc.get("build") else "-")
 ' 2>/dev/null)" || die "refusing to act: could not read a Compose config for $AGENT_NAME"
 
 [ "$got_project" = "$AGENT_PROJECT" ] \
@@ -46,3 +47,15 @@ print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-")
     || die "refusing to act: compose resolved container '$got_container' but $AGENT_NAME expects '$AGENT_CONTAINER'"
 [ "$got_home" = "$AGENT_HOME" ] \
     || die "refusing to act: compose resolved home '$got_home' but $AGENT_NAME expects '$AGENT_HOME'"
+
+# The image Compose will actually use, not the descriptor variable. Checking
+# AGENT_IMAGE in the loader was wrong in both directions: it refused the
+# supported `build:` shape -- an agent with a derived image never pulls, so a
+# tag there names a local artifact this host built -- while an override
+# replacing `hermes.image` sailed past it and could run a mutable pulled tag
+# against the mounted credential home.
+case "$got_build:$got_image" in
+    build:*) ;;
+    *@sha256:[0-9a-f][0-9a-f]*) ;;
+    *) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which is not a digest. A pulled tag re-resolves on the next pull and this container holds the agent's credentials -- pin it as ...@sha256:..., or build it locally." ;;
+esac
