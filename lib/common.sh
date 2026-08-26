@@ -267,11 +267,16 @@ install_plow_plugin() {
     # `gh api`, so restore now needs an authenticated gh on every host -- it used
     # to need one only for an instance that shipped a skills.tsv. Said here
     # because fetch-tree's own message names a repo and a ref and nothing about
-    # which step this was or what already landed, and this failure lands
-    # mid-restore with the dotenv written and config.yaml not.
+    # which step this was or what already landed.
+    #
+    # What landed comes from the CALLER, because the two disagree: from restore
+    # the dotenv is written and config.yaml is not, while install-plugin gates on
+    # an existing home and leaves config and skills untouched. One hard-coded
+    # sentence told the install-plugin operator their live config was gone, and
+    # the obvious response to that is to re-run restore over a healthy agent.
     "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" plugins plugin.yaml \
         plow-pbc/hermes-plow-chat "$ref" plow-chat-platform plow-chat-platform \
-        || die "could not install the Plow Chat plugin from plow-pbc/hermes-plow-chat at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? The dotenv skeleton IS written; config.yaml and skills are NOT."
+        || die "could not install the Plow Chat plugin from plow-pbc/hermes-plow-chat at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? ${1:?the caller must say what landed}"
 }
 
 # Refuse to write into a home that is not this agent's.

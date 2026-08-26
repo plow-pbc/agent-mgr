@@ -86,6 +86,14 @@ target="$home/$root/$dest"
 # running agent reading a half-written tree for the duration of the copy, and a
 # failure partway through would leave it there permanently.
 staging="$target.incoming.$$"
+# Both this and the trap, because they stop different things. The trap stops
+# accumulation but does not run on SIGKILL, an OOM kill or a power loss -- and
+# this path is deterministic on pid, so a survivor plus ordinary pid reuse means
+# $staging can already exist. `cp -a` into an existing directory copies INSIDE
+# it, producing $staging/<name>, and the manifest check above already ran
+# against $src -- so the swap would publish a tree with its plugin.yaml one
+# level down, beside a killed run's files, and exit 0 saying "installed".
+rm -rf "$staging"
 mkdir -p "$(dirname "$target")"
 cp -a "$src" "$staging"
 # Scripts are invoked directly by the agent; an unreadable 644 fails from inside

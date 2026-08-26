@@ -59,16 +59,43 @@ def test_every_shipped_pin_is_a_sha_not_a_branch(pin):
     assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)
 
 
-def test_the_two_pins_name_the_repos_they_are_for():
+def _block(text, start, end):
+    """The lines of one command's block, so a match cannot come from elsewhere."""
+    lines = text.split("\n")
+    i = next(n for n, l in enumerate(lines) if start in l)
+    j = next((n for n, l in enumerate(lines[i + 1:], i + 1) if end in l), len(lines))
+    return "\n".join(lines[i:j])
+
+
+def test_each_pin_is_read_only_where_its_own_repo_is_fetched():
     """The split exists to stop one ref reaching two repos; this is that invariant.
 
     The adapter moved to hermes-plow-chat and the activation script stayed in
-    the archived seed, so a bump that edits the wrong file sends a SHA at a repo
+    the archived seed, so a ref read by the wrong command sends a SHA at a repo
     that has never had it -- and 404s on activate, the irreversible one.
+
+    Per use-site, not over a concatenation of both files. The first version of
+    this test asserted four substrings existed *somewhere* across common.sh and
+    agent-mgr, which stayed green even if the two commands SWAPPED which pin
+    they read -- precisely the failure it was written for.
     """
-    src = (ROOT / "lib" / "common.sh").read_text() + (ROOT / "agent-mgr").read_text()
-    assert "plow-pbc/hermes-plow-chat" in src and "plow-chat-plugin.ref" in src
-    assert "plow-pbc/seed-hermes-plow" in src and "plow-chat-activate.ref" in src
+    plugin = _block((ROOT / "lib" / "common.sh").read_text(),
+                    "install_plow_plugin()", "\n}")
+    assert "plow-chat-plugin.ref" in plugin
+    assert "plow-pbc/hermes-plow-chat" in plugin
+    assert "plow-chat-activate.ref" not in plugin, "the plugin install must not read the activate pin"
+
+    activate = _block((ROOT / "agent-mgr").read_text(), "    activate)", "    sign-in)")
+    assert "plow-chat-activate.ref" in activate
+    assert "plow-pbc/seed-hermes-plow" in activate
+    assert "plow-chat-plugin.ref" not in activate, "activate must not read the plugin pin"
+
+
+def test_the_two_pins_are_not_the_same_commit():
+    """They name different repos, so one SHA in both files is a bump gone wrong."""
+    plugin = (ROOT / "runtime" / "plow-chat-plugin.ref").read_text().strip()
+    activate = (ROOT / "runtime" / "plow-chat-activate.ref").read_text().strip()
+    assert plugin != activate
 
 
 def test_the_image_pin_is_a_digest_not_a_tag():

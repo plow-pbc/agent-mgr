@@ -63,4 +63,7 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
     # proof that the guard let it through. Asserted on what the tool prints.
     assert r.returncode != 0
     assert "40-char SHA" in r.stderr
-    assert "refuses to act" not in r.stderr
+    # The string the guard actually prints. Two other tests in this file pin the
+    # same one; the previous two spellings here matched nothing any code emits,
+    # so the line could not fail either way.
+    assert "refusing to write" not in r.stderr

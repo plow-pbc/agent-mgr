@@ -82,7 +82,7 @@ case "$cmd" in
         # It stays first because it is the step that reaches the network: a
         # missing or unauthenticated `gh` should fail before this rewrites the
         # agent's live config.yaml, not after.
-        install_plow_plugin
+        install_plow_plugin "The dotenv skeleton IS written; config.yaml and skills are NOT."
 
         install -m 600 "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"
         echo "restored config.yaml to $AGENT_HOME"
@@ -115,7 +115,7 @@ case "$cmd" in
         load_agent "${1:-}"
         require_own_home
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
-        install_plow_plugin
+        install_plow_plugin "Nothing else changed -- this agent's config and skills are untouched."
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the plugin just installed"
         ;;
     agent)
