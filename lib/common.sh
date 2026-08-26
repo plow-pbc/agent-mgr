@@ -258,10 +258,10 @@ compose_fetch_is_safe() {
     # a silent failure, on the one subcommand (`run`) that both stops and
     # fetches. Scanning everything cannot miss one.
     #
-    # The cost is a container command carrying a `--pull` whose next word is
-    # not `never` or `build` -- including a bare boolean one, as `docker build
-    # --pull -t x .` has --
-    # refused. That is loud rather than silent, and far rarer than a flag
+    # The cost is that a container command carrying a `--pull` whose next word
+    # is not `never` or `build` gets refused -- including a bare boolean one,
+    # as `docker build --pull -t x .` has. That is loud rather than silent,
+    # and far rarer than a flag
     # this list had not heard of: the `git pull` false positive that prompted
     # the boundary came from matching the SUBCOMMAND anywhere in the argv,
     # which is keyed on $1 above and stays fixed.

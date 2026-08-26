@@ -233,6 +233,11 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         "#!/usr/bin/env bash",
         f'case "$*" in *inspect*) echo "{mount}"; exit 0 ;; esac' if mount is not None else "",
         f'printf "%s\\n" "$*" >> {log}' if log else "",
+        # And one word per line beside it: the joined form cannot tell an intact
+        # argv word from one the caller re-split, which is what the sh -c escape
+        # needs observed. Separate file so substring assertions on the joined
+        # log keep working.
+        f'printf "%s\\n" "$@" >> {log}.argv' if log else "",
         # stdin beside argv, in its OWN file: a test asserting a secret is
         # absent from argv proves nothing about whether it still reaches the
         # command, and one file could not tell the two apart.

@@ -595,8 +595,10 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
         "the escape the message names does not actually work")
     # Reached compose, not merely "not refused": an exit 0 from a guard that
     # silently swallowed the command would satisfy the line above.
-    assert "docker build --pull -t x ." in log.read_text(), (
-        "the wrapped command never reached compose")
+    words = (tmp_path / "escape.log.argv").read_text().splitlines()
+    assert "docker build --pull -t x ." in words, (
+        "the wrapped command reached compose re-split, so the flag is a word "
+        "on the argv after all -- which is the thing the escape avoids")
 
     # A leading global option would shift the subcommand out from under every
     # check that reads it as $1 -- including the fetch guard.
