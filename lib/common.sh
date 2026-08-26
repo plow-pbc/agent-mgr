@@ -37,10 +37,13 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # below depend on the difference: normalized_path leaves symlinks intact
 # (`-m -s`), canonical_path follows them (`-m`).
 #
-# `os.path.realpath(` appears in this file only here. A test shadows python3
-# and fails on exactly that text to reach the ownership guards past load_agent,
-# which resolves through normalized_path -- so a second caller of it would
-# quietly change which call that test kills.
+# `os.path.abspath(` and `os.path.realpath(` each appear exactly once in
+# anything this tool runs -- here. tests/test_resolve_guard.py shadows python3
+# and fails on one of those two strings to make exactly one of these helpers
+# fail while the other keeps working, which is the only way to reach either
+# refusal (removing python3 outright stops load_agent before any guard runs).
+# A second caller of either call, in any file -- lib/resolve-guard and
+# agent-mgr run python3 too -- silently moves which invocation that test kills.
 normalized_path() {
     python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
 }
@@ -423,7 +426,7 @@ COMPOSE_NEEDS_NO_IDENTIFICATION="config version ls images build push run ps"
 # which is how one repo serves two people -- so the fix identifies the
 # container rather than constraining the name.
 require_running_container_is_ours() {
-    local cid cids mounted self m
+    local cid cids mounted norm self m
     # A compose that REFUSED to run is not "no container" -- conflating them is
     # exactly what reload-if-running's own comment rejects, and it would silently
     # disable this check on, say, a Compose too old for `--status`. The
@@ -461,8 +464,12 @@ require_running_container_is_ours() {
     # spellings again -- one of them from a source we do not control. Then the
     # same-directory question, resolved on both sides like the collision loop.
     if [ -n "$mounted" ]; then
-        mounted="$(normalized_path "$mounted")" \
+        # Through a temp for the same reason load_agent's is: assigning
+        # `mounted` direct stores the failed substitution's empty output before
+        # the `||` arm runs, and this refusal exists to print the raw .Source.
+        norm="$(normalized_path "$mounted")" \
             || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
+        mounted="$norm"
         m="$(canonical_path "$mounted")" \
             || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
         [ "$m" = "$self" ] && continue
@@ -654,7 +661,7 @@ require_own_home() {
         # failed for THIS path alone would compare unequal, skip the die, and
         # open the very collision the loop exists to close.
         o="$(canonical_path "$ohome")" \
-            || die "refusing to write to $AGENT_HOME -- could not resolve ${other}'s home"
+            || die "refusing to write to $AGENT_HOME -- could not resolve ${other}'s home ($ohome)"
         [ "$o" = "$self" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)

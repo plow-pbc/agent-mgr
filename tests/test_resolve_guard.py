@@ -396,16 +396,17 @@ def test_a_digest_is_exempt_from_the_fetch_policy(run, instance, tmp_path):
         "a pinned digest was refused for a policy that cannot change it")
 
 
-@pytest.mark.parametrize("call, refusal, names_the_home", [
+@pytest.mark.parametrize("call, refusal", [
     # canonical_path, the ownership comparison: two unresolvable paths compared
     # equal and let the write through, so this refusal is what closes it.
-    ("os.path.realpath(", "refusing to write to", False),
+    ("os.path.realpath(", "refusing to write to {home} -- could not resolve it"),
     # normalized_path, load_agent's own: assigning AGENT_HOME direct from the
-    # failed substitution erased it before the refusal could name it.
-    ("os.path.abspath(", "cannot resolve rowan's home", True),
+    # failed substitution erased it before the refusal could name it, which is
+    # why the expected message is matched whole rather than in pieces.
+    ("os.path.abspath(", "cannot resolve rowan's home ({home})"),
 ])
 def test_a_resolver_that_fails_refuses_and_says_which_path(
-        run, instance, tmp_path, call, refusal, names_the_home):
+        run, instance, tmp_path, call, refusal):
     """A resolver that cannot run must refuse, naming the path it could not
     resolve. Not left to `set -e`: every write-then-reload subcommand reaches
     this code from the left of a `||` in lib/reload-if-running, where bash
@@ -414,10 +415,9 @@ def test_a_resolver_that_fails_refuses_and_says_which_path(
     Failing ONE of the two helpers is what a per-call failure looks like -- a
     fork the host would not give, an interpreter that crashed -- and it is also
     the only way to reach either site: removing python3 outright stops
-    load_agent before any guard runs. `os.path.realpath(` and `os.path.abspath(`
-    each appear once in lib/common.sh, with a note beside them saying so;
-    matching the qualified call rather than a bare word keeps this stub off
-    lib/resolve-guard's own python3.
+    load_agent before any guard runs. The stub matches the qualified call, which
+    lib/common.sh notes is unique to each helper, so it stays off the other
+    python3 commands this tool runs.
     """
     b = tmp_path / "stub-bin"
     b.mkdir()
@@ -427,17 +427,11 @@ def test_a_resolver_that_fails_refuses_and_says_which_path(
         f'exec {sys.executable} "$@"\n'
     )
     (b / "python3").chmod(0o755)
-    home = tmp_path / "home" / ".hermes-rowan"
 
     run("register", "rowan", str(instance("rowan")))
     r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
 
     assert r.returncode != 0
-    # The whole refusal, not just "could not resolve": that phrase is in every
-    # one of these guards, so a looser assertion stays green if the refusal
-    # relocates between them -- which is the failure this pins.
-    assert refusal in r.stderr
-    # And the path, which the load_agent site erased by assigning the failed
-    # substitution to the variable the message reads.
-    if names_the_home:
-        assert str(home) in r.stderr
+    # The message whole, not two substrings that can be satisfied apart: the
+    # regression this pins is a path going missing from between the others.
+    assert refusal.format(home=tmp_path / "home" / ".hermes-rowan") in r.stderr
