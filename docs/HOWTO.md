@@ -118,25 +118,36 @@ writers to one session database.
 normalises rather than canonicalises, so you get the link path, never its
 target.
 
-Four states, and only one of them means "carry on":
+Four states at the link path. Only one means "carry on":
 
-| what is at the link path | what it means | what to do |
+| what is there | what it tells you | what to do |
 |---|---|---|
-| a live symlink | the link survived | nothing — go to the block below |
-| nothing at all | link and target both gone | recreate the target directory, then the link |
-| a plain directory | a previous pass ran `mkdir -p` on the vanished link | move it aside, look inside it, then recreate |
+| a live symlink | link and target both fine | nothing — go to the block below |
 | a dangling symlink | the link survived, its target did not | recreate the target directory |
+| nothing at all | the link is gone; this says **nothing** about the target | look for the target first, recreate whichever is missing, then the link |
+| a plain directory | **undecidable from here** — a previous pass may have run `mkdir -p` on a vanished link, or this home was never a symlink and that directory *is* the live agent | look inside it *before* moving anything |
 
-`ln -s` and `mv` both **absorb** an existing directory rather than refusing it —
-`ln -s /big/disk/rowan ~/.hermes-rowan` onto a plain directory silently creates
-`~/.hermes-rowan/rowan` and exits 0, and `mv ~/.hermes-rowan ~/.hermes-rowan.bak`
-onto an existing `.bak` silently nests it as `.bak/.hermes-rowan`. Both report
-success and leave the restore pointed at the wrong place. On GNU, `ln -sT`
-refuses the first (`-n` does **not** — measured; it only helps when the
-destination is a symlink to a directory). There is no such flag on macOS and
-none for `mv` anywhere, which is why the table above is a decision *you* make
-before typing either command rather than a guard this document pretends to
-enforce.
+Getting this wrong is silent. A `mkdir -p` on a vanished link path exits 0 and
+creates a plain directory where the link was; the restore then lands on the
+wrong volume with no error, and the agent comes up on a home it was never
+configured with.
+
+Once you know which state you are in, on GNU:
+
+```sh
+mkdir -p /big/disk/rowan
+ln -sT /big/disk/rowan ~/.hermes-rowan
+```
+
+`ln -sT`, not a bare `ln -s`: onto a path that is already a plain directory a
+bare `ln -s` treats it as a *destination directory*, silently creating
+`~/.hermes-rowan/rowan` and exiting 0. `-n` does **not** help — measured; it
+only covers a destination that is a symlink to a directory, not a real one.
+`mv` absorbs the same way (`mv ~/.hermes-rowan ~/.hermes-rowan.bak` onto an
+existing `.bak` nests it as `.bak/.hermes-rowan`, exit 0), and there is no `-T`
+for `mv` on any platform, nor any `-T` at all on macOS. That is why the table
+above is a decision you make by looking, rather than a guard this document
+pretends to enforce.
 
 Do not delete what is at that path. It is equally the shape of a home that was
 never a symlink at all — in which case that directory *is* the live agent, and
