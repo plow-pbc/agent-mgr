@@ -367,24 +367,29 @@ def test_the_dotenv_is_read_never_executed(run, instance, tmp_path, injection_ma
     assert not injection_marker.exists(), "a dotenv key executed host code"
     assert r.returncode == 0, r.stderr
     assert r.stderr.strip() == "", "agent-mgr commented on a line it does not own"
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
 
 
-def test_a_malformed_AGENT_TZ_value_is_warned_not_fatal(run, instance, tmp_path):
-    """The one key it DOES consume still gets a diagnostic.
+def test_a_malformed_AGENT_TZ_value_is_fatal(run, instance, tmp_path):
+    """The one key it DOES consume fails loudly, like any other.
 
-    Warned rather than fatal: Compose never reads this file, so there is no
-    parity to keep, and a stray line here must not cost the instance its
-    commands. The warning names file, line and kind -- never content, because
-    this file sits beside credentials.
+    Not warn-and-fall-back. This feature exists so an agent does not silently
+    run on somebody else's clock, and a warning on stderr plus the fleet default
+    is exactly that failure wearing a diagnostic. The operator hand-edits this
+    file, so a broken quote is theirs to fix and the error names where.
+
+    It reaches the OTHER agents' `activate`/`sign-in` through require_own_home's
+    fail-closed arm. That is the deliberate cost: a resolver that cannot run
+    should stop direct writes rather than guess. The message names file, line
+    and kind -- never content, because this file sits beside credentials.
     """
     run("register", "rowan", str(instance("rowan")))
     _home_env(tmp_path, "rowan", 'PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n')
     r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
+    assert r.returncode != 0
     assert "line 2: unterminated quote" in r.stderr
     assert "sk-notreal" not in r.stderr and "America/Chicago" not in r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+
+
 def test_an_unterminated_final_line_is_still_read(run, instance, tmp_path):
     """The dotenv is maintained by hand and by the gateway, so a last line with
     no trailing newline is ordinary. `read` returns non-zero at EOF even having
@@ -432,17 +437,17 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
 
 
 def test_a_broken_dotenv_does_not_take_down_other_agents(run, instance, tmp_path):
-    """The asymmetry, pinned.
+    """A line agent-mgr does not consume costs nobody anything.
 
-    A malformed line in a DESCRIPTOR is fatal, and through require_own_home's
-    fail-closed arm that reaches every other registered agent -- deliberate,
-    because Compose reads that file and a descriptor it cannot parse is one this
-    tool cannot reason about.
+    Malformed VALUES on AGENT_TZ are fatal in both files -- see
+    test_a_malformed_AGENT_TZ_value_is_fatal. What is asymmetric is which lines
+    get read at all: a descriptor is parsed whole, because Compose reads that
+    same file, while a dotenv yields exactly AGENT_TZ. Everything else here is
+    somebody's credential, skipped before validation and never commented on.
 
-    A dotenv is not that file. Compose never reads it, it is hand-maintained
-    beside credentials, and the only thing agent-mgr wants from it is a
-    timezone. A stray line there must cost that instance its zone and nothing
-    else -- not its own commands, and certainly not anybody else's.
+    So this pins the filter, not a soft-failure protocol: a stray key costs this
+    instance nothing, and through require_own_home's fail-closed arm it must not
+    reach another agent's direct-write commands either.
     """
     run("register", "rowan", str(instance("rowan")))
     run("register", "other", str(instance("other")))

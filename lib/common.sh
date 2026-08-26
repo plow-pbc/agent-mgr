@@ -166,28 +166,17 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 #               refused here too. Its non-allowlisted keys go to the hooks.
 #   dotenv      Compose never reads it. It is hand-maintained and written by the
 #               gateway, holds credentials, and agent-mgr wants exactly one
-#               non-secret value out of it. A malformed line there is warned
-#               about and skipped, NOT fatal: there is no parity to keep, and
-#               killing every command for every agent -- require_own_home fails
-#               closed on an unresolvable sibling -- over a stray line in
-#               somebody's credential file is wildly out of proportion to it.
-# Fatal for the descriptor, a warning for the dotenv. Returns non-zero when the
-# caller should skip the line rather than stop.
+#               non-secret value out of it -- so every other key is skipped
+#               before validation, and nothing is said about it: a line this
+#               tool does not consume is not its business to comment on, least
+#               of all in a file full of secrets.
 #
-# The dotenv branch names the file and the LINE NUMBER and quotes nothing. That
-# file sits beside credentials, and a malformed line's "key" is whatever precedes
-# the `=` -- for a line like `sk-abc123=x` that is the secret itself, which a
-# diagnostic must never put on stderr. A line number locates it exactly and
-# leaks nothing. The descriptor branch may quote, because agent-mgr writes that
-# file from its own template and it is documented to hold no credential.
-_refuse() {
-    if [ "$1" = descriptor ]; then
-        die "$2"
-    fi
-    echo "agent-mgr: $3: line $4: $5 -- ignoring it" >&2
-    return 1
-}
-
+# The role does NOT buy leniency. A malformed value on a key that IS consumed is
+# fatal in both files: this feature exists so an agent does not silently run on
+# somebody else's clock, and warn-then-use-the-default is that failure wearing a
+# diagnostic. Through require_own_home's fail-closed arm a broken dotenv stops
+# the other agents' `activate`/`sign-in` too -- the deliberate cost of a resolver
+# that will not guess.
 parse_env_file() {
     local file="$1" allow="$2" role="$3" collect="" _lineno=0
     [ "$role" = descriptor ] && collect=hooks
@@ -256,7 +245,11 @@ parse_env_file() {
         # Compose errors on these too, so refusing is the agreeing behaviour.
         case "$key" in
             ''|*[!A-Za-z0-9_]*)
-                _refuse "$role" "$file: malformed key: $key" "$file" "$_lineno" "malformed key" || continue ;;
+                # Plain die, not role-aware: the dotenv filter above admits only
+                # the literal AGENT_TZ, which is a valid identifier, so this arm
+                # is unreachable for that role. A role branch here would be dead
+                # dispatch pretending to be a policy.
+                die "$file: malformed key: $key" ;;
         esac
 
         # The value grammar, ported from compose-go in one pass rather than a
@@ -291,13 +284,13 @@ parse_env_file() {
                 _rest="${value#\"}"
                 case "$_rest" in
                     *\"*) value="${_rest%%\"*}" ;;
-                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" "unterminated quote" || continue ;;
+                    *) die "$file: line $_lineno: unterminated quote in value for $key" ;;
                 esac ;;
             "'"*)
                 _rest="${value#\'}"
                 case "$_rest" in
                     *"'"*) value="${_rest%%\'*}" ;;
-                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" "unterminated quote" || continue ;;
+                    *) die "$file: line $_lineno: unterminated quote in value for $key" ;;
                 esac ;;
             *)
                 case "$value" in *" #"*) value="${value%%" #"*}" ;; esac
