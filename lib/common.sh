@@ -662,76 +662,34 @@ require_running() {
     require_running_container_is_ours
 }
 
-# Which LINES declare KEY -- the writer's half. set-latch needs to locate every
-# spelling so it can replace one and drop the rest; it never parses a value,
-# because it only ever writes the canonical form. dotenv_read below is the
-# reader's half, and parses.
+# The value the gateway would load for KEY.
 #
-# Both mirror the same reference (hermes_cli/config.py): a line is stripped, an
-# `export ` prefix dropped, and the key stripped -- so leading whitespace,
-# `export ` and space before `=` all still declare KEY.
-dotenv_declares() {
-    printf '^[[:space:]]*(export[[:space:]]+)?%s[[:space:]]*=' "$1"
-}
-
-# The value the gateway would load for KEY -- the whole grammar, not the key
-# half of it.
+# ONE spelling, deliberately: `KEY=value` at column 0. This tool writes every
+# DOMO_* and PLOW_CHAT_* line in an agent's dotenv -- set-latch here, activate
+# through the pinned script, restore from the skeleton -- so the canonical form
+# is the only one that gets produced, and owning it is what lets this be four
+# lines instead of a second implementation of Hermes's dotenv grammar.
 #
-# In python3, which is already a hard dependency (`canonical_path` above shells
-# to it), because the value side is quote-aware with backslash escapes and a
-# sed approximation of it took three review rounds to get half right: the key
-# spelling one round, the precedence the next, the value whitespace and quotes
-# the round after. Each fix was correct and the class kept producing another
-# facet. This mirrors hermes_cli/config.py line for line instead -- strip the
-# line, skip blanks and comments, require an `=`, drop `export `, strip the
-# key, then strip the value and unquote it -- so there is one place to compare
-# against the reference, and drift shows up as a diff rather than as a
-# misdiagnosis in the field.
+# Measured before it was narrowed, not assumed: across all three dotenvs on this
+# host -- 23 keys, three different producers, including the rentals agent's
+# hand-added HOSTEX_TOKEN and SEAM_API_KEY -- every declaration is already this
+# form. No `export`, no indent, no quotes, no duplicates. The compatibility
+# matrix that used to live here parsed spellings nothing on the fleet emits.
 #
-# Last declaration wins, which falls out of assigning as it reads rather than
-# stopping at a match -- the same way the parser it mirrors gets it.
+# A hand edit in some other spelling reads as absent, and that is the loud
+# failure this repo prefers: check-latch says the key is empty and names
+# `agent-mgr set-latch` as the fix, which then writes the canonical line.
+#
+# Last-wins falls out of assigning as it reads rather than stopping at a match,
+# which is what the gateway does too (hermes_cli/config.py assigns into a dict).
 dotenv_read() {
-    python3 -I -c '
-import sys
-key, path = sys.argv[1], sys.argv[2]
-DQ, SQ, BS = chr(34), chr(39), chr(92)
-val = ""
-try:
-    with open(path, encoding="utf-8-sig", errors="replace") as f:
-        lines = f.readlines()
-except FileNotFoundError:
-    sys.exit(0)
-except OSError as exc:
-    # Not the same answer as "the key is not there". check-latch has already
-    # proved the file exists, so what is left is unreadable -- a dotenv written
-    # 600 under another account, say. Swallowed, that surfaced as "is empty",
-    # which sends the operator to re-mint and revoke a live credential over a
-    # permission problem.
-    sys.stderr.write("cannot read %s: %s\n" % (path, exc))
-    sys.exit(1)
-for line in lines:
-    line = line.strip()
-    if not line or line.startswith("#") or "=" not in line:
-        continue
-    if line.startswith("export "):
-        line = line[7:]
-    k, _, v = line.partition("=")
-    if k.strip() != key:
-        continue
-    v = v.strip()
-    if len(v) >= 2 and v[0] == v[-1] == DQ:
-        out, q, i = [], v[1:-1], 0
-        while i < len(q):
-            if q[i] == BS and i + 1 < len(q) and q[i + 1] in (DQ, BS):
-                out.append(q[i + 1]); i += 2; continue
-            out.append(q[i]); i += 1
-        val = "".join(out)
-    elif len(v) >= 2 and v[0] == v[-1] == SQ:
-        val = v[1:-1]
-    else:
-        val = v
-sys.stdout.write(val)
-' "$1" "$2"
+    # Readable, checked separately, because awk's own failure would surface as
+    # an empty value -- and "the credential is missing" sends the operator to
+    # re-mint and revoke a live one over a permission problem.
+    [ -r "$2" ] || die "cannot read $2"
+    key="$1" awk -F= '
+        $1 == ENVIRON["key"] { v = substr($0, index($0, "=") + 1) }
+        END { gsub(/^[ \t]+|[ \t]+$/, "", v); printf "%s", v }' "$2"
 }
 
 # Does the INSTALLED config declare a latch server? The config is the

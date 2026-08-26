@@ -1,6 +1,5 @@
 import os
 
-import pytest
 from conftest import LATCH_CONFIG, fake_docker
 
 
@@ -10,8 +9,9 @@ def _bin(tmp_path, name, **kw):
 
 
 def _with_latch(tmp_path, name, uid="dev_123", tok="tok_abc"):
+    # Canonical `KEY=value`, the one spelling this tool writes and reads.
     (tmp_path / "home" / f".hermes-{name}" / ".env").write_text(
-        f'DOMO_DEVICE_UID={uid}\nDOMO_MCP_TOKEN="{tok}"\n')
+        f"DOMO_DEVICE_UID={uid}\nDOMO_MCP_TOKEN={tok}\n")
 
 
 NO_LATCH_CONFIG = ("model:\n  provider: openai-codex\nmcp_servers:\n  hostex:\n"
@@ -216,43 +216,6 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
             f"{hook} is a declared hook but templates/agent.env does not document it")
 
 
-@pytest.mark.parametrize(
-    "dotenv",
-    [
-        'DOMO_MCP_TOKEN="tok_abc"\n',
-        "  DOMO_MCP_TOKEN=tok_abc\n",
-        "export DOMO_MCP_TOKEN=tok_abc\n",
-        "DOMO_MCP_TOKEN = tok_abc\n",
-        'DOMO_MCP_TOKEN = "tok_abc"\n',
-        "DOMO_MCP_TOKEN='tok_abc'\n",
-        'DOMO_MCP_TOKEN="tok_abc"  \n',
-    ],
-    ids=["dquoted", "indented", "export", "spaced", "spaced-and-dquoted",
-         "squoted", "trailing-space"],
-)
-def test_check_latch_sends_the_value_the_gateway_would_load(run, instance, tmp_path, dotenv):
-    """Every spelling a hand-edited dotenv arrives in, which is the population
-    check-latch exists to diagnose. Asserted on the bytes that reached curl, not
-    on the exit code: the fake relay answers 200 to anything, so a returncode
-    assertion holds for a value that is mangled, still quote-wrapped, or a lone
-    space -- it pins that the line was FOUND, never that it was PARSED."""
-    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
-    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
-        dotenv.replace("DOMO_MCP_TOKEN", "DOMO_DEVICE_UID").replace("tok_abc", "dev_123")
-        + dotenv)
-    log = tmp_path / "docker.log"
-    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
-    assert r.returncode == 0, r.stderr
-    stdin = (tmp_path / "docker.log.stdin").read_text()
-    assert 'header = "Authorization: Bearer tok_abc"' in stdin
-    # The uid is parsed by the same reader and goes in the URL, so it fails the
-    # same way -- a quoted one would request .../devices/"dev_123"/mcp and earn
-    # a 404 that check-latch reports as a relay error rather than a bad value.
-    assert "https://api.plow.co/v1/relay/devices/dev_123/mcp" in (
-        tmp_path / "docker.log.argv").read_text()
-
-
 def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, instance, tmp_path):
     """`KEY=   ` is a key with no credential. Sending it probes the relay with an
     empty bearer and reports the 401 as REVOKED, which sends the operator to
@@ -264,25 +227,6 @@ def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, ins
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
     assert r.returncode != 0
     assert "DOMO_MCP_TOKEN is empty" in r.stderr
-
-
-def test_check_latch_probes_the_declaration_the_gateway_actually_loaded(run, instance, tmp_path):
-    """With two declarations of one key the gateway takes the LAST -- it assigns
-    into a dict as it reads (hermes_cli/config.py load_env). Probing the first
-    tests a token nothing is using: a stale credential reports REVOKED and sends
-    the operator to replace a live one, or answers 200 for a token the gateway
-    never loaded. Asserted on what reached curl, not on the exit code, because
-    both tokens produce the same 200 from the fake relay."""
-    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
-    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
-        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=stale_first\nexport DOMO_MCP_TOKEN=live_last\n")
-    log = tmp_path / "docker.log"
-    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
-    assert r.returncode == 0, r.stderr
-    stdin = (tmp_path / "docker.log.stdin").read_text()
-    assert 'header = "Authorization: Bearer live_last"' in stdin
-    assert "stale_first" not in stdin
 
 
 def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credential(

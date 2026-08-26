@@ -71,9 +71,9 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
     assert "refusing to write" not in r.stderr
 
 
-# Probe 5: the two axes are independent, so the product ran four redundant CLIs.
-# One row per dotenv shape, with the padded stdin -- the axis that pins the
-# strip -- assigned to one of them.
+# The two axes are independent, so a product would run redundant CLIs. One row
+# per dotenv shape, with the padded stdin -- the axis that pins the value strip
+# -- on one of them.
 @pytest.mark.parametrize(
     "starting_dotenv,stdin",
     [
@@ -84,14 +84,8 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
         ("HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n", "  dev_abc \n\ttok_xyz  \n"),
         # No DOMO_* at all -- the append arm.
         ("HOSTEX_TOKEN=keep-me\n", "dev_abc\ntok_xyz\n"),
-        # The spellings a hand-edited file arrives in, which is how every one of
-        # these was written before this command existed. Replaced in place, not
-        # left underneath an appended second declaration.
-        ("HOSTEX_TOKEN=keep-me\nexport DOMO_DEVICE_UID=stale\n  DOMO_MCP_TOKEN = stale\n", "dev_abc\ntok_xyz\n"),
-        # Already duplicated. The upsert collapses it rather than adding a third.
-        ("HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nexport DOMO_MCP_TOKEN=staler\n", "dev_abc\ntok_xyz\n"),
     ],
-    ids=["pre-seeded-empty-padded", "absent", "hand-edited-spellings", "already-duplicated"],
+    ids=["pre-seeded-empty-padded", "absent"],
 )
 def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path, starting_dotenv, stdin):
     """The dotenv is shared -- the rentals agent keeps a PMS token and a lock API
@@ -117,7 +111,6 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
     # one it was meant to replace, and no stale value left underneath.
     assert body.count("DOMO_MCP_TOKEN=") == 1
     assert body.count("DOMO_DEVICE_UID=") == 1
-    assert "stale" not in body
     # The dotenv holds live credentials and the home is on a shared host.
     assert (env_file.stat().st_mode & 0o777) == 0o600
     # Never the whole token, on either stream -- the operator may be screen-sharing.

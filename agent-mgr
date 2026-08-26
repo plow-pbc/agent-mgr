@@ -306,17 +306,12 @@ case "$cmd" in
         # this agent's PMS token and lock key live in the same file.
         tmp="$(mktemp "$env_file.XXXXXX")"
         trap 'rm -f "$tmp"' EXIT
-        # Every spelling the gateway honours, collapsed to one canonical line at
-        # column 0. Matching only `KEY=` there would leave a pre-existing
-        # `export KEY=` or an indented one in place and APPEND beside it -- a
-        # stale, probably revoked, token underneath the new one. Rewriting the
-        # first declaration and dropping the rest also collapses a file that
-        # arrived with two, so what this touches always leaves with exactly one.
-        uid="$uid" tok="$tok" \
-        uid_re="$(dotenv_declares DOMO_DEVICE_UID)" tok_re="$(dotenv_declares DOMO_MCP_TOKEN)" \
-        awk '
-            $0 ~ ENVIRON["uid_re"] { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
-            $0 ~ ENVIRON["tok_re"] { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
+        # One spelling in, one spelling out -- the same `KEY=value` at column 0
+        # that dotenv_read is the only reader of. Every other key is carried
+        # through untouched: this agent's PMS token and lock API key live here.
+        uid="$uid" tok="$tok" awk -F= '
+            $1 == "DOMO_DEVICE_UID" { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
+            $1 == "DOMO_MCP_TOKEN"  { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
             { print }
             END {
                 if (!u) print "DOMO_DEVICE_UID=" ENVIRON["uid"]
