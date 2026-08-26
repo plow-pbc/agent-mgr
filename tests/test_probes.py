@@ -1,6 +1,9 @@
+from pathlib import Path
 import os
 
 from conftest import fake_docker
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _bin(tmp_path, name, **kw):
@@ -198,11 +201,13 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     import pathlib
     import re
     root = pathlib.Path(__file__).resolve().parent.parent
-    # The resolver's own loop, not a name heuristic: it is what decides which
-    # keys are agent-supplied executables rather than derived values.
-    loop = re.search(r"^\s*for _hook in ([A-Z_ ]+); do$",
+    # The resolver's own list, not a name heuristic: it is what decides which
+    # keys are agent-supplied executables rather than derived values, and the
+    # path loop walks it, so a hook cannot reach the resolver without passing
+    # through here.
+    loop = re.search(r'^AGENT_HOOKS="([A-Z_ ]+)"$',
                      (root / "lib" / "common.sh").read_text(), re.M)
-    assert loop, "the hook loop moved -- this probe reads it to know what to check"
+    assert loop, "AGENT_HOOKS moved -- this probe reads it to know what to check"
     # The TABLE, not the file: a hook mentioned only in prose or an example block
     # would satisfy a whole-README grep while the row the contract lives in stays
     # missing -- which is the way a third hook would realistically land.
@@ -211,6 +216,9 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     rows = "\n".join(l for l in section[1].splitlines() if l.startswith("|"))
     assert rows, "the agent-repo section no longer has a table"
     descriptor = (root / "templates" / "agent.env").read_text()
+    # No AGENT_KEYS membership check: AGENT_KEYS interpolates $AGENT_HOOKS, so a
+    # hook is carried by construction and the drift this used to police cannot
+    # be written.
     for hook in loop.group(1).split():
         assert f"`{hook}`" in rows, (
             f"{hook} is a declared hook but the agent-repo table does not name it")
@@ -219,3 +227,27 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
         # scaffolded repo could not discover the veto it is entitled to.
         assert hook in descriptor, (
             f"{hook} is a declared hook but templates/agent.env does not document it")
+
+
+def test_no_doc_hardcodes_the_conventional_dotenv_path():
+    """The per-person dotenv is `$AGENT_HOME/.env`, not `~/.hermes-<name>/.env`.
+
+    Those differ for exactly the instances whose descriptor declares AGENT_HOME
+    -- the case the docs most need to be right about -- and the spelling drifted
+    into four operator-facing files before anyone noticed, twice. A doc that
+    hardcodes the conventional path sends that operator to a file nothing reads.
+
+    No source-string assertion guarding it: if the read ever moves,
+    test_the_dotenv_follows_a_declared_home fails on behaviour, which is the
+    stronger signal and the one that cannot be satisfied by a matching string.
+    """
+    offenders = []
+    for rel in ("README.md", "docs/HOWTO.md", "templates/agent.env",
+                "templates/compose.yml"):
+        for n, line in enumerate((ROOT / rel).read_text().splitlines(), 1):
+            if ".hermes-<name>/.env" in line or ".hermes-rowan/.env" in line:
+                offenders.append(f"{rel}:{n}")
+    assert not offenders, (
+        "these name the conventional dotenv path, which is wrong for a "
+        f"declared-home instance -- use $AGENT_HOME/.env: {offenders}"
+    )
