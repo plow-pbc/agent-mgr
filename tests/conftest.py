@@ -6,6 +6,44 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# The PATH the suite inherited, before it was made docker-free. Only
+# tests/test_compose.py uses it -- see the fixture below.
+REAL_PATH = os.environ.get("PATH", "")
+
+POISON = ("#!/usr/bin/env bash\n"
+          'echo "refusing to reach the real docker daemon from a test: docker $*" >&2\n'
+          "exit 97\n")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _no_real_docker_on_path(tmp_path_factory):
+    """Take the real `docker` off PATH for the whole suite.
+
+    This suite was hermetic in every dimension it thought to isolate and not in
+    the one that mattered: AGENT_PROJECT defaults to `hermes-<name>`, so a
+    fixture agent called `rowan` or `str` resolves to the LIVE compose project.
+    A test that reached the real daemon therefore did not fail -- it restarted
+    production. One run issued 20 `compose restart hermes` calls against live
+    projects; a day of PR iteration came to 917 boots of the rentals gateway,
+    1,378 of rowan's, and 207 shutdown notices into an owners' channel
+    (plow-pbc/agent-mgr#13).
+
+    Poisoning the process PATH rather than each fixture's is what closes the
+    class. Tests routinely build their own PATH as f"{mybin}:{os.environ['PATH']}",
+    which silently re-admitted the real binary however carefully the fixture
+    below prepended a fake -- and that shape is how the live restarts survived
+    the first attempt at this fix.
+    """
+    b = tmp_path_factory.mktemp("poison-bin")
+    (b / "docker").write_text(POISON)
+    (b / "docker").chmod(0o755)
+    # Prepended, not filtered: `docker` lives in /usr/bin beside python3, bash
+    # and every other tool the suite shells out to, so removing the directory
+    # removes the suite. Shadowing is enough -- a test building
+    # f"{mybin}:{os.environ['PATH']}" still puts this ahead of /usr/bin.
+    os.environ["PATH"] = os.pathsep.join([str(b), REAL_PATH])
+    yield
+
 
 @pytest.fixture
 def registry(tmp_path):
@@ -16,6 +54,28 @@ def registry(tmp_path):
 @pytest.fixture
 def run(registry, tmp_path):
     """Invoke the real agent-mgr CLI with an isolated registry and HOME."""
+    # A docker that REFUSES, installed once before any test body runs.
+    #
+    # This suite was hermetic in every dimension it thought to isolate and not
+    # in the one that mattered: AGENT_PROJECT defaults to `hermes-<name>`, so a
+    # fixture agent called `rowan` or `str` resolves to the LIVE compose
+    # project. A test reaching the real daemon therefore did not fail -- it
+    # restarted production. One run issued 20 `compose restart hermes` calls
+    # against live projects; over a day of PR iteration that was 917 boots of
+    # the rentals gateway, 1,378 of rowan's, and 207 shutdown notices into an
+    # owners' channel (plow-pbc/agent-mgr#13).
+    #
+    # Poisoning PATH kills the class rather than the test that surfaced it:
+    # pinning the project name would fix today's collision and leave the suite
+    # one rename away from the next. Tests that legitimately exercise compose
+    # install fake_docker into this same directory, which replaces this file.
+    poison = tmp_path / "bin"
+    poison.mkdir(exist_ok=True)
+    (poison / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        'echo "refusing to reach the real docker daemon from a test: docker $*" >&2\n'
+        "exit 97\n")
+    (poison / "docker").chmod(0o755)
 
     def _run(*args, env=None, check=False):
         e = dict(os.environ)

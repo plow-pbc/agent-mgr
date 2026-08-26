@@ -8,11 +8,23 @@ DIGEST = "nousresearch/hermes-agent@sha256:" + "c" * 64
 
 
 def compose_config(tmp_path, home, name, override=None, extra_env=None):
-    """Resolve the template the way agent-mgr will, and return the CompletedProcess."""
+    """Resolve the template the way agent-mgr will, and return the CompletedProcess.
+
+    The one place in the suite that runs the REAL docker, and it opts back in
+    explicitly: `compose config` renders the merged file and never contacts the
+    daemon, so it cannot start, stop or restart anything. Everything else runs
+    with docker off PATH -- see conftest's `_no_real_docker_on_path`.
+
+    The project names here are deliberately not the fleet's. `config` is inert,
+    but a test naming a live project is one edit away from a subcommand that is
+    not.
+    """
+    from conftest import REAL_PATH
     env = dict(os.environ)
+    env["PATH"] = REAL_PATH
     env.update({
-        "AGENT_HOME": str(home), "AGENT_CONTAINER": f"hermes-{name}",
-        "AGENT_PROJECT": f"hermes-{name}", "AGENT_TZ": "America/Los_Angeles",
+        "AGENT_HOME": str(home), "AGENT_CONTAINER": f"hermes-test-{name}",
+        "AGENT_PROJECT": f"hermes-test-{name}", "AGENT_TZ": "America/Los_Angeles",
         "AGENT_IMAGE": DIGEST, "HERMES_UID": "1000", "HERMES_GID": "1000",
     })
     if extra_env:
@@ -25,46 +37,46 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
 
 
 def test_the_template_resolves_one_service_bound_to_the_agents_home(tmp_path):
-    r = compose_config(tmp_path, tmp_path / ".hermes-rowan", "rowan")
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
     assert r.returncode == 0, r.stderr
     cfg = json.loads(r.stdout)
-    assert cfg["name"] == "hermes-rowan"
+    assert cfg["name"] == "hermes-test-rowan"
     svc = cfg["services"]["hermes"]
-    assert svc["container_name"] == "hermes-rowan"
+    assert svc["container_name"] == "hermes-test-rowan"
     assert svc["command"] == ["gateway", "run"]
     homes = [v["source"] for v in svc["volumes"] if v["target"] == "/opt/data"]
-    assert homes == [str(tmp_path / ".hermes-rowan")]
+    assert homes == [str(tmp_path / ".hermes-test-rowan")]
 
 
 def test_uid_and_gid_have_no_default_and_fail_closed(tmp_path):
     """A wrong value re-owns an agent's live state in place, so absent must be fatal."""
-    r = compose_config(tmp_path, tmp_path / ".hermes-rowan", "rowan",
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan",
                        extra_env={"HERMES_UID": "", "HERMES_GID": ""})
     assert r.returncode != 0
     assert "HERMES_UID" in r.stderr
 
 
 def test_a_missing_home_is_fatal_rather_than_defaulted(tmp_path):
-    r = compose_config(tmp_path, tmp_path / ".hermes-rowan", "rowan", extra_env={"AGENT_HOME": ""})
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", extra_env={"AGENT_HOME": ""})
     assert r.returncode != 0
     assert "AGENT_HOME" in r.stderr
 
 
 def test_a_missing_image_is_fatal_rather_than_falling_back_to_a_tag(tmp_path):
-    r = compose_config(tmp_path, tmp_path / ".hermes-rowan", "rowan", extra_env={"AGENT_IMAGE": ""})
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", extra_env={"AGENT_IMAGE": ""})
     assert r.returncode != 0
     assert "AGENT_IMAGE" in r.stderr
 
 
 def test_no_port_is_published(tmp_path):
     """The dashboard holds API keys and Hermes refuses 0.0.0.0 without auth."""
-    r = compose_config(tmp_path, tmp_path / ".hermes-rowan", "rowan")
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
     assert not json.loads(r.stdout)["services"]["hermes"].get("ports")
 
 
 def test_no_credential_is_passed_through_compose(tmp_path):
     """The gateway reads /opt/data/.env through the mount; compose must carry none."""
-    r = compose_config(tmp_path, tmp_path / ".hermes-rowan", "rowan")
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
     env = json.loads(r.stdout)["services"]["hermes"].get("environment", {})
     keys = set(env) if isinstance(env, dict) else {e.split("=")[0] for e in env}
     for forbidden in ("PLOW_CHAT_TOKEN", "DOMO_MCP_TOKEN", "HOSTEX_TOKEN", "SEAM_API_KEY"):
@@ -72,7 +84,7 @@ def test_no_credential_is_passed_through_compose(tmp_path):
 
 
 def test_the_template_mounts_nothing_but_the_agents_own_home(tmp_path):
-    r = compose_config(tmp_path, tmp_path / ".hermes-rowan", "rowan")
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
     svc = json.loads(r.stdout)["services"]["hermes"]
     assert [v["target"] for v in svc["volumes"]] == ["/opt/data"]
 
