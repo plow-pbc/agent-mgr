@@ -165,9 +165,12 @@ def run(registry, tmp_path):
         e["AGENT_MGR_REGISTRY"] = str(registry)
         e["HOME"] = str(tmp_path / "home")
         (tmp_path / "home").mkdir(exist_ok=True)
-        # restore installs the plugin, so a hermetic curl is on PATH for every
-        # invocation unless a test overrides PATH deliberately.
+        # restore installs the plugin through the same fetch-tree the skills
+        # use, and activate still curls the activation script out of the
+        # archived seed -- so both a hermetic `gh` and a hermetic `curl` are on
+        # PATH for every invocation unless a test overrides PATH deliberately.
         b = fake_curl(tmp_path)
+        install_fake_gh(tmp_path, b)
         e["PATH"] = f"{b}:{e['PATH']}"
         if env:
             e.update(env)
@@ -300,22 +303,10 @@ def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
 
 
 
-def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
-    """A `gh` that serves a real tarball, so the REAL fetch-skill runs end to end.
-
-    Only the gh half: pairing it with a RUNNING fake_docker is what lets a test
-    reach add-skill's reload, which a non-running one exits before.
-    """
+def write_tarball(path, members):
+    """A real .tgz laid out the way GitHub wraps one: <owner>-<repo>-<sha>/..."""
     import io
     import tarfile
-
-    b = tmp_path / "bin"
-    b.mkdir(exist_ok=True)
-    root = "plow-pbc-repo-abc1234"
-    prefix = f"{root}/{src}/" if src else f"{root}/"
-    members = {f"{prefix}SKILL.md": f"---\nname: {skill_name}\n---\n# {skill_name}\n"}
-    for name, body in files:
-        members[f"{prefix}{name}"] = body
 
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
@@ -324,8 +315,73 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
             info = tarfile.TarInfo(name)
             info.size = len(data)
             tar.addfile(info, io.BytesIO(data))
-    (tmp_path / "skill.tgz").write_bytes(buf.getvalue())
+    path.write_bytes(buf.getvalue())
 
-    (b / "gh").write_text(f'#!/usr/bin/env bash\ncat {tmp_path / "skill.tgz"}\n')
+
+# The plugin every agent gets. Two files, and the manifest's `name:` line is what
+# fetch-tree checks -- so this is a real fixture of the real contract, not a stub.
+PLUGIN_TARBALL = {
+    "plow-pbc-repo-abc1234/plow-chat-platform/plugin.yaml":
+        "name: plow-chat-platform\nkind: platform\n",
+    "plow-pbc-repo-abc1234/plow-chat-platform/__init__.py":
+        "def register(ctx):\n    pass\n",
+}
+
+
+def install_gh_dispatching(b, *, plugin_tgz, skill_tgz=None):
+    """A `gh` that answers by repo, because one invocation can need either.
+
+    A skill test restores first -- which installs the plugin -- and then adds a
+    skill, so a `gh` that served one tarball to both would fail whichever came
+    second on fetch-tree's manifest name check. Dispatching on the argv is what
+    the real `gh api repos/<repo>/tarball/<ref>` does anyway.
+    """
+    other = f'cat {skill_tgz}' if skill_tgz else 'echo "no fake for: $*" >&2; exit 1'
+    (b / "gh").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
+        f"  *) {other} ;;\n"
+        "esac\n"
+    )
     (b / "gh").chmod(0o755)
+
+
+def install_fake_gh(tmp_path, b):
+    """The default: a `gh` that can serve the plugin and nothing else.
+
+    Never overwrites one already there. This runs inside `run()`, so it fires on
+    every invocation -- including the ones a skill test set up with a richer,
+    skill-serving `gh` in this same bin directory. Clobbering that one made the
+    skill install silently fetch the plugin tarball instead.
+    """
+    if (b / "gh").exists():
+        return b
+    tgz = tmp_path / "plugin.tgz"
+    write_tarball(tgz, PLUGIN_TARBALL)
+    install_gh_dispatching(b, plugin_tgz=tgz)
+    return b
+
+
+def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
+    """A `gh` that serves a real tarball, so the REAL fetch-tree runs end to end.
+
+    Only the gh half: pairing it with a RUNNING fake_docker is what lets a test
+    reach add-skill's reload, which a non-running one exits before.
+    """
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    root = "plow-pbc-repo-abc1234"
+    prefix = f"{root}/{src}/" if src else f"{root}/"
+    members = {f"{prefix}SKILL.md": f"---\nname: {skill_name}\n---\n# {skill_name}\n"}
+    for name, body in files:
+        members[f"{prefix}{name}"] = body
+
+    skill_tgz = tmp_path / "skill.tgz"
+    write_tarball(skill_tgz, members)
+    plugin_tgz = tmp_path / "plugin.tgz"
+    write_tarball(plugin_tgz, PLUGIN_TARBALL)
+    # Both, because a skill test restores before it adds, and restore installs
+    # the plugin through this same installer.
+    install_gh_dispatching(b, plugin_tgz=plugin_tgz, skill_tgz=skill_tgz)
     return b

@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# Install one pinned directory from a repo into an agent's home.
+#
+# One installer for what were three: rowan's install-connectors, property's
+# install-skill, and the Plow Chat plugin's own fetch all did the same thing --
+# read a pinned SHA, snapshot the repo, verify the tree is what it claims to be,
+# swap it into place -- and differed only in where under the home it landed and
+# which manifest file names it. `gh api` serves public and private repos alike,
+# so it is the single code path.
+#
+# `root` is the directory under the home (`skills`, `plugins`); `manifest` is the
+# file whose `name:` line proves the fetched tree is the one that was pinned.
+# Everything else -- the tarball snapshot, the staged swap, the rollback trap,
+# the traversal guards -- is identical for all of them, which is the argument for
+# one file rather than a second installer that re-earns each of those bugs.
+set -euo pipefail
+home="${1:?usage: fetch-tree <home> <root> <manifest> <repo> <ref> <dest> [srcpath]}"
+root="${2:?}"; manifest="${3:?}"; repo="${4:?}"; ref="${5:?}"; dest="${6:?}"; src="${7:-}"
+
+[[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "the ref must be a 40-char SHA, got: $ref" >&2; exit 1; }
+
+# The destination is joined onto the agent's home and the result is rm -rf'd
+# during the swap below, so a traversing dest is a delete primitive: `--dest
+# ../../.ssh` normalises to $HOME/.ssh. Rejected by component, not by pattern --
+# a substring check on ".." also rejects a legitimate "..foo".
+case "$dest" in
+    /*) echo "the destination must be relative, got: $dest" >&2; exit 1 ;;
+esac
+IFS='/' read -ra _parts <<< "$dest"
+for _p in "${_parts[@]}"; do
+    case "$_p" in
+        .|..) echo "the destination may not traverse, got: $dest" >&2; exit 1 ;;
+    esac
+done
+case "$src" in
+    /*) echo "the source path must be relative, got: $src" >&2; exit 1 ;;
+    *../*|*/..) echo "the source path may not traverse, got: $src" >&2; exit 1 ;;
+esac
+tree_name="${dest##*/}"
+
+# Rollback-aware, and the single owner of publication. The previous trap
+# removed only $tmp, so a SIGTERM after the target moved to backup left the
+# agent with no installed tree at all -- the window the staged swap exists to
+# close, reopened by the cleanup.
+backup=""
+target=""
+staging=""
+cleanup() {
+    rm -rf "$tmp"
+    [ -n "$backup" ] && [ -e "$backup" ] && [ ! -e "$target" ] && mv "$backup" "$target"
+    rm -rf "$backup"
+    # $staging too. Any exit between the copy and the swap -- a failed chmod
+    # pass, a SIGTERM -- otherwise leaves <dest>.incoming.<pid> INSIDE the live
+    # directory the gateway enumerates. A pid-scoped pre-clean could not help:
+    # it only ever removed this run's, so earlier ones accumulated, each a
+    # syntactically valid tree sitting beside the real one.
+    rm -rf "$staging"
+}
+tmp="$(mktemp -d)"; trap cleanup EXIT
+
+# A whole-tree snapshot at the pinned ref, then one directory swap.
+#
+# The previous version listed the directory and installed the files in it, which
+# meant three ways to record a SHA while installing something else: nested
+# directories were silently dropped (property-hunt keeps references/ and
+# scripts/ that way), the copy overlaid rather than replaced so a file deleted
+# upstream survived forever, and a mid-loop failure left a half-written tree.
+# A tarball is one request, carries the tree, and lets the install be a rename.
+gh api "repos/$repo/tarball/$ref" > "$tmp/src.tgz" \
+    || { echo "could not fetch $repo@${ref:0:7}" >&2; exit 1; }
+mkdir -p "$tmp/tree"
+# --strip-components=1: GitHub wraps the tree in an <owner>-<repo>-<sha>/ dir.
+tar -xzf "$tmp/src.tgz" -C "$tmp/tree" --strip-components=1 \
+    || { echo "$repo@${ref:0:7} did not unpack as a tarball" >&2; exit 1; }
+
+src="$tmp/tree${src:+/$src}"
+[ -d "$src" ] || { echo "$repo@${ref:0:7} has no ${7:-repository root} to install" >&2; exit 1; }
+[ -s "$src/$manifest" ] || { echo "$repo@${ref:0:7}${7:+ ($7)} has no $manifest -- is that the right path?" >&2; exit 1; }
+# The name line, not just presence: a wrong path or a moved tree returns a
+# perfectly valid file that is not the one this agent pinned.
+# Compared as a literal string, not an ERE: $tree_name comes from --dest, so a
+# destination like `foo.bar` reaches the pattern as `foo.bar` and accepts
+# `name: fooXbar` -- the check that exists to prove this is the pinned tree
+# would pass on a different one. Through ENVIRON rather than -v, which
+# processes backslash escapes in the value, and concatenated with "" on both
+# sides because awk compares NUMERICALLY when both operands look numeric.
+want="$tree_name" awk -F': ' '$1 == "name" && ($2 "") == (ENVIRON["want"] "") {found=1}
+     END{exit !found}' "$src/$manifest" \
+    || { echo "fetched a $manifest that does not name $tree_name" >&2; exit 1; }
+
+target="$home/$root/$dest"
+# Staged beside the destination, then swapped. Installing in place would leave a
+# running agent reading a half-written tree for the duration of the copy, and a
+# failure partway through would leave it there permanently.
+# NOT pid-suffixed. A pid-scoped name only ever let a run clean up after its own
+# pid-twin, which leaves every other killed run's orphan in place forever --
+# neither the trap (it did not fire) nor a later run (different pid) removes it.
+# And $target.previous in particular is a complete, valid tree carrying
+# `name: plow-chat-platform`, sitting in the directory the gateway enumerates.
+# The suffix bought no isolation either: two concurrent runs already race
+# destructively on $target itself, so there was nothing for it to protect.
+#
+# Fixed names plus an unconditional rm means every run clears every orphan.
+# The rm matters beyond tidiness: `cp -a` into an existing directory copies
+# INSIDE it, and the manifest check above already ran against $src -- so the
+# swap would publish a tree with its plugin.yaml one level down and exit 0
+# saying "installed". Reproduced against the live repo.
+staging="$target.incoming"
+backup_path="$target.previous"
+
+# One lock over this target, held from here through the publish.
+#
+# Fixed names and per-run isolation cannot both come from the NAME. Pid-suffixed
+# names isolated concurrent runs but meant each could only ever sweep its own
+# pid-twin's orphan, so every other killed run's tree accumulated forever. Fixed
+# names sweep all of them -- and, unlocked, let a second run `rm -rf` the first
+# run's live rollback copy during the window when $target.previous IS the
+# agent's only installed tree. Either way round, one of the two failures stays.
+#
+# The lock gives both, and closes a race that predates all of this: the publish
+# `mv` moves the staging tree INSIDE a target another run just created.
+#
+# flock, not a mkdir lock, for the property that matters here -- the kernel
+# releases it when the holder dies, so a run killed mid-install cannot leave a
+# lock nobody can clear. Held on fd 9 for the rest of the script, so the rollback
+# in cleanup() runs inside it too.
+mkdir -p "$(dirname "$target")"
+# In the home root, NOT beside the target. plugins/ and skills/ are directories
+# the gateway enumerates, and a lock file is not a plugin or a skill -- even a
+# dotfile there is one more thing for something else to have an opinion about.
+lockfile="$home/.fetch-tree.$root.$tree_name.lock"
+command -v flock >/dev/null || { echo "fetch-tree needs flock (util-linux)" >&2; exit 1; }
+exec 9>"$lockfile" || { echo "could not open $lockfile" >&2; exit 1; }
+flock 9 || { echo "could not lock $lockfile" >&2; exit 1; }
+
+# Every orphan, not only this run's: under the lock there is no other run's
+# staging or rollback tree to destroy. Without this an orphaned .previous is a
+# complete, valid tree carrying `name: plow-chat-platform` sitting beside the
+# real one in the directory the gateway enumerates -- and the in-branch rm below
+# never reaches it, because on a first install that branch is skipped entirely.
+rm -rf "$staging" "$backup_path"
+cp -a "$src" "$staging"
+# Scripts are invoked directly by the agent; an unreadable 644 fails from inside
+# the container as "no such file", the least informative failure available.
+find "$staging" -type f \( -name '*.py' -o -name '*.sh' \) -exec chmod 755 {} +
+# Backup, publish, then drop the backup -- never a window with nothing
+# installed. The previous form removed the target and then moved the staging
+# tree in, so a SIGTERM or a failed mv between the two left the agent with no
+# tree at all, which is worse than the stale one it replaced.
+if [ -e "$target" ]; then
+    backup="$backup_path"
+    mv "$target" "$backup"
+fi
+if ! mv "$staging" "$target"; then
+    echo "could not publish $tree_name; the previous copy is unchanged" >&2
+    exit 1
+fi
+printf 'installed %s at %s (%s file(s), from %s@%s)\n' \
+    "$tree_name" "$target" "$(find "$target" -type f | wc -l | tr -d ' ')" "$repo" "${ref:0:7}"

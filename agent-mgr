@@ -91,7 +91,7 @@ case "$cmd" in
         # patching a `plugins:` block into whatever config.yaml it finds, so
         # installing the canonical copy afterwards makes it win unconditionally
         # rather than depending on the installer staying idempotent.
-        install_plow_plugin
+        install_plow_plugin "The dotenv skeleton IS written; config.yaml and skills are NOT."
 
         install -m 600 "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"
         echo "restored config.yaml to $AGENT_HOME"
@@ -102,7 +102,7 @@ case "$cmd" in
         if [ -s "$AGENT_DIR/skills.tsv" ]; then
             while IFS=$'\t' read -r s_repo s_ref s_dest s_src; do
                 [ -n "$s_repo" ] || continue
-                "$AGENT_MGR_ROOT/lib/fetch-skill" "$AGENT_HOME" "$s_repo" "$s_ref" "$s_dest" "$s_src" \
+                "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" skills SKILL.md "$s_repo" "$s_ref" "$s_dest" "$s_src" \
                     || die "could not replay $s_repo from skills.tsv -- config and plugin ARE installed; re-run restore after fixing the pin"
             done < "$AGENT_DIR/skills.tsv"
         fi
@@ -125,7 +125,7 @@ case "$cmd" in
         # Before the write, as in restore.
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
-        install_plow_plugin
+        install_plow_plugin "Nothing else changed -- this agent's config and skills are untouched."
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the plugin just installed"
         ;;
     agent)
@@ -158,8 +158,14 @@ case "$cmd" in
         # convention can never produce a bare `.hermes` at all.
         require_own_home
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
-        ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
-        [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
+        # Its OWN pin, not the plugin's. The activation script still lives in the
+        # archived seed while the adapter has moved to plow-pbc/hermes-plow-chat,
+        # so one shared ref would send a hermes-plow-chat SHA at a seed URL and
+        # 404 -- on the one command that is a one-time irreversible spend.
+        # Archived public repos stay readable, so this pin resolves indefinitely;
+        # it is frozen by construction rather than by discipline.
+        ref="${AGENT_MGR_ACTIVATE_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-activate.ref")}"
+        [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the activate ref must be a 40-char SHA, got: $ref"
         tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
         curl -fsSL "https://raw.githubusercontent.com/plow-pbc/hermes-plow-chat/$ref/ref/scripts/create_plow_chat_curl.sh" -o "$tmp"
         bash "$tmp" --data-dir "$AGENT_HOME"
@@ -206,7 +212,7 @@ case "$cmd" in
         [ -n "$skill_ref" ] || skill_ref="$(gh api "repos/$skill_repo/commits/HEAD" --jq .sha)"
         [[ "$skill_ref" =~ ^[0-9a-f]{40}$ ]] || die "the skill ref must be a 40-char SHA, got: $skill_ref"
         : "${skill_dest:=${skill_repo##*/}}"
-        "$AGENT_MGR_ROOT/lib/fetch-skill" "$AGENT_HOME" "$skill_repo" "$skill_ref" "$skill_dest" "$skill_src"
+        "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" skills SKILL.md "$skill_repo" "$skill_ref" "$skill_dest" "$skill_src"
         # Record the pin in the AGENT repo: it is that agent's declaration of
         # what it runs, and it belongs under review beside its config.
         # Keyed on the DESTINATION, not the repo, and compared as a field.
