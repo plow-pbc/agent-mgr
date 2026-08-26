@@ -236,6 +236,23 @@ def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
         assert "refused" in r.stderr
 
 
+def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instance, tmp_path):
+    """The one command a refusal must not fail. By the reload the one-time
+    activation is already spent and the token written, so a red exit reads as
+    "activation failed" -- and the natural response is to run it again, spending
+    a second activation to recover from a guard that said "not right now"."""
+    import os
+    _guarded(instance, run, tmp_path, refuses=True)
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
+
+    r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, f"a refused reload failed an activation that had landed: {r.stderr}"
+    assert "do NOT re-run activate" in r.stderr, (
+        "the operator was not told the activation succeeded, which is the whole point")
+
+
 def test_the_guard_runs_before_a_transition_and_not_before_a_read(run, instance, tmp_path):
     import os
     _guarded(instance, run, tmp_path, refuses=False)

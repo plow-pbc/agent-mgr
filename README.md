@@ -53,7 +53,7 @@ thin instance repo is the target, not a stage on the way to a thick one.
 | `skills.tsv` | if it runs a domain skill | Written by `add-skill`; one pinned SHA per skill |
 | `compose.override.yml` | if it needs a derived image or extra mounts | Paths must go through a variable set in `agent.env` |
 | a restore hook | if it has its own deploy step | Named by `AGENT_RESTORE_HOOK`; `restore` sequences it |
-| a pre-transition guard | if stopping it at the wrong moment costs something | Named by `AGENT_PRE_TRANSITION`. Every route to a transition goes through one seam, so it is asked before all of them — the reload that follows a write included — and a refusal refuses the command. `restore` transitions at both ends, so one deploy asks a side-effecting guard twice |
+| a pre-transition guard | if stopping it at the wrong moment costs something | Named by `AGENT_PRE_TRANSITION`. Every route to a transition goes through one seam, so it is asked before all of them — the reload that follows a write included — and a refusal refuses the command. One exception, deliberate: `activate` reports success and skips the restart, having already spent a one-time activation that a red exit would invite you to spend again. `restore` asks twice — once as a preflight before it writes anything, again at the reload it ends with — so write the guard to be safe to ask more than once |
 
 Nothing else. In particular **no `compose.yml`, no activation script, no
 `model-provider` or `reload-if-running`** — `agent-mgr` owns all of those, and a
