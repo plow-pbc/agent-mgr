@@ -231,10 +231,7 @@ load_agent() {
 # derive it from the image name were both wrong, so the guarantee lives here.
 #
 # The SUBCOMMAND is $1, per this file's own rule: scanning the whole argv for it
-# made `compose rowan exec hermes git pull` die about --ignore-buildable. The
-# FLAG scan then runs to the end of the argv, with no service boundary, because
-# locating one needed a complete list of value-taking flags and a missing entry
-# silently let a real fetch through.
+# made `compose rowan exec hermes git pull` die about --ignore-buildable.
 compose_fetch_is_safe() {
     local sub="${1:-}"
     # Every guard here reads the subcommand as $1, so a leading global would
@@ -430,8 +427,9 @@ run_replaces_the_entrypoint() {
     # A non-empty value too: `--entrypoint=` and a bare `--entrypoint` with
     # nothing after it override with nothing, so s6 is still the entrypoint.
     case "${1:-}" in
-        --entrypoint) [ -n "${2:-}" ] && return 0 ;;
+        --entrypoint) [ -n "${2:-}" ] && return 0; return 2 ;;
         --entrypoint=?*) return 0 ;;
+        --entrypoint=) return 2 ;;
     esac
     return 1
 }
