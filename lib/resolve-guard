@@ -63,9 +63,10 @@ print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
 # implicit library/ namespace, which is why `docker pull ubuntu:22.04` works.
 #
 # No property of the string can settle it, so this stops asking the string. The
-# passthrough forces --ignore-buildable on `pull` (lib/common.sh). That closes
-# the fetch this tool could issue; the build arm below closes the one Compose
-# issues on its own.
+# passthrough refuses `pull` outright (lib/common.sh): which spellings of
+# --ignore-buildable Compose honours is a fact about its flag parser, and three
+# separate misses each failed OPEN. That closes the fetch this tool could
+# issue; the build arm below closes the one Compose issues on its own.
 case "$got_build:$got_image" in
     *@sha256:[0-9a-f][0-9a-f]*) ;;
     # A build service fetches unless it says otherwise, and I got this wrong

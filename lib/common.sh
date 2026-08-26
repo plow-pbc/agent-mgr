@@ -348,6 +348,10 @@ COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec
 # never re-enters this dispatch, so gating `ps` later is possible if a reason
 # appears.
 #
+# `pull` stays named in both lists even though `compose` now refuses it: the
+# entries are what make that refusal the FIRST thing it hits, instead of a
+# daemon error from the identification it would otherwise be gated on.
+#
 # Anything not named here is gated, heard of or not. Missing an entry costs a
 # needless `compose ps`; missing one from a gate-these list skipped the check.
 COMPOSE_NEEDS_NO_IDENTIFICATION="config version ls images build pull push run ps"
