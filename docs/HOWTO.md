@@ -22,11 +22,11 @@ agent repo, so every command works from any directory.
 ## Stand up a new agent
 
 ```sh
-agent-mgr new rowan ~/services/rowans-life-hermes-agent
-agent-mgr restore rowan
-agent-mgr activate rowan      # prints a code -- text it from THAT agent's phone
-agent-mgr up rowan
-agent-mgr sign-in rowan       # device-code OAuth; hand the URL to whoever owns it
+agent-mgr new errands ~/services/errands-hermes-agent
+agent-mgr restore errands
+agent-mgr activate errands    # prints a code -- text it from THAT agent's phone
+agent-mgr up errands
+agent-mgr sign-in errands     # device-code OAuth; hand the URL to whoever owns it
 ```
 
 `activate` is the step only a person can finish. `POST /v1/auth/activate` carries
@@ -36,12 +36,12 @@ by the wrong person binds the agent to the wrong account, and it is a one-time
 spend.
 
 To let it drive a Mac, put the pair from that Mac in that instance's dotenv —
-`$AGENT_HOME/.env`, which `agent-mgr resolve rowan` prints:
+`$AGENT_HOME/.env`, which `agent-mgr resolve errands` prints:
 
 ```sh
 DOMO_DEVICE_UID=dev_...
 DOMO_MCP_TOKEN=...
-agent-mgr check-latch rowan   # "latch reachable ... (HTTP 200)"
+agent-mgr check-latch errands   # "latch reachable ... (HTTP 200)"
 ```
 
 Minting them needs the `relay:device` scope, which only the Mac running Latch
@@ -60,10 +60,10 @@ unconfigured one, and it is reported as such. With the block gone,
 
 ```sh
 agent-mgr ls
-agent-mgr up rowan / down rowan / restart rowan / logs rowan
-agent-mgr agent rowan "what's on today?"
-agent-mgr check-latch rowan
-agent-mgr check-connectors rowan
+agent-mgr up errands / down errands / restart errands / logs errands
+agent-mgr agent errands "what's on today?"
+agent-mgr check-latch errands
+agent-mgr check-connectors errands
 ```
 
 Both `check-` commands ask **from inside the container**, because the container
@@ -93,7 +93,7 @@ code — it lives in that agent's repo and needs no pin, because there is no
 second copy to keep in step.
 
 ```sh
-agent-mgr add-skill rowan plow-pbc/hermes-plow-chat --dest plow-connectors \
+agent-mgr add-skill errands plow-pbc/hermes-plow-chat --dest plow-connectors \
     --src ref/hermes-skill/plow-connectors
 ```
 
