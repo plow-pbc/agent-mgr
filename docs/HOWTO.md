@@ -69,8 +69,8 @@ invisible to a host-side probe. There is deliberately no host fallback.
 ## Two layers: where does my code go?
 
 The contract, the test and a worked example live in the *Two layers, and what
-belongs in each* section of the [README](../README.md); the file table is two
-headings further down, under *What belongs in an agent's repo*. Ask: **would a
+belongs in each* section of the [README](../README.md); the file table is in
+the section after it, *What belongs in an agent's repo*. Ask: **would a
 second agent want this?** No means it belongs in this agent's own repo,
 whatever it is — identity, config, its skill, its scripts.
 
