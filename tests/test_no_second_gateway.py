@@ -520,12 +520,13 @@ def test_two_homes_aliasing_one_directory_through_a_symlink_collide(run, instanc
 
 
 def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
-    """What makes resolve-guard's build exemption TRUE rather than assumed. Two
-    attempts to derive safety from the image reference were both wrong -- a
-    derived image does get pulled (`--ignore-buildable` exists because that is
-    the default), and a bare name is fetchable (Docker resolves it against Hub's
-    implicit library/). So the guarantee moves to the one place that can hold
-    it: a fetch through this tool cannot replace what this host built."""
+    """One of the two doors the build exemption rests on, not the whole of it.
+
+    This closes the fetch agent-mgr itself could issue. resolve-guard closes the
+    other -- Compose fetching on its own under a pull_policy that is not `never`
+    or `build`, which a marker test showed the default and `missing` both do.
+    Two attempts to derive the guarantee from the image NAME were wrong before
+    either door was found: fetchability is not a property of the string."""
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     env = {"PATH": f"{b}:{os.environ['PATH']}"}
@@ -533,6 +534,9 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     r = run("compose", "rowan", "pull", env=env)
     assert r.returncode != 0, "a pull could have replaced a built image"
     assert "--ignore-buildable" in r.stderr
+    # The tail too: it points at the OTHER door, and a message claiming this
+    # refusal is the whole guarantee is the framing this branch retracted.
+    assert "pull_policy: never or build" in r.stderr
 
     # `pull` is not the only door: up/run/create all take --pull always, which
     # is the same substitution by a different route.
