@@ -173,16 +173,23 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 #               somebody's credential file is wildly out of proportion to it.
 # Fatal for the descriptor, a warning for the dotenv. Returns non-zero when the
 # caller should skip the line rather than stop.
+#
+# The dotenv branch names the file and the LINE NUMBER and quotes nothing. That
+# file sits beside credentials, and a malformed line's "key" is whatever precedes
+# the `=` -- for a line like `sk-abc123=x` that is the secret itself, which a
+# diagnostic must never put on stderr. A line number locates it exactly and
+# leaks nothing. The descriptor branch may quote, because agent-mgr writes that
+# file from its own template and it is documented to hold no credential.
 _refuse() {
     if [ "$1" = descriptor ]; then
         die "$2"
     fi
-    echo "agent-mgr: $2 -- ignoring the line" >&2
+    echo "agent-mgr: $3: line $4 is malformed -- ignoring it" >&2
     return 1
 }
 
 parse_env_file() {
-    local file="$1" allow="$2" role="${3:-dotenv}" collect=""
+    local file="$1" allow="$2" role="${3:-dotenv}" collect="" _lineno=0
     [ "$role" = descriptor ] && collect=hooks
     local line key value _rest
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
@@ -196,6 +203,7 @@ parse_env_file() {
     # template. It is not for an instance's own dotenv: that file is maintained
     # by hand and by the gateway, so a last line with no newline is ordinary.
     while IFS= read -r line || [ -n "$line" ]; do
+        _lineno=$((_lineno + 1))
         # Normalized the way compose-go's dotenv parser normalizes, because
         # Compose reads this SAME file through --env-file (see compose()) and
         # the two disagreeing about one file is the failure to avoid. Measured
@@ -232,7 +240,7 @@ parse_env_file() {
         # Compose errors on these too, so refusing is the agreeing behaviour.
         case "$key" in
             ''|*[!A-Za-z0-9_]*)
-                _refuse "$role" "$file: malformed key: $key" || continue ;;
+                _refuse "$role" "$file: malformed key: $key" "$file" "$_lineno" || continue ;;
         esac
 
         # The value grammar, ported from compose-go in one pass rather than a
@@ -267,13 +275,13 @@ parse_env_file() {
                 _rest="${value#\"}"
                 case "$_rest" in
                     *\"*) value="${_rest%%\"*}" ;;
-                    *) _refuse "$role" "$file: unterminated quote in value for $key" || continue ;;
+                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" || continue ;;
                 esac ;;
             "'"*)
                 _rest="${value#\'}"
                 case "$_rest" in
                     *"'"*) value="${_rest%%\'*}" ;;
-                    *) _refuse "$role" "$file: unterminated quote in value for $key" || continue ;;
+                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" || continue ;;
                 esac ;;
             *)
                 case "$value" in *" #"*) value="${value%%" #"*}" ;; esac
