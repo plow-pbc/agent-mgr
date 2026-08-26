@@ -126,12 +126,14 @@ would then run against an empty path and report the same thing whatever the
 truth is. Fix the registry row or the descriptor first.
 
 **Now look at what is actually at that path, before anything else.** Do not skip
-this on the belief that your home is not a symlink. The table below does not
-tell you *why* a plain directory is there — it cannot, and it says so — but it
-does tell you that a plain directory is what you have, which is the point at
-which you stop and look inside instead of acting. Skipping means acting on the
-belief without ever seeing the shape, and that is the silent wrong-volume
-restore this section exists to prevent. Two read-only commands.
+this on the belief that your home is not a symlink. The dangerous row is
+**nothing at all** — the link gone, its target alive on the other disk. That
+path looks exactly like a home that never existed, so the belief and the
+evidence agree right up until `mkdir -p` creates a plain directory where the
+link was and the restore lands on the wrong volume, silently. The table cannot
+tell you *why* a plain directory is there — it says so — but it does tell you
+which of the four shapes you are looking at, and that is what the belief cannot.
+Two read-only commands.
 
 `agent-mgr resolve` reports `AGENT_HOME` as it was *declared* — `load_agent`
 normalises rather than canonicalises, so you get the link path, never its
