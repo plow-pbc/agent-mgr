@@ -133,13 +133,6 @@ usage: agent-mgr <command> [args]
 USAGE
 }
 
-# Descriptor keys this tool owns. Every one is unset from the inherited
-# environment before the descriptor is read, because Compose resolves shell
-# variables ahead of --env-file: a stale AGENT_HOME exported in the caller's
-# shell would otherwise silently mount a different agent's home, which is the
-# same failure class that once rewrote a live home to uid 501:20.
-AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
-
 # The agent-supplied executables: the keys whose value is a path resolved against
 # the agent's repo, and whose default is empty. Those two properties travel
 # together, and three consumers key off them -- load_agent defines them from this
@@ -150,6 +143,14 @@ AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_
 # value, which is what makes an empty one a silent substitution. A key with an
 # empty default that is NOT a repo-relative path does not belong here.
 AGENT_HOOKS="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
+
+# Descriptor keys this tool owns. Every one is unset from the inherited
+# environment before the descriptor is read, because Compose resolves shell
+# variables ahead of --env-file: a stale AGENT_HOME exported in the caller's
+# shell would otherwise silently mount a different agent's home, which is the
+# same failure class that once rewrote a live home to uid 501:20.
+AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG $AGENT_HOOKS"
+
 
 # Compose's own environment variables, unset for the same reason and with a
 # sharper edge: COMPOSE_PROJECT_NAME outranks the template's `name:` attribute,

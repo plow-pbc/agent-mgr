@@ -216,16 +216,10 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     rows = "\n".join(l for l in section[1].splitlines() if l.startswith("|"))
     assert rows, "the agent-repo section no longer has a table"
     descriptor = (root / "templates" / "agent.env").read_text()
-    # A hook added here but not to AGENT_KEYS is not scrubbed from the caller's
-    # shell, not printed by `resolve`, and not exported -- all silent, and this
-    # list being "the one place a hook is added" is exactly what makes forgetting
-    # the other one likely.
-    keys = re.search(r'^AGENT_KEYS="([A-Z_ ]+)"$',
-                     (root / "lib" / "common.sh").read_text(), re.M)
-    assert keys, "AGENT_KEYS moved -- this probe reads it"
+    # No AGENT_KEYS membership check: AGENT_KEYS interpolates $AGENT_HOOKS, so a
+    # hook is carried by construction and the drift this used to police cannot
+    # be written.
     for hook in loop.group(1).split():
-        assert hook in keys.group(1).split(), (
-            f"{hook} is a declared hook but AGENT_KEYS does not carry it")
         assert f"`{hook}`" in rows, (
             f"{hook} is a declared hook but the agent-repo table does not name it")
         # The descriptor is where an author actually meets the hook: AGENT_PRE_TRANSITION
