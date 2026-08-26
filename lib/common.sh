@@ -175,7 +175,7 @@ load_agent() {
     # $HOME is the one expansion, because it is the one the template documents.
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
-    local line key value _k
+    local line key value _k _ok
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
     # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
     # this empty, and bash treats an empty array as unset under `set -u` until
@@ -183,40 +183,32 @@ load_agent() {
     # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
     AGENT_HOOK_ENV=()
     while IFS= read -r line; do
-        case "$line" in
-            \#*|'') continue ;;
-            [A-Za-z_]*=*)
-                # A key is an identifier, or the line is not a declaration.
-                # Checked here rather than at the membership test below, so that
-                # test receives an identifier by construction -- it cannot be
-                # trusted to notice on its own. `grep -w` matches a word-bounded
-                # SUBSTRING of the space-joined allowlist, so without this a
-                # multi-token key like `AGENT_TZ AGENT_IMAGE` matched, reached
-                # `printf -v`, and bash rejected the name -- the last command of
-                # the branch, so under set -e it took the whole process down.
-                #
-                # Dropping silently is right for a key this tool does not own
-                # and wrong for one it does: `AGENT_TZ = x`, the hand-written
-                # form, would vanish and the value would fall back to its
-                # default, which looks exactly like a line never written.
-                #
-                # Reported rather than accepted-with-a-trim: Compose reads this
-                # same file through --env-file with a parser that rejects spaces
-                # too, so tolerating the spelling here would make the two
-                # disagree about one file.
-                case "${line%%=*}" in
-                    *[!A-Za-z0-9_]*)
-                        _k="${line%%=*}"; _k="${_k//[[:space:]]/}"
-                        if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
-                            echo "agent-mgr: $descriptor: ignoring malformed '${line%%=*}' -- write it as $_k=<value>, no spaces around the =" >&2
-                        fi
-                        continue ;;
-                esac
-                ;;
-            *) continue ;;
-        esac
+        case "$line" in \#*|'') continue ;; esac
         key="${line%%=*}"
         value="${line#*=}"
+
+        # One rejection path, so every near-miss of a key this tool owns is
+        # reported rather than only the spellings that happen to reach here.
+        #
+        # A declaration is `IDENTIFIER=`, unindented, no `export`. Compose reads
+        # this same file through --env-file with a parser that rejects all three
+        # deviations too, so tolerating any of them would make agent-mgr and
+        # Compose disagree about one file -- a worse failure than refusing it.
+        #
+        # Silence is right for a key this tool does not own and wrong for one it
+        # does: `AGENT_TZ = x`, `  AGENT_TZ=x` and `export AGENT_TZ=x` would all
+        # vanish, and the value would fall back to its default, which looks
+        # exactly like a line never written.
+        _ok=1
+        case "$line" in [A-Za-z_]*=*) ;; *) _ok=0 ;; esac
+        case "$key" in *[!A-Za-z0-9_]*) _ok=0 ;; esac
+        if [ "$_ok" = 0 ]; then
+            _k="${key#"${key%%[![:space:]]*}"}"; _k="${_k#export }"; _k="${_k//[[:space:]]/}"
+            if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
+                echo "agent-mgr: $descriptor: ignoring malformed '$key' -- write it as $_k=<value>: unindented, no 'export', no spaces around the =" >&2
+            fi
+            continue
+        fi
         # One layer of surrounding quotes, the way a dotenv file is usually written.
         case "$value" in
             \"*\") value="${value#\"}"; value="${value%\"}" ;;
@@ -241,8 +233,15 @@ load_agent() {
         # and arithmetic performs command substitution. A registered repo's
         # agent.env could run host commands with the operator's credentials on
         # any `agent-mgr resolve`, defeating the read-never-execute property
-        # this parser exists for. Defence in depth now that the shape is checked
-        # above; `--` for uniformity with the other guarded greps.
+        # this parser exists for.
+        #
+        # Not "defence in depth" -- a regex match against a fixed list was
+        # always the wrong way to test set membership, exploit or no. It is not
+        # independently observable from outside now that the shape check above
+        # rejects every regex metacharacter, so no test can distinguish -F from
+        # its absence; it is here because membership is a literal question, and
+        # because loosening that check must not silently re-open the sink.
+        # `--` for uniformity with the other guarded greps.
         if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$key"; then
             printf -v "$key" '%s' "$value"
         else

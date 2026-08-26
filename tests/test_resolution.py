@@ -253,3 +253,22 @@ def test_an_unowned_malformed_key_stays_quiet(run, instance):
     r = run("resolve", "rowan")
     assert r.returncode == 0, r.stderr
     assert r.stderr.strip() == ""
+
+
+@pytest.mark.parametrize("spelling", [
+    "AGENT_TZ = America/Chicago",   # spaces around =
+    "  AGENT_TZ=America/Chicago",   # indented
+    "export AGENT_TZ=America/Chicago",  # shell-style export
+])
+def test_every_near_miss_of_an_owned_key_is_reported(run, instance, spelling):
+    """Three ways to almost-declare a key this tool owns, all invalid dotenv.
+
+    Compose's --env-file rejects all three too, so accepting any would make the
+    two disagree about one file. Dropping them silently is the failure: the
+    value falls back to its default and looks like a line never written.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor=f"{spelling}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "malformed" in r.stderr and "AGENT_TZ" in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
