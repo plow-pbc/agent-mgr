@@ -136,7 +136,13 @@ mkdir -p "$(dirname "$target")"
 # Keyed on the home's BASENAME, which is unique per agent -- require_own_home
 # refuses two registered agents resolving to one home -- so distinct callers
 # cannot collide on one lock.
-lockdir="${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/locks"
+# Off the REGISTRY, not a second copy of its default. The registry is overridable
+# precisely so tests never touch the operator's real one, and re-deriving the
+# default honoured that override only when XDG_CONFIG_HOME happened to be unset:
+# with it exported, the suite would flock a path in the operator's real config
+# dir named for the fixture's home -- `.hermes-rowan`, which is also production's
+# -- so a test run and a live `install-plugin rowan` would block on each other.
+lockdir="$(dirname "${AGENT_MGR_REGISTRY:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/agents}")/locks"
 mkdir -p "$lockdir"
 lockfile="$lockdir/${home##*/}.$root.$tree_name.lock"
 command -v flock >/dev/null || { echo "fetch-tree needs flock (util-linux)" >&2; exit 1; }

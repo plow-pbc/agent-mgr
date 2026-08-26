@@ -596,7 +596,7 @@ def test_two_concurrent_installs_leave_one_valid_tree(run, instance, tmp_path):
         "the published tree has no manifest at its root"
 
 
-def test_the_lock_is_not_placed_where_the_agent_can_reach_it(run, instance, tmp_path):
+def test_the_lock_is_not_placed_where_the_agent_can_reach_it(run, instance, tmp_path, registry):
     """A lock inside the agent's home is a host-side truncation primitive.
 
     The home is bind-mounted at /opt/data and the gateway runs as the operator's
@@ -623,6 +623,13 @@ def test_the_lock_is_not_placed_where_the_agent_can_reach_it(run, instance, tmp_
     # is the point. What must not exist is a lock this run CREATED in the home.
     assert not [p for p in home.rglob("*.lock") if not p.is_symlink()], \
         "a lock was created inside the container-writable home"
+    # And it landed beside the TEST registry. Deriving the lock dir from the
+    # registry's DEFAULT instead of its override honours the sandbox only while
+    # XDG_CONFIG_HOME is unset; with it exported the suite would flock a path in
+    # the operator's real config dir, named for the fixture's home basename --
+    # which is production's agent name too.
+    assert list(registry.parent.glob("locks/*.lock")), \
+        "the lock escaped the sandbox -- it did not follow AGENT_MGR_REGISTRY"
 
 
 def test_a_rollback_copy_is_promoted_before_the_next_run_can_fail(
