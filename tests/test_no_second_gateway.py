@@ -549,7 +549,14 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
                  ("up", "-d", "--pull", "missing"),
                  ("up", "-d", "--pull=missing"),
                  ("create", "hermes", "--pull=always"),
-                 ("run", "--entrypoint", "bash", "--rm", "--pull", "always", "hermes")):
+                 ("run", "--entrypoint", "bash", "--rm", "--pull", "always", "hermes"),
+                 # --ignore-buildable is an ordinary boolean, so a later
+                 # occurrence overrides an earlier one -- measured, both
+                 # orders. Scanning for the flag's PRESENCE read this as safe.
+                 ("pull", "--ignore-buildable", "--ignore-buildable=false"),
+                 # Past `--` the word is a service name, not the flag: the
+                 # same false accept in a second spelling.
+                 ("pull", "--ignore-buildable=false", "--", "--ignore-buildable")):
         r = run("compose", "rowan", *args, env=env)
         assert r.returncode != 0, f"{args} fetched past the guard"
         assert "could replace a built image" in r.stderr
@@ -563,8 +570,13 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
         # is different and otherwise untypeable.
         assert "INSIDE the container" in r.stderr
 
-    assert run("compose", "rowan", "pull", "--ignore-buildable",
-               env=env).returncode == 0, "the safe form was refused too"
+    for safe_pull in (("pull", "--ignore-buildable"),
+                      ("pull", "--ignore-buildable=true"),
+                      # the override runs the other way too, and refusing it
+                      # would be a guard reading its own rule only one way
+                      ("pull", "--ignore-buildable=false", "--ignore-buildable")):
+        assert run("compose", "rowan", *safe_pull,
+                   env=env).returncode == 0, f"{safe_pull} was refused too"
     for safe in (("up", "-d", "--pull", "never"), ("up", "-d", "--pull=build"),
                  # boolean flag: re-pulls the FROM image and rebuilds, so the
                  # output is still what this host built

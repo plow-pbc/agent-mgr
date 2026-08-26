@@ -249,8 +249,30 @@ compose_fetch_is_safe() {
     case "$sub" in build) return 0 ;; esac
     case "$sub" in
         pull)
-            case " $* " in *" --ignore-buildable "*) return 0 ;; esac
-            return 1 ;;
+            # Presence is not the value. Compose parses this as an ordinary
+            # boolean, so a LATER occurrence overrides an earlier one and
+            # `pull --ignore-buildable --ignore-buildable=false` fetches --
+            # measured, both orders. Scanning for the flag ANYWHERE therefore
+            # read a command that pulls as one that does not, which is the
+            # substitution this whole guard exists to refuse.
+            #
+            # So track the effective value, fail closed on anything that is
+            # not plainly true, and stop at `--`: past the end-of-flags marker
+            # the word is a service name, and counting it would be the same
+            # false accept in a second spelling.
+            local ignore_buildable=1
+            shift
+            while [ $# -gt 0 ]; do
+                case "$1" in
+                    --) break ;;
+                    --ignore-buildable) ignore_buildable=0 ;;
+                    --ignore-buildable=1|--ignore-buildable=t|--ignore-buildable=T) ignore_buildable=0 ;;
+                    --ignore-buildable=true|--ignore-buildable=True|--ignore-buildable=TRUE) ignore_buildable=0 ;;
+                    --ignore-buildable=*) ignore_buildable=1 ;;
+                esac
+                shift
+            done
+            return "$ignore_buildable" ;;
     esac
     # Scanned to the end, with no service boundary and no list of value-taking
     # flags. Locating the boundary needed that list to be COMPLETE, and an
@@ -291,7 +313,7 @@ compose() {
     # not -- they disagreed on wording and the passthrough's was redundant for
     # anything reaching compose_transition.
     compose_fetch_is_safe "$@" \
-        || die "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: 'pull' needs --ignore-buildable, and '--pull' takes only 'never' or 'build', because the flag overrides whatever the file says -- editing pull_policy will not clear this one. (resolve-guard enforces the same pair on the file, which is the other door.) If that --pull belongs to a command you are running INSIDE the container, this scan cannot tell -- wrap it so the flag is not a word on this argv, e.g. exec ... sh -c 'docker build --pull ...'."
+        || die "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: 'pull' needs --ignore-buildable still in effect at the end of the argv -- a later --ignore-buildable=false overrides an earlier bare one, and a word after -- is a service name, not the flag -- and '--pull' takes only 'never' or 'build', because the flag overrides whatever the file says -- editing pull_policy will not clear this one. (resolve-guard enforces the same pair on the file, which is the other door.) If that --pull belongs to a command you are running INSIDE the container, this scan cannot tell -- wrap it so the flag is not a word on this argv, e.g. exec ... sh -c 'docker build --pull ...'."
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
