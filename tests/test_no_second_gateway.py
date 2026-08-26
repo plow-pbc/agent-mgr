@@ -558,6 +558,10 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
         # the file -- which is why the message says so.
         assert "'--pull' takes only 'never' or 'build'" in r.stderr
         assert "will not clear this one" in r.stderr
+        # The scan is whole-argv by design, so it cannot tell a container's own
+        # --pull from ours. The message says so, since that operator's remedy
+        # is different and otherwise untypeable.
+        assert "INSIDE the container" in r.stderr
 
     assert run("compose", "rowan", "pull", "--ignore-buildable",
                env=env).returncode == 0, "the safe form was refused too"
