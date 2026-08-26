@@ -56,6 +56,69 @@ dotenv — so a declared latch with blank `DOMO_*` is a broken agent, not an
 unconfigured one, and it is reported as such. With the block gone,
 `check-latch` says "no latch configured" and exits clean.
 
+## Onboarding someone who is not you
+
+An agent for another person is the same deployment with one difference that
+changes the procedure: **three of its steps happen on their devices, and you
+cannot do any of them.** The account binding, the model credential and the Latch
+credential are each held by hardware you do not have.
+
+It is `register`, not `new` — the repo already exists, and a second row against
+it is the whole mechanism (*One repo, several people* in the
+[README](../README.md)):
+
+```sh
+agent-mgr register bob ~/services/shared-hermes-agent
+agent-mgr restore bob
+agent-mgr up bob
+```
+
+`up` before the codes, not after: `sign-in` runs `hermes auth add` **inside the
+container**, so it refuses until one is running. `activate` does not care — it
+writes to the home and reloads only if something is up.
+
+Then two codes out, two answers back:
+
+| | who | what |
+|---|---|---|
+| 1 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code |
+| 2 | you | `agent-mgr activate bob` — prints `Plow Activate: <code>` |
+| 3 | **them** | open the URL in *their* browser, enter the device code |
+| 4 | **them** | text the activation code **from the handset that should own the agent** |
+| 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
+| 6 | you | put the pair in their dotenv, then `check-latch bob` and `restart bob` |
+
+Steps 1 and 2 send together; 3 and 4 come back together.
+
+`sign-in` hands you the URL and then waits on the browser step, so run
+`activate` in a second terminal (or before it) rather than expecting step 1 to
+return first. Which is why:
+
+**Do not run 1 and 2 until they say they are at their phone.** Both codes are
+short-lived — the device code expires in about fifteen minutes — and the
+activation is a **one-time spend**: mint it while they are away from their desk
+and you cannot mint it again. Wait for "I'm here", then send both.
+
+**Step 4 is the account boundary, and it is decided by the handset.** `POST
+/v1/auth/activate` carries no credential; the binding is whoever texts the code
+back. A code texted by the wrong person binds the agent to the wrong account,
+one time, permanently.
+
+**The pair in step 5 is copy-once by design.** Latch drops it from memory once
+they confirm they have saved it, which relaying it through a chat window
+defeats — it lands in two message stores and both their backups, and that token
+drives their Mac. Nothing here prevents that, and it is the ordinary route
+today; just treat it as disclosed and re-mint from Latch once the agent is up.
+Re-minting is free. The exposure is not.
+
+**Tell them where their credentials live**, before step 4 rather than after:
+their Plow token, and through it their mailbox, sit in `$AGENT_HOME/.env` on
+this host — readable by whoever runs `agent-mgr`, which is not them.
+
+`check-latch` proves the Mac answered and `sign-in` proves the credential
+minted. Nothing proves the person understood what they authorised, so that part
+is a conversation, not a command.
+
 ## Day to day
 
 ```sh
