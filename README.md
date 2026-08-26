@@ -39,24 +39,26 @@ second agent wants it.
 
 ## What belongs in an instance repo
 
-`agent-mgr new` writes the two files every agent needs. Everything below them is
-added only when that agent actually needs it — a thin instance repo is the
-target, not a stage on the way to a thick one.
+`agent-mgr new` scaffolds the first two rows below. The README is yours to
+write; everything under it is added only when that agent actually needs it — a
+thin instance repo is the target, not a stage on the way to a thick one.
 
 | Path | Required | What |
 |---|---|---|
 | `agent.env` | yes | The descriptor. Overrides only; it may be entirely comments |
-| `config.yaml` | yes | The declarative half of the agent's home — model, plugins, `mcp_servers` |
-| `README.md` | yes | What this agent is, what it can and cannot reach, and how to bring it up |
+| `config.yaml` | yes | The declarative half of the agent's home — model, plugins, `mcp_servers`. `AGENT_CONFIG` may name another path; all four existing agents keep it in `runtime/` |
+| `README.md` | yes, hand-written | What this agent is, what it can and cannot reach, and how to bring it up |
 | `.env.example` | if it has extra keys | The dotenv contract, with no values. `restore` prefers it over the fleet template |
-| `tests/` | if it has siblings | What this agent must **not** reach, asserted |
+| `tests/` | if it has siblings | What this agent must **not** reach, asserted. Run with `pytest tests/` |
 | `skills.tsv` | if it runs a domain skill | Written by `add-skill`; one pinned SHA per skill |
 | `compose.override.yml` | if it needs a derived image or extra mounts | Paths must go through a variable set in `agent.env` |
 | a restore hook | if it has its own deploy step | Named by `AGENT_RESTORE_HOOK`; `restore` sequences it |
 
-Nothing else. In particular **no `compose.yml`, no `justfile`, no activation
-script, no `model-provider` or `reload-if-running`** — `agent-mgr` owns all of
-those, and a copy here is a fork of the fleet that drifts silently.
+Nothing else. In particular **no `compose.yml`, no activation script, no
+`model-provider` or `reload-if-running`** — `agent-mgr` owns all of those, and a
+copy here is a fork of the fleet that drifts silently. A `justfile` is the one
+near-miss: keep it to run this repo's own tests, never to restate `up`,
+`restore` or `activate`.
 
 ### Pin upstream, never vendor it
 

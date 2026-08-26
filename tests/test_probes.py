@@ -163,3 +163,19 @@ def test_the_scaffold_and_the_docs_agree_on_what_declares_latch(run, tmp_path):
         assert "Leave both blank" not in text, f"{doc} still promises blank means unconfigured"
         assert "latch:` block" in text and "delet" in text, (
             f"{doc} does not say how to opt out")
+
+
+def test_the_howto_still_reaches_the_readmes_instance_repo_contract():
+    """The HOWTO defers the file list to the README rather than keeping a second
+    copy, so a reworded heading there leaves the only path to the contract
+    pointing at nothing -- and 'one owner' is what makes that total."""
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    slugs = {re.sub(r"[^a-z0-9 -]", "", h.lower()).replace(" ", "-")
+             for h in re.findall(r"^#+ (.+)$", (root / "README.md").read_text(), re.M)}
+    targets = re.findall(r"\]\(\.\./README\.md#([a-z0-9-]+)\)",
+                         (root / "docs" / "HOWTO.md").read_text())
+    assert targets, "the HOWTO should still defer the file list to the README"
+    for t in targets:
+        assert t in slugs, f"docs/HOWTO.md links to README.md#{t}, which no heading produces"
