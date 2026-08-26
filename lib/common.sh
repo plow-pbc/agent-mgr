@@ -175,7 +175,7 @@ load_agent() {
     # $HOME is the one expansion, because it is the one the template documents.
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
-    local line key value
+    local line key value _k
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
     # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
     # this empty, and bash treats an empty array as unset under `set -u` until
@@ -185,7 +185,34 @@ load_agent() {
     while IFS= read -r line; do
         case "$line" in
             \#*|'') continue ;;
-            [A-Za-z_]*=*) ;;
+            [A-Za-z_]*=*)
+                # A key is an identifier, or the line is not a declaration.
+                # Checked here rather than at the membership test below, so that
+                # test receives an identifier by construction -- it cannot be
+                # trusted to notice on its own. `grep -w` matches a word-bounded
+                # SUBSTRING of the space-joined allowlist, so without this a
+                # multi-token key like `AGENT_TZ AGENT_IMAGE` matched, reached
+                # `printf -v`, and bash rejected the name -- the last command of
+                # the branch, so under set -e it took the whole process down.
+                #
+                # Dropping silently is right for a key this tool does not own
+                # and wrong for one it does: `AGENT_TZ = x`, the hand-written
+                # form, would vanish and the value would fall back to its
+                # default, which looks exactly like a line never written.
+                #
+                # Reported rather than accepted-with-a-trim: Compose reads this
+                # same file through --env-file with a parser that rejects spaces
+                # too, so tolerating the spelling here would make the two
+                # disagree about one file.
+                case "${line%%=*}" in
+                    *[!A-Za-z0-9_]*)
+                        _k="${line%%=*}"; _k="${_k//[[:space:]]/}"
+                        if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
+                            echo "agent-mgr: $descriptor: ignoring malformed '${line%%=*}' -- write it as $_k=<value>, no spaces around the =" >&2
+                        fi
+                        continue ;;
+                esac
+                ;;
             *) continue ;;
         esac
         key="${line%%=*}"
@@ -206,7 +233,17 @@ load_agent() {
         # commands run that repo's code with the operator's credentials. A
         # denylist could not close that -- it is an allowlist problem, because
         # the dangerous names are whatever this tool happens to read.
-        if printf '%s' "$AGENT_KEYS" | grep -qw "$key"; then
+        # -F, not a regex, and it is load-bearing rather than tidy. `grep -qw`
+        # read $key as a PATTERN, so a descriptor could declare a key whose
+        # bracket expression matched an allowlisted name as a character class --
+        # `AGENT_T[$(...)Z]` matches AGENT_TZ -- and the name then reached
+        # `printf -v`, where bash evaluates an array subscript arithmetically
+        # and arithmetic performs command substitution. A registered repo's
+        # agent.env could run host commands with the operator's credentials on
+        # any `agent-mgr resolve`, defeating the read-never-execute property
+        # this parser exists for. Defence in depth now that the shape is checked
+        # above; `--` for uniformity with the other guarded greps.
+        if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$key"; then
             printf -v "$key" '%s' "$value"
         else
             # An instance's own variables -- STR_VAULT and friends -- which its

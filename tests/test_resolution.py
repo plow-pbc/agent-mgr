@@ -1,3 +1,6 @@
+import os
+import pathlib
+import pytest
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
@@ -169,3 +172,84 @@ def test_an_instance_variable_still_reaches_its_hook(run, instance, tmp_path):
 
 
 
+
+
+# --- the descriptor parser is data, not shell -------------------------------
+
+
+@pytest.fixture
+def injection_marker():
+    """A marker path containing NO '-'.
+
+    Load-bearing. The exploit needs the key's bracket expression to be a VALID
+    character class, and a '-' between two characters inside one is a range --
+    `[$(touch /tmp/pytest-of-odio/...)Z]` is an invalid range, so grep errors
+    and the attack silently fails to reproduce. pytest's tmp_path always
+    contains '-', so a marker under it makes this test pass against the
+    vulnerable code: green for the wrong reason.
+    """
+    d = pathlib.Path(f"/tmp/agentmgr_inj_{os.getpid()}")
+    d.mkdir(exist_ok=True)
+    marker = d / "executed"
+    marker.unlink(missing_ok=True)
+    yield marker
+    marker.unlink(missing_ok=True)
+    d.rmdir()
+
+
+def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_marker):
+    """Read, never execute -- the property this parser exists for.
+
+    The membership check ran $key as a grep PATTERN, so a bracket expression
+    matched an allowlisted name as a character class (`AGENT_T[...Z]` matches
+    AGENT_TZ). The name then reached `printf -v`, where bash evaluates an array
+    subscript arithmetically and arithmetic performs command substitution -- so
+    any `agent-mgr resolve` on a registered repo ran that repo's code, as the
+    operator.
+    """
+    key = f"AGENT_T[$(touch {injection_marker})Z]"
+    run("register", "rowan", str(instance("rowan", descriptor=f"{key}=1\n")))
+    r = run("resolve", "rowan")
+    assert not injection_marker.exists(), (
+        "a descriptor key executed host code -- the parser is a shell again"
+    )
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+
+
+def test_only_a_declared_key_reaches_the_assignment(run, instance):
+    """`grep -w` matches a word-bounded SUBSTRING of the space-joined allowlist,
+    so a multi-token key is an exact match: `AGENT_TZ AGENT_IMAGE` is inside
+    AGENT_KEYS. It reached `printf -v`, which rejects the name, and under set -e
+    that killed load_agent -- every subcommand for the agent died on a raw bash
+    error instead of the documented path.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ AGENT_IMAGE=x\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, f"the CLI died on a malformed key: {r.stderr}"
+    assert "not a valid identifier" not in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    assert "AGENT_IMAGE=nousresearch/hermes-agent@sha256:" in r.stdout
+
+
+def test_a_malformed_spelling_of_an_owned_key_is_reported(run, instance):
+    """`AGENT_TZ = x` is the common hand-written form and is not valid dotenv.
+
+    Refusing it is right -- Compose reads the same file through --env-file with
+    a parser that rejects it too. Refusing it *silently* is not: the value falls
+    back to the default and looks exactly like a line never written.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ = America/Chicago\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "malformed" in r.stderr and "AGENT_TZ" in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+
+
+def test_an_unowned_malformed_key_stays_quiet(run, instance):
+    """This tool does not own STR_VAULT, so it has no standing to comment on
+    how that repo spells it."""
+    run("register", "rowan", str(instance("rowan", descriptor="STR VAULT=x\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert r.stderr.strip() == ""
