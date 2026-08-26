@@ -112,4 +112,14 @@ for old_archive in "$dest/$name-"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz
     fi
 done
 
+# Orphaned stages. Making the staging name unique per invocation is what makes
+# two same-day runs harmless, but it also means a run killed without its EXIT
+# trap -- SIGKILL, OOM, a reboot or a systemd stop mid-nightly -- leaks a
+# distinct near-full-size file instead of one the next run would truncate. It is
+# dot-prefixed, so it does not show in `ls`, and it sits in the one directory
+# every future backup's free space depends on: str's archive alone is 359 MB.
+# `-mtime +0` is what keeps a CONCURRENT invocation's live stage safe while
+# still bounding the orphans.
+find "$dest" -maxdepth 1 -type f -name ".$name-??????" -mtime +0 -delete
+
 printf '%s (%s)\n' "$archive" "$(du -h "$archive" | cut -f1)"

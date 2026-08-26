@@ -5,6 +5,7 @@ auth.json, the dotenv, sessions, memories, kanban -- with zero copies anywhere,
 and every home's own backups/ directory existed and was empty. This is the
 command that fills them.
 """
+import os
 import tarfile
 
 import pytest
@@ -170,19 +171,55 @@ def test_a_failed_archive_never_lands_under_a_valid_name(run, instance, tmp_path
     run that dies partway destroys the morning's good archive and leaves a
     truncated file that retention treats as healthy. For the tool holding the
     only copy of unrebuildable state, a corrupt archive that looks good is the
-    worst possible output."""
+    worst possible output.
+
+    The failure is injected AFTER staging succeeds. Making the destination
+    unwritable instead fails `mktemp` before `tar` ever runs, so nothing is
+    staged and the whole stage-and-promote mechanism could be deleted with the
+    suite still green."""
     _, home = registered(run, instance, "rowan")
     (home / ".env").write_text("x\n")
     good = backup_dir / "rowan-20200101.tar.gz"
     good.write_text("yesterday's, still good")
-    backup_dir.chmod(0o500)
-    try:
-        r = run("backup", "rowan", env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
-    finally:
-        backup_dir.chmod(0o700)
-    assert r.returncode != 0, "an unwritable destination is a real failure, not a warning"
-    assert good.read_text() == "yesterday's, still good"
-    assert not list(backup_dir.glob("*.part")), "a staged archive was left behind"
+
+    # A tar that writes a partial archive into the staged path, then dies the
+    # way a real failure does (status 2, not the tolerated 1).
+    shim = tmp_path / "shimbin"
+    shim.mkdir()
+    (shim / "tar").write_text(
+        "#!/usr/bin/env bash\n"
+        "for a in \"$@\"; do [ -n \"${take:-}\" ] && { printf 'partial' > \"$a\"; break; }; "
+        "[ \"$a\" = -czf ] && take=1; done\n"
+        "exit 2\n")
+    (shim / "tar").chmod(0o755)
+
+    r = run("backup", "rowan",
+            env={"AGENT_MGR_BACKUP_DIR": str(backup_dir),
+                 "PATH": f"{shim}:{os.environ['PATH']}"})
+
+    assert r.returncode != 0, "tar status 2 is a real failure, not the tolerated warning"
+    assert good.read_text() == "yesterday's, still good", "the previous good archive was destroyed"
+    assert not list(backup_dir.glob("rowan-20260*.tar.gz")), "a partial archive was promoted"
+    assert not list(backup_dir.glob(".rowan-*")), "the staged file was left behind"
+
+
+def test_an_orphaned_stage_is_swept_rather_than_leaked_forever(run, instance, tmp_path, backup_dir):
+    """A unique staging name is what makes two same-day runs harmless, but a run
+    killed without its EXIT trap leaks a distinct near-full-size file that
+    retention's glob deliberately excludes -- dot-prefixed, so invisible to
+    `ls`, in the one directory every future backup's free space depends on."""
+    _, home = registered(run, instance, "rowan")
+    (home / ".env").write_text("x\n")
+    orphan = backup_dir / ".rowan-ab12cd"
+    orphan.write_text("a stage its run never got to promote")
+    os.utime(orphan, (0, 0))
+    live = backup_dir / ".rowan-ef34gh"
+    live.write_text("another invocation's stage, running right now")
+
+    assert run("backup", "rowan",
+               env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)}).returncode == 0
+    assert not orphan.exists(), "the orphaned stage was left to accumulate"
+    assert live.exists(), "a concurrent invocation's live stage must survive the sweep"
 
 
 def test_a_home_written_while_it_is_read_still_produces_an_archive(run, instance, tmp_path, backup_dir):
