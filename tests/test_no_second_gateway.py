@@ -586,19 +586,6 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     assert r.returncode != 0, "the whole-argv scan is supposed to catch this"
     assert "INSIDE the container" in r.stderr, "no remedy for the one it cannot type"
     assert "sh -c" in r.stderr, "the named escape must be the one that works"
-    log = tmp_path / "escape.log"
-    b2 = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                     log=log)
-    assert run("compose", "rowan", "exec", "hermes", "sh", "-c",
-               "docker build --pull -t x .",
-               env={"PATH": f"{b2}:{os.environ['PATH']}"}).returncode == 0, (
-        "the escape the message names does not actually work")
-    # Reached compose, not merely "not refused": an exit 0 from a guard that
-    # silently swallowed the command would satisfy the line above.
-    words = (tmp_path / "escape.log.argv").read_text().splitlines()
-    assert "docker build --pull -t x ." in words, (
-        "the wrapped command reached compose re-split, so the flag is a word "
-        "on the argv after all -- which is the thing the escape avoids")
 
     # A leading global option would shift the subcommand out from under every
     # check that reads it as $1 -- including the fetch guard.
@@ -610,3 +597,23 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     r = run("compose", "rowan", "up", "-d", "--scale", "hermes=1", "--pull", "always", env=env)
     assert r.returncode != 0, "an unlisted value-taking flag truncated the scan"
     assert "could replace a built image" in r.stderr
+
+
+def test_the_escape_the_refusal_names_actually_reaches_compose(run, instance, tmp_path):
+    """Its own test, not a tail on the refusal one: that would overwrite the
+    shared fake mid-test and depend on statement order nothing states.
+
+    The refusal tells an operator whose `--pull` belongs to a container command
+    to wrap it so the flag is not a word on this argv. This proves the wrapped
+    form both passes the guard AND arrives intact -- re-split, the flag would be
+    a word again and the advice would be wrong."""
+    run("register", "rowan", str(instance("rowan")))
+    log = tmp_path / "escape.log"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    log=log)
+    r = run("compose", "rowan", "exec", "hermes", "sh", "-c",
+            "docker build --pull -t x .", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, f"the escape the message names was refused: {r.stderr}"
+    words = (tmp_path / "escape.log.argv").read_text().splitlines()
+    assert "docker build --pull -t x ." in words, (
+        "reached compose re-split, so the flag is a word on the argv after all")
