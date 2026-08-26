@@ -14,6 +14,13 @@ set -euo pipefail
 name="${1:?usage: backup <name> <home> <dest> <keep>}"
 home="${2:?}"; dest="${3:?}"; keep="${4:?}"
 
+# Before anything is created. The archive holds the agent's dotenv and
+# auth.json, and tar creates it honouring the umask -- 0644 under the ordinary
+# 022, 0664 under this host's 002 -- so every local account able to traverse the
+# destination could read the fleet's credentials out of the backups. Measured on
+# the first real run: four archives, all group- and world-readable.
+umask 077
+
 # Named by the AGENT NAME, not the home's basename. require_own_home admits the
 # legacy `*/.hermes` shape for any agent that declares it and only refuses two
 # agents resolving to the SAME directory -- so two agents with distinct homes
@@ -23,20 +30,22 @@ home="${2:?}"; dest="${3:?}"; keep="${4:?}"
 stamp="$(date -u +%Y%m%d)"
 archive="$dest/$name-$stamp.tar.gz"
 
-# tar from the home's PARENT with a relative member path, so an archive restores
-# as `.hermes-rowan/...` wherever it is unpacked. An absolute path would make
-# every restore a decision about whether tar's --strip-components count is
-# still right.
-parent="$(dirname "$home")"
-base="$(basename "$home")"
-
-# Staged, then promoted. Written straight at its final name, `-czf` truncates on
-# open: a second run that dies partway -- disk full, SIGINT -- would destroy the
-# morning's good archive AND leave a truncated file under a perfectly valid
-# name, indistinguishable from a good backup and treated as one by retention.
-# For the tool holding the only copy of unrebuildable state, a corrupt archive
-# that looks healthy is the worst possible output.
-trap 'rm -f "$archive.part"' EXIT
+# Staged under a name unique to THIS invocation, then promoted. Written straight
+# at its final name, `-czf` truncates on open: a run that dies partway -- disk
+# full, SIGINT -- would destroy the morning's good archive AND leave a truncated
+# file under a perfectly valid name, indistinguishable from a good backup and
+# treated as one by retention. For the tool holding the only copy of
+# unrebuildable state, a corrupt archive that looks healthy is the worst
+# possible output.
+#
+# Unique per invocation rather than a fixed `$archive.part`, which two same-day
+# runs would share -- one promoting the inode the other was still writing. A
+# lock would serialise them; a private staging file makes the overlap harmless
+# instead, because `mv` within one filesystem is atomic, so the final name only
+# ever holds a complete archive whichever run gets there last. No lock, no new
+# concept, and the dot prefix keeps it out of retention's glob.
+stage="$(mktemp "$dest/.$name-XXXXXX")"
+trap 'rm -f "$stage"' EXIT
 
 # Excluded because they are most of the bytes and none of the value: a home
 # restored without them is the same agent on its next boot. Carrying them
@@ -52,12 +61,21 @@ trap 'rm -f "$archive.part"' EXIT
 #
 # NOT --warning=no-file-changed: that suppresses the message and leaves the
 # exit status at 1, so it fixes the noise and none of the bug.
-tar --exclude="$base/logs" \
-    --exclude="$base/cache" \
-    --exclude="$base/lazy-packages" \
-    -C "$parent" -czf "$archive.part" "$base" || [ $? -eq 1 ]
+# From INSIDE the home, not from its parent. A home symlinked onto a bigger disk
+# is supported on purpose -- load_agent normalises rather than canonicalises for
+# exactly that reason, and a test asserts it -- and
+# `tar -C "$parent" ... "$basename"` stores that top-level symlink AS a symlink:
+# tar exits 0 and the archive holds one entry and no credentials, sessions or
+# memories at all. Measured, not assumed. Archiving from within follows the one
+# symlink that has to be followed, while every symlink inside the home is still
+# stored as a link. The archive is contents-rooted as a result, so it restores
+# into an explicitly named directory rather than unpacking a name into $HOME.
+tar --exclude=./logs \
+    --exclude=./cache \
+    --exclude=./lazy-packages \
+    -C "$home" -czf "$stage" . || [ $? -eq 1 ]
 
-mv "$archive.part" "$archive"
+mv "$stage" "$archive"
 trap - EXIT
 
 # Retention, matched to the exact names this command writes. $dest is an

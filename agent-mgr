@@ -126,19 +126,22 @@ case "$cmd" in
         [ -n "${AGENT_MGR_BACKUP_DIR:-}" ] \
             || die "set AGENT_MGR_BACKUP_DIR to where the archives go -- a backup written somewhere nobody named ends up on the same disk as the thing it backs up"
         [ -d "$AGENT_MGR_BACKUP_DIR" ] || die "no $AGENT_MGR_BACKUP_DIR -- create it, or point AGENT_MGR_BACKUP_DIR somewhere that exists"
+        # Target first, then options -- the shape add-skill already uses. The
+        # loop that also matched a bare word admitted `--all` anywhere and two
+        # targets with last-one-wins, permutations nothing documents and nobody
+        # will use.
+        target="${1:-}"; shift || true
+        [ -n "$target" ] || die "usage: agent-mgr backup <name>|--all [--keep DAYS]"
         keep=14
-        target=""
         while [ $# -gt 0 ]; do
             case "$1" in
                 --keep) keep="${2:?--keep needs a number of days}"; shift 2 ;;
-                --all)  target="--all"; shift ;;
-                *)      target="$1"; shift ;;
+                *) die "unknown option: $1" ;;
             esac
         done
         case "$keep" in
             ''|*[!0-9]*) die "--keep takes a whole number of days, got: $keep" ;;
         esac
-        [ -n "$target" ] || die "usage: agent-mgr backup <name>|--all [--keep DAYS]"
 
         if [ "$target" = "--all" ]; then
             # Keep going, then fail loudly. Aborting on the first bad row would

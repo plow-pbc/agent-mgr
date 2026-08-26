@@ -115,9 +115,16 @@ writers to one session database:
 
 ```sh
 agent-mgr down rowan
-tar -C "$HOME" -xzf /path/to/rowan-20260826.tar.gz
+tar -C ~/.hermes-rowan -xzf /path/to/rowan-20260826.tar.gz
 agent-mgr up rowan
 ```
+
+The archive is **contents-rooted** — it holds `./` entries, not a
+`.hermes-rowan/` prefix — so it unpacks into a directory you name rather than
+splatting a name into `$HOME`. That falls out of archiving from *inside* the
+home, which is what makes a home symlinked onto a bigger disk back up at all:
+archiving from the parent stores that symlink as a symlink, and tar exits 0
+having captured no credentials, sessions or memories.
 
 Retention prunes by the date in the archive's **name**, not by mtime, and only
 names this command itself wrote. The destination is a directory you chose and
