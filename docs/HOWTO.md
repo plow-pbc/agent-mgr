@@ -6,18 +6,9 @@ those agents have in common; each agent owns only what makes it itself.
 
 ## Install
 
-```sh
-git clone git@github.com:plow-pbc/agent-mgr.git ~/services/agent-mgr
-ln -s ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
-agent-mgr ls
-```
-
-Needs **`gh`, authenticated** (`gh auth status`). `restore` installs the Plow
-Chat plugin through the same `gh api` snapshot that installs a skill, so every
-agent needs it, not only one that ships a `skills.tsv`.
-
-The registry lives at `~/.config/agent-mgr/agents` and maps a name to an
-agent repo, so every command works from any directory.
+See [the README's install block](../README.md#agent-mgr) — one clone, two
+symlinks. Kept there rather than copied here: this block and the README's had
+already drifted apart on `mkdir -p` and `ln -sf`.
 
 ## Stand up a new agent
 
@@ -94,28 +85,39 @@ Nightly, with 14 days kept:
 ```
 
 To restore one, stop the agent first — two writers to one session database
-otherwise. **Unpack into an empty directory**: `tar -xzf` overlays rather than
-replaces, so restoring over a live home leaves every file the archive does not
-contain — including the `-wal` and `-shm` sidecars of the session databases you
-are rolling back, which is a mixture of two points in time reported as a
-success. `logs/`, `cache/` and `lazy-packages/` are excluded from the archive
-and so are not recreated; the agent rebuilds them.
-
-The archive is contents-rooted (`./` entries), so it unpacks into a directory
-you name rather than splatting into `$HOME`:
+otherwise — and unpack into an **empty** directory: `tar -xzf` overlays rather
+than replaces, so restoring over a live home leaves every file the archive does
+not contain, including the `-wal` and `-shm` sidecars of the very session
+databases you are rolling back. That is a mixture of two points in time,
+reported as a success.
 
 ```sh
 agent-mgr down rowan
 home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
-mv "$home" "$home.before-restore"   # empty target; keep the old one until you are sure
-mkdir -p "$home" && tar -C "$home" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz
-agent-mgr restore rowan   # repo-owned config, plugin and skills win
+real=$(readlink -f "$home")          # the actual directory, symlink or not
+mkdir -p ~/agent-restores
+mv "$real" ~/agent-restores/"$(basename "$real").before-restore"
+mkdir -p "$real"
+tar -C "$real" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz
+agent-mgr restore rowan              # repo-owned config, plugin and skills win
 agent-mgr up rowan
 ```
 
-If that home is a symlink, check what is actually at the path before running
-`mkdir -p` on it — on a link that vanished it creates a plain directory and the
-restore lands on the wrong volume, silently. `ls -ld "$home"` tells you.
+Three things that recipe is doing on purpose:
+
+- **`readlink -f`**, then move and recreate the *target*. A home symlinked onto
+  a bigger disk is supported, and moving `$home` itself would move the **link** —
+  the next `mkdir -p` would then make a plain directory on the root disk, the
+  restore would land on the wrong volume, and the real data would be orphaned at
+  the old target. Resolving first makes the symlinked and plain cases identical.
+- **`~/agent-restores`**, not `$home.before-restore`. The backup job globs
+  `~/.hermes*`, so a set-aside home left in that namespace gets archived nightly
+  as though it were a live agent — a second credential-bearing copy per agent,
+  indefinitely. Delete it once the restore is verified.
+- The archive is **contents-rooted** (`./` entries), which is why it needs a
+  named target and cannot splat into `$HOME`. `logs/`, `cache/` and
+  `lazy-packages/` are excluded from it and are not recreated; the agent
+  rebuilds them.
 
 ## Two layers: where does my code go?
 
