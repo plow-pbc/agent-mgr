@@ -1,5 +1,7 @@
 import os
 import pytest
+
+from conftest import install_fake_gh
 import stat
 from pathlib import Path
 
@@ -427,3 +429,67 @@ def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
     assert "gh auth status" in r.stderr
     assert "untouched" in r.stderr
     assert "are NOT" not in r.stderr, "install-plugin must not claim the config is gone"
+
+
+def test_the_plugin_install_refuses_a_caller_that_does_not_say_what_landed(tmp_path):
+    """The contract is checked at entry, so a forgetful caller fails immediately.
+
+    Pinned because the difference is invisible from the two real call sites --
+    both pass a sentence, so moving ${1:?...} out of the die string and into a
+    `local` binding changes nothing they can observe. What it changes is the
+    forgetful caller: inside the die it was expanded only on the failure branch,
+    and bash then aborted on the expansion BEFORE die ran, replacing the gh-auth
+    diagnosis with "1: the caller must say what landed" at the one moment the
+    diagnosis was needed. This calls it with no argument against a SUCCEEDING
+    fetch -- which returns 0 silently under the old form.
+    """
+    import os
+    import subprocess
+
+    home = tmp_path / "home" / ".hermes-probe"
+    home.mkdir(parents=True)
+    b = tmp_path / "bin"
+    b.mkdir()
+    install_fake_gh(tmp_path, b)
+
+    script = f"""
+    set -euo pipefail
+    AGENT_MGR_ROOT={ROOT}
+    AGENT_HOME={home}
+    AGENT_NAME=probe
+    die() {{ echo "$*" >&2; exit 1; }}
+    . {ROOT}/lib/common.sh
+    install_plow_plugin
+    """
+    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+                       env={**os.environ, "PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, "a caller that says nothing about state must not succeed"
+    assert "the caller must say what landed" in r.stderr
+
+
+def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
+        run, instance, tmp_path):
+    """A killed run leaves a valid second plugin tree where the gateway looks.
+
+    The trap does not fire on SIGKILL, an OOM kill or a power loss, so the
+    staging and backup directories can outlive their run. `.previous` is the
+    sharp one: it is a COMPLETE tree carrying `name: plow-chat-platform`, beside
+    the real one, in the directory the gateway enumerates.
+
+    Both names used to be pid-suffixed, which meant a run only ever cleaned up
+    after its own pid-twin -- every other orphan stayed forever. And the
+    backup's own rm sits inside the `is there a current install` branch, so on a
+    first install that branch is skipped and the orphan survives untouched.
+    Seeded here with NO current install, which is the case that got missed.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    plugins = tmp_path / "home" / ".hermes-rowan" / "plugins"
+    orphan = plugins / "plow-chat-platform.previous"
+    orphan.mkdir(parents=True)
+    (orphan / "plugin.yaml").write_text("name: plow-chat-platform\n")
+    (plugins / "plow-chat-platform.incoming").mkdir()
+
+    r = run("restore", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert sorted(p.name for p in plugins.iterdir()) == ["plow-chat-platform"], \
+        "an orphaned tree survived the install"

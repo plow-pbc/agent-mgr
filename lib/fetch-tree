@@ -85,15 +85,26 @@ target="$home/$root/$dest"
 # Staged beside the destination, then swapped. Installing in place would leave a
 # running agent reading a half-written tree for the duration of the copy, and a
 # failure partway through would leave it there permanently.
-staging="$target.incoming.$$"
-# Both this and the trap, because they stop different things. The trap stops
-# accumulation but does not run on SIGKILL, an OOM kill or a power loss -- and
-# this path is deterministic on pid, so a survivor plus ordinary pid reuse means
-# $staging can already exist. `cp -a` into an existing directory copies INSIDE
-# it, producing $staging/<name>, and the manifest check above already ran
-# against $src -- so the swap would publish a tree with its plugin.yaml one
-# level down, beside a killed run's files, and exit 0 saying "installed".
-rm -rf "$staging"
+# NOT pid-suffixed. A pid-scoped name only ever let a run clean up after its own
+# pid-twin, which leaves every other killed run's orphan in place forever --
+# neither the trap (it did not fire) nor a later run (different pid) removes it.
+# And $target.previous in particular is a complete, valid tree carrying
+# `name: plow-chat-platform`, sitting in the directory the gateway enumerates.
+# The suffix bought no isolation either: two concurrent runs already race
+# destructively on $target itself, so there was nothing for it to protect.
+#
+# Fixed names plus an unconditional rm means every run clears every orphan.
+# The rm matters beyond tidiness: `cp -a` into an existing directory copies
+# INSIDE it, and the manifest check above already ran against $src -- so the
+# swap would publish a tree with its plugin.yaml one level down and exit 0
+# saying "installed". Reproduced against the live repo.
+staging="$target.incoming"
+# BOTH, and unconditionally. The backup's own rm lives inside the `is there a
+# current install` branch below, so on a first install -- or after any run that
+# left no target -- that branch is skipped and an orphaned .previous survives
+# untouched. Which is the accumulation case exactly: a complete, valid tree
+# carrying `name: plow-chat-platform`, in the directory the gateway enumerates.
+rm -rf "$staging" "$target.previous"
 mkdir -p "$(dirname "$target")"
 cp -a "$src" "$staging"
 # Scripts are invoked directly by the agent; an unreadable 644 fails from inside
@@ -104,12 +115,11 @@ find "$staging" -type f \( -name '*.py' -o -name '*.sh' \) -exec chmod 755 {} +
 # tree in, so a SIGTERM or a failed mv between the two left the agent with no
 # tree at all, which is worse than the stale one it replaced.
 if [ -e "$target" ]; then
-    backup="$target.previous.$$"
-    # Same collision as $staging above, same reason. A run killed between this
-    # mv and the publish leaves a complete, valid tree at $target.previous.<pid>
-    # in the directory the gateway enumerates -- and it persists, because a
-    # later run at that pid would `mv` the target INSIDE it, leaving a nested
-    # tree that cleanup would then restore as the "previous copy".
+    backup="$target.previous"
+    # Same reasoning as $staging: fixed name, unconditional rm. Without it a run
+    # killed between this mv and the publish leaves a complete valid tree beside
+    # the real one, and a later run would `mv` the target INSIDE it -- leaving a
+    # nested tree that cleanup then restores as the "previous copy".
     rm -rf "$backup"
     mv "$target" "$backup"
 fi
