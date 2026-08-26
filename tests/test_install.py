@@ -601,18 +601,30 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     the macOS 12.3 floor README commits to. Both landed green here, because
     everything exists on Linux; both were found by an operator on a Mac.
 
-    A denylist is only as good as its entries, so this is not a portability
-    proof -- it is a tripwire on the specific forms that have already bitten.
-    `readlink -f` is deliberately absent: it is what SETS the 12.3 floor (that
-    is the release where readlink grew -f) and the entrypoint resolves itself
-    through it before anything else is sourced.
+    Not a portability proof -- a tripwire, and the selection rule is: forms this
+    repo has already been bitten by, plus the likeliest next ones for the shell
+    it actually writes. `stat -c` / `date -d` are deliberately absent; neither
+    stat nor date appears anywhere here, so they would be decoration.
+
+    `readlink -f` is absent for a different reason: it is what SETS the 12.3
+    floor -- that is the release where readlink grew -f -- and the entrypoint
+    resolves itself through it before anything else is sourced. Denying it would
+    redden agent-mgr:8 on the very platform this test defends.
     """
     import re
     banned = {
+        # Bitten: #19 (realpath), this PR (flock), and common.sh:182 already
+        # records a bash 3.2 bite -- an empty array under `set -u` before 4.4.
         "flock": r"\bflock\b",
-        "realpath": r"\brealpath\s+-",       # the GNU binary; os.path.realpath( is fine
-        "stat -c": r"\bstat\s+-c",
-        "date -d": r"\bdate\s+-d",
+        # Boundary, not a flag: BSD realpath ERRORS on a path that does not exist
+        # yet, which a first restore needs, so bare `realpath "$p"` IS the #19
+        # break. The lookbehind is what skips os.path.realpath( in a python3 -c.
+        "realpath": r"(?<![\w.])realpath\b",
+        # Likeliest next: GNU sed -i takes no suffix, BSD requires one.
+        "sed -i": r"\bsed\s+-i\b",
+        # macOS 12.3 ships bash 3.2, and every script here is #!/usr/bin/env bash.
+        "bash 4+ only syntax": r"\b(declare|local)\s+-A\b|\b(mapfile|readarray)\b"
+                               r"|\$\{[A-Za-z_0-9]+(,,|\^\^)",
     }
     scripts = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
     for script in scripts:
