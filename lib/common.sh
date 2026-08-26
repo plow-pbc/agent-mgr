@@ -336,6 +336,14 @@ parse_env_file() {
             # descriptor resolved fine and every direct-write command then
             # refused it as undeclared.
             [ "$key" = AGENT_HOME ] && AGENT_HOME_DECLARED=1
+            # A key this tool CONSUMES must carry a value. Empty is refused
+            # rather than assigned, because assigning it is indistinguishable
+            # from never declaring it -- every consumer downstream reaches for
+            # `${X:=default}`, so `AGENT_TZ=` in an instance's dotenv overwrote
+            # the repo's zone with nothing and the convention default filled in,
+            # putting the container on a third clock neither file named. Unowned
+            # keys are not this tool's business and go to the hooks empty or not.
+            [ -n "$value" ] || die "$file: line $_lineno: empty value for $key"
             printf -v "$key" '%s' "$value"
         elif [ "$collect" = "hooks" ]; then
             # An instance's own variables -- STR_VAULT and friends -- which its

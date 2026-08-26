@@ -379,27 +379,6 @@ def test_the_dotenv_is_read_never_executed(run, instance, tmp_path, injection_ma
     assert r.stderr.strip() == "", "agent-mgr commented on a line it does not own"
 
 
-def test_a_malformed_AGENT_TZ_value_is_fatal(run, instance, tmp_path):
-    """The one key it DOES consume fails loudly, like any other.
-
-    Not warn-and-fall-back. This feature exists so an agent does not silently
-    run on somebody else's clock, and a warning on stderr plus the fleet default
-    is exactly that failure wearing a diagnostic. The operator hand-edits this
-    file, so a broken quote is theirs to fix and the error names where.
-
-    It reaches the OTHER agents' `activate`/`sign-in` through require_own_home's
-    fail-closed arm. That is the deliberate cost: a resolver that cannot run
-    should stop direct writes rather than guess. The message names file, line
-    and kind -- never content, because this file sits beside credentials.
-    """
-    run("register", "rowan", str(instance("rowan")))
-    _home_env(tmp_path, "rowan", 'PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n')
-    r = run("resolve", "rowan")
-    assert r.returncode != 0
-    assert "line 2: unterminated quote" in r.stderr
-    assert "sk-notreal" not in r.stderr and "America/Chicago" not in r.stderr
-
-
 def test_an_unterminated_final_line_is_still_read(run, instance, tmp_path):
     """The dotenv is maintained by hand and by the gateway, so a last line with
     no trailing newline is ordinary. `read` returns non-zero at EOF even having
@@ -447,15 +426,16 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "dotenv, rowan_resolves, reaches_siblings",
+    "dotenv, rowan_resolves, reaches_siblings, expected_error",
     [
-        ("AGENT_T[oops]=1\n", True, False),
-        ('AGENT_TZ="unterminated\n', False, True),
+        ("AGENT_T[oops]=1\n", True, False, None),
+        ('PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n',
+         False, True, "line 2: unterminated quote"),
     ],
     ids=["a-key-agent-mgr-skips", "the-one-key-it-consumes"],
 )
 def test_which_dotenv_lines_reach_another_agent(
-    run, instance, tmp_path, dotenv, rowan_resolves, reaches_siblings
+    run, instance, tmp_path, dotenv, rowan_resolves, reaches_siblings, expected_error
 ):
     """Which lines in somebody's credential file can cost somebody ELSE a command.
 
@@ -468,8 +448,11 @@ def test_which_dotenv_lines_reach_another_agent(
     a resolver that cannot run stops every direct-write command for every agent
     rather than guessing who claims which home. That is the deliberate cost of
     making the dotenv fail loudly, so it is pinned here rather than asserted in
-    a docstring -- wrapping the dotenv parse in `|| true` would flip this
-    fleet-wide property with the rest of the suite green.
+    a docstring -- reverting to skip-and-continue flips this fleet-wide property
+    and fails exactly the second row.
+
+    The diagnostic is checked on the same row that causes it: file, line and
+    kind, never content, because this file sits beside credentials.
     """
     run("register", "rowan", str(instance("rowan")))
     run("register", "other", str(instance("other")))
@@ -479,12 +462,35 @@ def test_which_dotenv_lines_reach_another_agent(
     assert (r.returncode == 0) is rowan_resolves, r.stderr
     if rowan_resolves:
         assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    if expected_error:
+        assert expected_error in r.stderr
+        assert "sk-notreal" not in r.stderr and "America/Chicago" not in r.stderr
 
     # restore, not resolve: require_own_home runs on direct-write commands only,
     # so `resolve` cannot observe the amplification either way.
     other = run("restore", "other")
     assert (other.returncode != 0) is reaches_siblings, other.stderr
     assert ("could not resolve rowan" in other.stderr) is reaches_siblings
+
+
+def test_an_empty_person_zone_does_not_silently_discard_the_repos(run, instance, tmp_path):
+    """`AGENT_TZ=` is refused, not assigned.
+
+    Assigning empty is indistinguishable from never declaring it, because every
+    consumer downstream reaches for `${AGENT_TZ:=America/Los_Angeles}`. So an
+    empty person-level value overwrote the repo's zone with nothing, the
+    convention default filled in, and the container ran on a third clock that
+    NEITHER file named -- with resolution reporting success. The silent
+    wrong-clock failure this whole feature exists to prevent, reachable by
+    clearing a line.
+    """
+    repo = instance("rowan", descriptor="AGENT_TZ=America/New_York\n")
+    run("register", "rowan", str(repo))
+    _home_env(tmp_path, "rowan", "AGENT_TZ=\n")
+    r = run("resolve", "rowan")
+    assert r.returncode != 0, "an empty person-level zone was accepted"
+    assert "line 1: empty value for AGENT_TZ" in r.stderr
+    assert "America/Los_Angeles" not in r.stdout
 
 
 def test_the_dotenv_follows_a_declared_home(run, instance, tmp_path):

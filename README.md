@@ -205,6 +205,11 @@ instance off its chat, not just off its clock. An extra blank line is skipped.
 Precedence is **dotenv > the repo's `agent.env` > convention**, and the dotenv is
 read after the home is known, so it cannot move its own home.
 
+To hand a person back to the repo's zone, **delete the line** — do not blank it.
+`AGENT_TZ=` is refused, because assigning an empty value is indistinguishable
+from never declaring one: it would clear the repo's zone, let the convention
+default fill in, and run that container on a third zone neither file named.
+
 `AGENT_TZ` alone, deliberately — that file holds credentials. One non-secret
 value is taken into `agent-mgr`'s process; `TZ` still reaches the container
 through `environment:`, so nothing from the dotenv goes to Compose and the
