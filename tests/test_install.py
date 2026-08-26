@@ -423,12 +423,14 @@ def _block(text, start, end):
     return "\n".join(lines[i:j])
 
 
-def test_each_pin_is_read_only_where_its_own_repo_is_fetched():
-    """The split exists to stop one ref reaching two repos; this is that invariant.
+def test_each_pin_is_read_only_where_its_command_fetches():
+    """The split exists to stop one ref serving two eras; this is that invariant.
 
-    The adapter moved to hermes-plow-chat and the activation script stayed in
-    the archived seed, so a ref read by the wrong command sends a SHA at a repo
-    that has never had it -- and 404s on activate, the irreversible one.
+    Both come from hermes-plow-chat, at two points in its history: `Strip the
+    SEED ceremony` deleted ref/scripts/, so the plugin pin moves forward past it
+    while create_plow_chat_curl.sh exists only before it. A ref read by the
+    wrong command sends a post-strip SHA at a ref/scripts/ URL that does not
+    exist at that commit -- and 404s on activate, the irreversible one.
 
     Per use-site, not over a concatenation of both files. The first version of
     this test asserted four substrings existed *somewhere* across common.sh and
@@ -443,12 +445,17 @@ def test_each_pin_is_read_only_where_its_own_repo_is_fetched():
 
     activate = _block((ROOT / "agent-mgr").read_text(), "    activate)", "    sign-in)")
     assert "plow-chat-activate.ref" in activate
-    assert "plow-pbc/seed-hermes-plow" in activate
+    assert "plow-pbc/hermes-plow-chat" in activate
     assert "plow-chat-plugin.ref" not in activate, "activate must not read the plugin pin"
 
 
 def test_the_two_pins_are_not_the_same_commit():
-    """They name different repos, so one SHA in both files is a bump gone wrong."""
+    """One repo at two points in its history, so one SHA in both is a bump gone wrong.
+
+    The plugin pin moving onto the activate pin's commit would install the
+    pre-strip layout as a plugin; the activate pin moving onto the plugin's
+    would 404 the one command that is a one-time irreversible spend.
+    """
     plugin = (ROOT / "runtime" / "plow-chat-plugin.ref").read_text().strip()
     activate = (ROOT / "runtime" / "plow-chat-activate.ref").read_text().strip()
     assert plugin != activate

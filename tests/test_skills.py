@@ -239,4 +239,7 @@ def test_a_dotted_destination_does_not_accept_a_different_skill(run, instance, t
     r = run("add-skill", "property", "plow-pbc/x", "--ref", "b" * 40, "--dest", "foo.bar",
             env=_fake_bin(tmp_path, skill_name="fooXbar"))
     assert r.returncode != 0, "installed a skill whose name only matched as a regex"
-    assert "is not the foo.bar skill" in r.stderr
+    # fetch-tree serves both roots, so its refusal names the manifest rather
+    # than the word "skill" -- it still names the destination, which is what
+    # tells this refusal apart from a fetch that simply failed.
+    assert "does not name foo.bar" in r.stderr
