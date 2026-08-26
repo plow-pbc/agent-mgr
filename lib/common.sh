@@ -37,26 +37,12 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # below depend on the difference: normalized_path leaves symlinks intact
 # (`-m -s`), canonical_path follows them (`-m`).
 #
-# `os.path.abspath(` and `os.path.realpath(` each appear exactly once in
-# anything this tool runs -- here. tests/test_resolve_guard.py shadows python3
-# and fails on one of those two strings to make exactly one of these helpers
-# fail while the other keeps working. That is what reaches the refusals PAST
-# load_agent -- with no python3 at all, load_agent's own refusal fires first
-# and the guards are never entered. Both helpers are already called on
-# AGENT_HOME before require_running_container_is_ours is entered, on every route
-# into it, so a stub failing either one outright stops earlier than that guard
-# and a stub aimed at a refusal inside it has to key on the mounted path too.
-# A second caller of either call, in any file -- lib/resolve-guard and
-# agent-mgr run python3 too -- silently moves which invocation that test kills.
-#
-# `-I` on every python3 this tool runs ON THE HOST -- these two and
-# lib/resolve-guard's parser; agent-mgr's fourth runs inside the container,
-# where this host's environment does not reach it. It drops PYTHONPATH and the
-# user site directory, so none of them can be handed a `sitecustomize` to
-# import. It buys less than it looks -- anyone who can set PYTHONPATH can shadow
-# `python3` on PATH outright, which is how the tests reach these refusals -- but
-# they want nothing from the environment, and no test pins the flag, so this
-# note is what keeps it.
+# `-I` on both, and on lib/resolve-guard's parser -- every python3 this tool
+# runs on the host. It drops PYTHONPATH and the user site directory, so none of
+# them can be handed a `sitecustomize` to import. No test pins the flag, so this
+# line is what keeps it. `os.path.abspath(` and `os.path.realpath(` each appear
+# exactly once in anything this tool runs, which is what lets a test break one
+# helper and not the other; a second caller of either moves which call that is.
 #
 # And the rule every caller of these two follows, stated once here because
 # stating it at each site is what let one site be fixed and another missed:
@@ -463,20 +449,16 @@ require_running_container_is_ours() {
     # deliberately supports -- so picking one and trusting it identified an
     # arbitrary member of the set and ignored the rest. Any foreign mount
     # refuses; this agent's own one-offs mount its own home and pass.
-    # Resolved ONCE, above the loop, and refused EXPLICITLY rather than through
-    # `set -e`. Inline in the `if` below, a failed call on both sides compared
-    # "" to "", matched, and `continue`d past the refusal for a container
-    # mounting a FOREIGN home. Hoisting alone does not fix that: `set -e` is
-    # suspended for everything on the left of a `||`, function bodies included,
-    # and `lib/reload-if-running` calls this whole path exactly that way -- so
-    # the assignment would quietly leave "" there too. `|| die` holds in any
-    # caller context; the exit status is the only thing that does.
-    # Shadowed, and left in deliberately: require_own_home resolves this same
-    # path with this same helper on every route into this function, so this
-    # refusal can only fire when the SECOND call fails where the first
-    # succeeded -- a fork the host would not give, an interpreter that crashed.
-    # That is why no keyed stub reaches it and it has no test: a stub matching
-    # this path fires require_own_home's refusal instead, one process earlier.
+    # Once, above the loop, and refused with `|| die` rather than left to
+    # `set -e` -- which is suspended for everything on the left of a `||`,
+    # function bodies included, and lib/reload-if-running calls this whole path
+    # that way. Resolved inline in the `if` below instead, a failed call
+    # compared "" to "" and `continue`d past the refusal for a container
+    # mounting a FOREIGN home.
+    # Shadowed, deliberately: require_own_home resolves this same path with this
+    # same helper on every route in, so this fires only when the SECOND call
+    # fails where the first succeeded. That is also why it has no test -- a stub
+    # matching this path trips require_own_home's refusal, one process earlier.
     self="$(canonical_path "$AGENT_HOME")" \
         || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve $AGENT_HOME. Anything already written is written; re-run once that is fixed."
     for cid in $cids; do
@@ -638,13 +620,10 @@ require_own_home() {
     # the rentals agent's repo would stop `str` resolving, and a copycat
     # declaring the same bare `.hermes` would then pass and write config and
     # credentials into a live agent's mounted home.
-    # Resolved once, before any row is read, and unconditionally. Invariant
-    # across the loop -- the sibling load_agent below runs in a subshell, so it
-    # cannot move this one. Unconditionally because this is the fail-closed
-    # side: a resolver that cannot run stops every direct-write command here,
-    # rather than being reached only when a sibling happens to exist. It buys
-    # back the per-row interpreter start at two or more siblings and costs one
-    # at zero, which is the right side of that trade for a guard.
+    # Once, before any row is read, and unconditionally -- invariant across the
+    # loop (the sibling load_agent below runs in a subshell), and this is the
+    # fail-closed side, so a resolver that cannot run should stop every
+    # direct-write command rather than only those with a sibling to compare.
     local other odir ohome o err why skipped=0 skipped_named= self
     self="$(canonical_path "$AGENT_HOME")" \
         || die "refusing to write to $AGENT_HOME -- could not resolve it"
@@ -682,9 +661,8 @@ require_own_home() {
         # match neither accepted shape. This one asks "is it the same
         # directory", and two spellings reaching one directory through a symlink
         # is exactly the aliasing this loop exists to catch.
-        # Into a local for the same reason `self` is: inline in this `&&` list
-        # `set -e` is suspended for the left-hand command, so a resolver that
-        # failed for THIS path alone would compare unequal, skip the die, and
+        # Into a local for the same reason `self` is: inline in this `&&` list a
+        # failure for THIS path alone would compare unequal, skip the die, and
         # open the very collision the loop exists to close.
         o="$(canonical_path "$ohome")" \
             || die "refusing to write to $AGENT_HOME -- could not resolve ${other}'s home ($ohome)"
