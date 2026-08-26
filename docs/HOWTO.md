@@ -90,16 +90,24 @@ writes mode-0600 archives, because they hold credentials.
 Nightly, with 14 days kept:
 
 ```sh
-0 4 * * * ~/services/agent-mgr/backup-homes ~/agent-backups && find ~/agent-backups -name '*.tar.gz' -mtime +14 -delete
+0 4 * * * ~/.local/bin/backup-homes ~/agent-backups && find ~/agent-backups -name '*.tar.gz' -mtime +14 -delete
 ```
 
 To restore one, stop the agent first — two writers to one session database
-otherwise. The archive is contents-rooted (`./` entries), so it unpacks into a
-directory you name rather than splatting into `$HOME`:
+otherwise. **Unpack into an empty directory**: `tar -xzf` overlays rather than
+replaces, so restoring over a live home leaves every file the archive does not
+contain — including the `-wal` and `-shm` sidecars of the session databases you
+are rolling back, which is a mixture of two points in time reported as a
+success. `logs/`, `cache/` and `lazy-packages/` are excluded from the archive
+and so are not recreated; the agent rebuilds them.
+
+The archive is contents-rooted (`./` entries), so it unpacks into a directory
+you name rather than splatting into `$HOME`:
 
 ```sh
 agent-mgr down rowan
 home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
+mv "$home" "$home.before-restore"   # empty target; keep the old one until you are sure
 mkdir -p "$home" && tar -C "$home" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz
 agent-mgr restore rowan   # repo-owned config, plugin and skills win
 agent-mgr up rowan
