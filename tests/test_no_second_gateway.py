@@ -399,6 +399,14 @@ def test_no_state_of_the_foreign_mount_produces_a_removal_command(run, instance,
     ("compose", "rowan", "top"),
     ("compose", "rowan", "events"),
     ("compose", "rowan", "port", "hermes", "8080"),
+    # `pull` never reaches a container -- `compose` refuses it outright. It is
+    # here because dropping it from COMPOSE_NEEDS_NO_IDENTIFICATION was a
+    # decision, and nothing else pins it: re-adding the exemption would make
+    # this row report the fetch refusal instead, which is the by-inheritance
+    # skip the list exists to prevent. It also records the other half of that
+    # decision's cost -- against a foreign container the operator is told about
+    # the container, not about `pull`.
+    ("compose", "rowan", "pull"),
 ])
 def test_every_command_that_reaches_an_existing_container_identifies_it(
         run, instance, tmp_path, args):
