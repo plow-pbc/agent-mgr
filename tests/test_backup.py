@@ -140,11 +140,11 @@ def test_retention_prunes_only_this_agents_own_archives(run, instance, tmp_path,
 
 
 def test_archives_are_named_by_the_agent_not_its_home(run, instance, tmp_path, backup_dir):
-    """require_own_home admits the legacy `*/.hermes` shape for any agent that
-    declares it, and only refuses two agents resolving to the SAME directory.
-    Named by the home's basename, two agents with distinct homes ending in the
-    same component collapse onto one filename: --all overwrites the first with
-    the second and exits 0, leaving an agent with no copy at all."""
+    """`backup` admits the legacy shape on the descriptor's declaration alone and
+    takes no collision check at all, so two agents may hold distinct homes
+    ending in the same component. Named by the home's basename they would
+    collapse onto one filename: --all overwrites the first with the second and
+    exits 0, leaving an agent with no copy at all."""
     for name in ("rowan", "life"):
         repo = instance(name, descriptor=f"AGENT_HOME=$HOME/{name}-side/.hermes\n")
         assert run("register", name, str(repo)).returncode == 0
@@ -300,7 +300,10 @@ def test_a_descriptor_cannot_point_the_archive_at_the_whole_account(
 
     r = run("backup", "rowan", env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
     assert r.returncode != 0
-    assert "own home" in r.stderr
+    # "refusing to archive", not just "own home": the verb is the caller's, and
+    # the default arm ("write to") would satisfy a laxer assertion identically —
+    # so the mis-framing a nightly would show an operator could regress unseen.
+    assert "refusing to archive" in r.stderr
     assert not list(backup_dir.glob("*.tar.gz")), "it archived the account anyway"
 
 
