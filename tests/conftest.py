@@ -86,7 +86,15 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # stdin beside argv, in its OWN file: a test asserting a secret is
         # absent from argv proves nothing about whether it still reaches the
         # command, and one file could not tell the two apart.
-        f'case "$*" in *exec*) cat >> {log}.stdin ;; esac' if log else "",
+        #
+        # Gated on `exec -T` because that is what the real command needs to
+        # forward a pipe -- without it docker allocates a TTY and refuses piped
+        # stdin, so a fake that read the pipe anyway would stay green while the
+        # live probe broke. And gated on fd 0 not being a terminal: most execs
+        # here inherit the parent's stdin, which under `pytest -s` IS the
+        # terminal, and an unconditional `cat` would hang the suite under the
+        # ordinary way to debug these tests.
+        f'case "$*" in *"exec -T"*) [ -t 0 ] || cat >> {log}.stdin ;; esac' if log else "",
         'case "$*" in',
         f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;",
         f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',

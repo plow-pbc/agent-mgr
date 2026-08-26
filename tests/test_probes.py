@@ -96,7 +96,7 @@ def test_the_token_never_reaches_the_process_table(run, instance, tmp_path):
                     name="property", exec_output="200", log=log)
     run("check-latch", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
     argv = log.read_text()
-    assert "exec" in argv, "the probe did not run, so this asserts nothing"
+    assert "exec -T" in argv, "no -T, so docker would allocate a TTY and refuse the pipe"
     assert "supersecrettokenvalue" not in argv, "the token was passed in argv"
     # And the other half: it must still REACH curl. Misspell the config keyword
     # or lose the -T and the probe gets an unauthenticated 401, which check-latch

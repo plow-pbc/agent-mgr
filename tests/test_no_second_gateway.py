@@ -208,3 +208,19 @@ def test_a_maintenance_run_is_not_refused_while_the_guard_is_refusing(run, insta
     r = run("compose", "rowan", "run", "--rm", "--entrypoint", "bash", "hermes",
             env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"a refusing guard blocked a maintenance shell: {r.stderr}"
+
+
+def test_a_teardown_hidden_behind_a_read_shaped_subcommand_asks_the_veto(run, instance, tmp_path):
+    """`docker compose wait --down-project` drops the whole project when the
+    first container stops. Membership of the leaves-it-running list has to hold
+    under every flag the subcommand accepts, and this is the one that does not --
+    the same teardown-past-the-veto route `scale hermes=0` was."""
+    import os
+    from conftest import fake_docker
+    from test_install import _guarded
+    _guarded(instance, run, tmp_path, refuses=True)
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    r = run("compose", "rowan", "wait", "hermes", "--down-project",
+            env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, "a project teardown went through past a refusing guard"
+    assert "refused" in r.stderr

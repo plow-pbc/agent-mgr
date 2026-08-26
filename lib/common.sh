@@ -203,6 +203,11 @@ compose() {
 # ingest, and the thing that makes it dangerous -- an unreplaced entrypoint --
 # is refused upstream by run_replaces_the_entrypoint rather than by the veto.
 #
+# An entry must be safe under EVERY flag it accepts, which is why `wait` is not
+# here: `wait --down-project` drops the whole project when the first container
+# stops, so listing it would reopen the same teardown-past-the-veto route the
+# inversion was written to close.
+#
 # Stated as what is safe rather than what is dangerous, because a list of
 # stoppers has to be complete to be correct and the one this replaced was not:
 # `scale hermes=0` stops a container and was in neither list.
@@ -213,7 +218,7 @@ compose() {
 # wanted. An entry missing from the old list skipped the veto silently. Refusing
 # loudly is the better failure, which is why the list is this way round, but it
 # is a trade rather than a free win.
-COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec run cp pull build push wait"
+COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec run cp pull build push"
 
 # Every route to a container transition goes through here, so the instance's
 # veto cannot be bypassed by adding a call site that forgets it.
