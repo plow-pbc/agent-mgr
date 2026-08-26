@@ -1,3 +1,5 @@
+import os
+import pytest
 import stat
 from pathlib import Path
 
@@ -162,7 +164,7 @@ def test_a_failing_hook_fails_the_restore(run, instance, tmp_path):
     run("register", "str", str(repo))
     r = run("restore", "str")
     assert r.returncode != 0
-    assert "did NOT land" in r.stderr
+    assert "ARE installed" in r.stderr and "is NOT" in r.stderr
 
 
 def test_a_declared_hook_that_is_missing_is_named(run, instance):
@@ -199,6 +201,13 @@ def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance,
     assert marker.exists(), "restore did not install the plugin"
 
 
+def _transition_env(tmp_path, log=None):
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan",
+                    name="rowan", log=log)
+    return {"PATH": f"{b}:{os.environ['PATH']}"}
+
+
 def _guarded(instance, run, tmp_path, *, refuses):
     """An instance whose pre-transition guard allows or refuses."""
     repo = instance("rowan", descriptor="AGENT_PRE_TRANSITION=scripts/guard.sh\n")
@@ -225,31 +234,6 @@ def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
         r = run(*cmd, env=env)
         assert r.returncode != 0, f"{cmd} transitioned past a refusing guard"
         assert "refused" in r.stderr
-
-
-def test_a_refusing_guard_stops_the_reload_a_write_triggers_without_failing_it(
-        run, instance, tmp_path):
-    """install-plugin, activate, sign-in and add-skill reach a restart through
-    reload-if-running rather than agent-mgr's own gate, so without asking here a
-    declared guard cannot stop them -- an add-skill would bounce the very ingest
-    the guard exists to protect.
-
-    Non-fatal, unlike a transition the operator asked for: the write has already
-    landed by then (activate has spent a one-time activation), so a red exit
-    would read as "the write failed" and invite the re-run that costs another.
-    """
-    import os
-    _guarded(instance, run, tmp_path, refuses=True)
-    from conftest import fake_docker
-    log = tmp_path / "docker.log"
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan", log=log)
-    env = {"PATH": f"{b}:{os.environ['PATH']}"}
-    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
-
-    r = run("install-plugin", "rowan", env=env)
-    assert r.returncode == 0, f"the guard failed a write that had already landed: {r.stderr}"
-    assert "restart" not in log.read_text(), "the reload restarted past a refusing guard"
-    assert "was NOT restarted" in r.stderr, "the skipped restart was not reported"
 
 
 def test_the_guard_runs_before_a_transition_and_not_before_a_read(run, instance, tmp_path):
@@ -283,3 +267,96 @@ def test_an_agent_with_no_guard_transitions_freely(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     assert run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"}).returncode == 0
+
+
+@pytest.mark.parametrize("args", [
+    ["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
+    ["compose", "rowan", "up", "-d", "--force-recreate"],
+    ["compose", "rowan", "start"], ["compose", "rowan", "pause"],
+    ["compose", "rowan", "unpause"], ["compose", "rowan", "stop"],
+])
+def test_no_route_to_a_transition_bypasses_the_veto(run, instance, tmp_path, args):
+    """Every route goes through compose_transition, so a new call site cannot
+    forget the veto. start/pause/unpause interrupt a running process as surely
+    as down does, and the earlier list omitted all three."""
+    _guarded(instance, run, tmp_path, refuses=True)
+    r = run(*args, env=_transition_env(tmp_path))
+    assert r.returncode != 0, f"{args} transitioned past a refusing guard"
+    assert "refused" in r.stderr
+
+
+def test_a_reload_is_a_transition_too(run, instance, tmp_path):
+    """restore writes and then reloads. Routing the reload around the veto let
+    four write-then-reload subcommands restart the container mid-ingest."""
+    repo = _guarded(instance, run, tmp_path, refuses=False)
+    # Allow the restore's own pre-write veto, then refuse by the time it reloads.
+    (repo / "scripts" / "guard.sh").write_text(
+        "#!/usr/bin/env bash\n"
+        f'n=$(cat {tmp_path}/count 2>/dev/null || echo 0); echo $((n+1)) > {tmp_path}/count\n'
+        '[ "$n" = 0 ] || { echo "a nightly started" >&2; exit 1; }\n')
+    (repo / "scripts" / "guard.sh").chmod(0o755)
+    r = run("restore", "rowan", env=_transition_env(tmp_path))
+    assert r.returncode != 0
+    assert "refused" in r.stderr
+
+
+def test_the_subcommand_is_classified_not_the_flattened_argv(run, instance, tmp_path):
+    """`up` can appear in a prompt, a filename or a flag value. Matching the
+    flattened "$*" made those look like transitions."""
+    _guarded(instance, run, tmp_path, refuses=True)
+    r = run("compose", "rowan", "exec", "hermes", "echo", "please up the volume",
+            env=_transition_env(tmp_path))
+    assert r.returncode == 0, r.stderr
+
+
+def test_restore_replays_every_pinned_skill(run, instance, tmp_path):
+    """It is advertised as the whole deploy. A rebuild that omitted them left an
+    agent whose skills.tsv said one thing and whose home held another."""
+    import base64
+    import io
+    import tarfile
+    repo = instance("rowan")
+    (repo / "skills.tsv").write_text(f"plow-pbc/x\t{'a' * 40}\tmy-skill\t\n")
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        data = b"---\nname: my-skill\n---\n"
+        info = tarfile.TarInfo("r-abc/SKILL.md"); info.size = len(data)
+        tar.addfile(info, io.BytesIO(data))
+    (tmp_path / "skill.tgz").write_bytes(buf.getvalue())
+    b = tmp_path / "skillbin"; b.mkdir(exist_ok=True)
+    (b / "gh").write_text(f'#!/usr/bin/env bash\ncat {tmp_path / "skill.tgz"}\n')
+    (b / "gh").chmod(0o755)
+    (b / "curl").write_text("#!/usr/bin/env bash\nout=\"\"\n"
+                            'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done\n'
+                            'printf "#!/usr/bin/env bash\\nexit 0\\n" > "$out"\n')
+    (b / "curl").chmod(0o755)
+    # conftest's docker, which answers `config` -- the bare stub made
+    # resolve-guard refuse at the reload, after the skill had installed.
+    from conftest import fake_docker
+    d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    run("register", "rowan", str(repo))
+    r = run("restore", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "home" / ".hermes-rowan" / "skills" / "my-skill" / "SKILL.md").exists()
+
+
+def test_a_missing_hook_is_caught_before_anything_is_written(run, instance, tmp_path):
+    """Validated at the end, a missing hook left the plugin and config installed
+    under a message saying the deploy did not land -- a report the state
+    contradicts."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_RESTORE_HOOK=scripts/gone.sh\n")))
+    r = run("restore", "rowan")
+    assert r.returncode != 0
+    assert "nothing was installed" in r.stderr
+    assert not (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
+
+
+def test_a_runtime_hook_failure_says_what_landed(run, instance, tmp_path):
+    repo = _guarded(instance, run, tmp_path, refuses=False)
+    (repo / "agent.env").write_text("AGENT_RESTORE_HOOK=scripts/hook.sh\n")
+    h = repo / "scripts" / "hook.sh"
+    h.write_text('#!/usr/bin/env bash\necho "no vault" >&2\nexit 1\n')
+    h.chmod(0o755)
+    r = run("restore", "rowan", env=_transition_env(tmp_path))
+    assert r.returncode != 0
+    assert "ARE installed" in r.stderr and "is NOT" in r.stderr

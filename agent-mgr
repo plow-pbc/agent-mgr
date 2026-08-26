@@ -39,13 +39,11 @@ case "$cmd" in
     up|down|restart|logs)
         load_agent "${1:-}"
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
-        # logs reads; the other three stop or replace the container.
-        [ "$cmd" = logs ] || require_transition_allowed
         case "$cmd" in
-            up)      compose up -d ;;
-            down)    compose down ;;
-            restart) compose restart hermes ;;
-            logs)    compose logs -f --tail 100 ;;
+            up)      compose_transition up -d ;;
+            down)    compose_transition down ;;
+            restart) compose_transition restart hermes ;;
+            logs)    compose logs -f --tail 100 ;;   # a read
         esac
         ;;
     resolve-guard)
@@ -56,7 +54,14 @@ case "$cmd" in
         load_agent "${1:-}"
         require_own_home
         require_transition_allowed
+        # Preflight everything this command depends on BEFORE it writes
+        # anything. A hook validated only at the end meant a missing one left
+        # the plugin and config installed under a message saying the deploy did
+        # not land -- a report the state contradicts.
         [ -f "$AGENT_CONFIG" ] || die "no config at $AGENT_CONFIG -- an instance repo needs one, or set AGENT_CONFIG in its agent.env"
+        if [ -n "$AGENT_RESTORE_HOOK" ]; then
+            [ -x "$AGENT_RESTORE_HOOK" ] || die "$AGENT_NAME declares a restore hook at $AGENT_RESTORE_HOOK, which is missing or not executable -- nothing was installed"
+        fi
         mkdir -p "$AGENT_HOME"
         umask 077
 
@@ -77,12 +82,23 @@ case "$cmd" in
         install -m 600 "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"
         echo "restored config.yaml to $AGENT_HOME"
 
+        # Every pinned skill, replayed. `restore` is advertised as the whole
+        # deploy, and a rebuild that omitted them left an agent whose skills.tsv
+        # said one thing and whose home held another -- or nothing.
+        if [ -s "$AGENT_DIR/skills.tsv" ]; then
+            while IFS=$'\t' read -r s_repo s_ref s_dest s_src; do
+                [ -n "$s_repo" ] || continue
+                "$AGENT_MGR_ROOT/lib/fetch-skill" "$AGENT_HOME" "$s_repo" "$s_ref" "$s_dest" "$s_src" \
+                    || die "could not replay $s_repo from skills.tsv -- config and plugin ARE installed; re-run restore after fixing the pin"
+            done < "$AGENT_DIR/skills.tsv"
+        fi
+
         # The instance's own half, sequenced here so there is one deploy entry
-        # point. Fatal: a hook that refuses -- a missing corpus, a failed
-        # composition -- must not leave the caller believing the deploy landed.
+        # point. Its existence was checked in the preflight above; a refusal
+        # here is a runtime one, so the message says what already landed.
         if [ -n "$AGENT_RESTORE_HOOK" ]; then
-            [ -x "$AGENT_RESTORE_HOOK" ] || die "$AGENT_NAME declares a restore hook at $AGENT_RESTORE_HOOK, which is missing or not executable"
-            ( cd "$AGENT_DIR" && "$AGENT_RESTORE_HOOK" ) || die "${AGENT_NAME}'s restore hook failed -- the deploy did NOT land"
+            ( cd "$AGENT_DIR" && env "${AGENT_HOOK_ENV[@]}" "$AGENT_RESTORE_HOOK" ) \
+                || die "${AGENT_NAME}'s restore hook failed. The config, plugin and pinned skills ARE installed; the hook's own work is NOT. Fix the cause and re-run 'agent-mgr restore $AGENT_NAME' before restarting."
         fi
 
         # Once, at the end. config.yaml, the plugin and whatever the hook wrote
@@ -142,6 +158,10 @@ case "$cmd" in
         ;;
     sign-in)
         load_agent "${1:-}"
+        # It writes a credential into the home like activate does, so it takes
+        # the same check. Omitting it let a copied descriptor mint into a
+        # sibling's home.
+        require_own_home
         installed="$AGENT_HOME/config.yaml"
         [ -f "$installed" ] || die "no $installed -- run 'agent-mgr restore $AGENT_NAME' first"
         require_running
@@ -319,13 +339,13 @@ EOF
                 esac ;;
         esac
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
-        # The passthrough is a transition too when the subcommand is one --
-        # `up -d --force-recreate` was the site the docs kept forgetting.
-        case " $* " in
-            *" up "*|*" down "*|*" restart "*|*" stop "*|*" kill "*|*" rm "*|*" create "*)
-                require_transition_allowed ;;
+        # Classified on the actual subcommand, not a flattened "$*": the word
+        # "up" can appear in a prompt, a filename or a flag value.
+        sub="$(compose_subcommand "$@")"
+        case " $COMPOSE_TRANSITIONS " in
+            *" $sub "*) compose_transition "$@" ;;
+            *)          compose "$@" ;;
         esac
-        compose "$@"
         ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;

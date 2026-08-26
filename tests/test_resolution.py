@@ -88,15 +88,16 @@ def test_a_descriptor_cannot_run_a_command_through_a_later_line(run, instance, t
 
 
 def test_a_descriptor_cannot_set_the_loader_or_the_command_lookup(run, instance):
-    """An instance's own variables reach its hook, but never these: a PATH from a
-    descriptor would reach every docker, curl and gh this tool runs afterwards --
-    the shell execution the parse exists to prevent, by a different door."""
+    """A PATH from a descriptor would reach every docker, curl and gh this tool
+    runs afterwards -- the shell execution the parse exists to prevent, by a
+    different door. Held by the allowlist rather than a denylist: only
+    AGENT_KEYS reaches this process, so the dangerous names do not have to be
+    enumerated in advance."""
     repo = instance("rowan", descriptor="PATH=/tmp/evil\nLD_PRELOAD=/tmp/x.so\nAGENT_TZ=UTC\n")
     run("register", "rowan", str(repo))
     r = run("resolve", "rowan")
     assert r.returncode == 0, r.stderr
     assert "/tmp/evil" not in r.stdout
-    assert "ignoring PATH" in r.stderr and "ignoring LD_PRELOAD" in r.stderr
     assert "AGENT_TZ=UTC" in r.stdout, "the rest of the descriptor still applies"
 
 
@@ -128,3 +129,40 @@ def test_a_non_agent_variable_is_still_parsed_not_executed(run, instance, tmp_pa
     r = run("resolve", "str")
     assert r.returncode == 0, r.stderr
     assert not canary.exists()
+
+
+def test_a_descriptor_cannot_repoint_the_tool_at_its_own_code(run, instance, tmp_path):
+    """AGENT_MGR_ROOT decides where lib/ is loaded from. Exporting every
+    descriptor key handed a registered repo the dispatcher: ordinary lifecycle
+    commands would run that repo's resolve-guard with the operator's
+    credentials. An allowlist closes it; a denylist cannot, because the
+    dangerous names are whatever this tool happens to read."""
+    evil = tmp_path / "evil"
+    (evil / "lib").mkdir(parents=True)
+    canary = tmp_path / "pwned-root"
+    (evil / "lib" / "resolve-guard").write_text(f"#!/usr/bin/env bash\ntouch {canary}\n")
+    (evil / "lib" / "resolve-guard").chmod(0o755)
+    run("register", "rowan", str(instance("rowan", descriptor=f"AGENT_MGR_ROOT={evil}\n")))
+    import os
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    run("resolve", "rowan")
+    # `up` runs resolve-guard, which is the file the descriptor tried to supply.
+    run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert not canary.exists(), "a descriptor repointed AGENT_MGR_ROOT"
+
+
+def test_an_instance_variable_still_reaches_its_hook(run, instance, tmp_path):
+    """Narrowing the export must not take the hooks' own environment with it."""
+    seen = tmp_path / "seen"
+    repo = instance("str", descriptor="STR_VAULT=/tmp/v\nAGENT_PRE_TRANSITION=g.sh\n")
+    g = repo / "g.sh"
+    g.write_text(f'#!/usr/bin/env bash\nprintf "%s" "$STR_VAULT" > {seen}\n')
+    g.chmod(0o755)
+    run("register", "str", str(repo))
+    import os
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-str", name="str",
+                    container="hermes-str", project="hermes-str")
+    run("up", "str", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert seen.read_text() == "/tmp/v"
