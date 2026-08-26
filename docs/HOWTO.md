@@ -70,17 +70,17 @@ it is the whole mechanism (*One repo, several people* in the
 ```sh
 agent-mgr register bob ~/services/shared-hermes-agent
 agent-mgr restore bob
-printf '\nAGENT_TZ=America/Chicago\n' >> "$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')/.env"
+BOB_HOME=$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')
+printf '\nAGENT_TZ=America/Chicago\n' >> "${BOB_HOME:?resolve printed no home}/.env"
 agent-mgr up bob
 ```
 
-**The zone goes in before `up`, and it is the one value that has to.** Everything
-else per-person reaches the agent from that dotenv at runtime; `AGENT_TZ` reaches
-the *container* through Compose `environment:`, which is rendered when the
-container is created. Set it afterwards and it is not applied — and `restart`
-will not pick it up either, because `restart` does not recreate. `agent-mgr up`
-does. (The leading newline is not decoration; *One repo, several people* in the
-[README](../README.md) says why.)
+**The zone goes in before `up`, and it is the one per-person value that has to** —
+*Where a per-person value goes* in the [README](../README.md) owns why, including
+the leading newline. What matters to the order here: it is applied when the
+container is **created**, so setting it later needs another `agent-mgr up`.
+`restart` will not do, because `restart` does not recreate. The `:?` is there
+because an empty home would append to `/.env`.
 
 `up` before the codes, not after: `sign-in` runs `hermes auth add` **inside the
 container**, so it refuses until one is running. `activate` does not care — it
@@ -97,12 +97,6 @@ because two of them block:
 | 4 | **them** | open the URL in *their* browser, enter the code |
 | 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
 | 6 | you | put the pair in **their** instance's dotenv — `$AGENT_HOME/.env`, which `agent-mgr resolve bob` prints — then `check-latch bob` and `restart bob` |
-
-Steps 5 and 6 assume **their** Mac is already running Plow Latch, which is a
-prerequisite you cannot satisfy for them. If this agent drives no Mac, skip both
-and delete the `latch:` block from its `config.yaml` — per the section above, a
-declared latch with no credential is a broken agent rather than an unconfigured
-one.
 
 **Neither code can be sent ahead.** `activate` does not return when it prints
 the code; it polls `/v1/auth/activate/redeem` until the text arrives, and the
@@ -129,6 +123,12 @@ again.
 /v1/auth/activate` carries no credential; the binding is whoever texts the code
 back. A code texted by the wrong person binds the agent to the wrong account,
 one time, permanently.
+
+Steps 5 and 6 assume **their** Mac is already running Plow Latch, which is a
+prerequisite you cannot satisfy for them. If this agent drives no Mac, skip both
+and delete the `latch:` block from its `config.yaml` — per the section above, a
+declared latch with no credential is a broken agent rather than an unconfigured
+one.
 
 **The pair in step 5 is copy-once by design.** Latch drops it from memory once
 they confirm they have saved it, which relaying it through a chat window
