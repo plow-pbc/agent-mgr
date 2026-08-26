@@ -19,7 +19,7 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
     but a test naming a live project is one edit away from a subcommand that is
     not.
     """
-    from conftest import REAL_PATH
+    from conftest import REAL_PATH, allow_real_docker
     env = dict(os.environ)
     env["PATH"] = REAL_PATH
     env.update({
@@ -32,8 +32,9 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
     files = ["-f", str(ROOT / "templates" / "compose.yml")]
     if override:
         files += ["-f", str(override)]
-    return subprocess.run(["docker", "compose", *files, "config", "--format", "json"],
-                          capture_output=True, text=True, env=env)
+    with allow_real_docker():
+        return subprocess.run(["docker", "compose", *files, "config", "--format", "json"],
+                              capture_output=True, text=True, env=env)
 
 
 def test_the_template_resolves_one_service_bound_to_the_agents_home(tmp_path):

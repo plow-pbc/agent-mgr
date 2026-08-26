@@ -2,6 +2,8 @@ import os
 import subprocess
 from pathlib import Path
 
+from conftest import spawn
+
 ROOT = Path(__file__).resolve().parent.parent
 MODEL_PROVIDER = ROOT / "lib" / "model-provider"
 
@@ -45,7 +47,10 @@ def test_a_missing_config_names_the_path_it_could_not_read(tmp_path):
 def test_reload_refuses_to_run_outside_agent_mgr(tmp_path):
     """It sources common.sh from AGENT_MGR_ROOT; without it the failure must be
     a clear message rather than an unbound-variable trace."""
-    r = subprocess.run([str(ROOT / "lib" / "reload-if-running"), "rowan"],
-                       capture_output=True, text=True, env={"PATH": f"{os.environ['PATH']}:/usr/bin:/bin"})
+    # Through conftest's spawn, not subprocess directly: this shells the very
+    # script whose reload restarted production, and the seam is what proves the
+    # PATH it is handed cannot reach the operator's docker.
+    r = spawn([str(ROOT / "lib" / "reload-if-running"), "rowan"],
+              {"PATH": os.environ["PATH"]})
     assert r.returncode != 0
     assert "run me through agent-mgr" in r.stderr

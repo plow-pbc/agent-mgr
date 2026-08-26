@@ -1,4 +1,7 @@
+import contextlib
 import os
+import pathlib
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -9,6 +12,11 @@ ROOT = Path(__file__).resolve().parent.parent
 # The PATH the suite inherited, before it was made docker-free. Only
 # tests/test_compose.py uses it -- see the fixture below.
 REAL_PATH = os.environ.get("PATH", "")
+
+# Pytest's tmp root: every docker this suite is allowed to run -- the session
+# stub and any fake_docker -- is written under it. Set by the fixture below.
+SUITE_TMP = None
+
 
 # The default `docker` every test gets: answers the two READ calls agent-mgr
 # makes, and refuses everything else.
@@ -43,6 +51,38 @@ exit 0
 """
 
 
+_ALLOW_REAL_DOCKER = False
+
+
+@contextlib.contextmanager
+def allow_real_docker():
+    """The one deliberate exemption: tests/test_compose.py renders the real
+    template with the real `compose config`, which never contacts the daemon."""
+    global _ALLOW_REAL_DOCKER
+    _ALLOW_REAL_DOCKER = True
+    try:
+        yield
+    finally:
+        _ALLOW_REAL_DOCKER = False
+
+
+def _docker_the_suite_owns(path):
+    """Which docker would this PATH find, and did the suite create it?
+
+    Asked as a positive property so it subsumes every way of reaching the real
+    binary -- a PATH built from scratch, one that merely puts the real bindir
+    ahead of the shadow, a second docker somewhere else entirely -- without
+    enumerating them, and without assuming where the operator's docker lives.
+    """
+    found = shutil.which("docker", path=path)
+    return bool(found) and pathlib.Path(found).is_relative_to(SUITE_TMP)
+
+
+def spawn(argv, env, **kw):
+    """Convenience wrapper: the suite's usual capture_output/text defaults."""
+    return subprocess.run(argv, capture_output=True, text=True, env=env, **kw)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _no_real_docker_on_path(tmp_path_factory):
     """Take the real `docker` off PATH for the whole suite.
@@ -62,6 +102,7 @@ def _no_real_docker_on_path(tmp_path_factory):
     below prepended a fake -- and that shape is how the live restarts survived
     the first attempt at this fix.
     """
+    global SUITE_TMP
     b = tmp_path_factory.mktemp("poison-bin")
     (b / "docker").write_text(SAFE_DOCKER)
     (b / "docker").chmod(0o755)
@@ -70,7 +111,38 @@ def _no_real_docker_on_path(tmp_path_factory):
     # removes the suite. Shadowing is enough -- a test building
     # f"{mybin}:{os.environ['PATH']}" still puts this ahead of /usr/bin.
     os.environ["PATH"] = os.pathsep.join([str(b), REAL_PATH])
-    yield
+    SUITE_TMP = tmp_path_factory.getbasetemp()
+
+    # Enforced on subprocess itself, not offered as a helper. A seam callers
+    # must remember to use is the convention this change exists to retire, and
+    # the violation that actually restarted production was a bare
+    # subprocess.run the `run` fixture never saw.
+    #
+    # Popen rather than run: run, call, check_call and check_output all funnel
+    # through it, so one wrapper covers every entry point -- including a module
+    # that bound `from subprocess import run` at import time, which collection
+    # has already done by the time this fixture is set up.
+    real_popen = subprocess.Popen
+
+    def guarded_popen(*a, **kw):
+        env = kw.get("env")
+        # `is not None`, not `and "PATH" in env`: an explicit env WITHOUT a PATH
+        # is a violation too, not an exemption -- it resolves no docker at all,
+        # and a test meaning to inherit the shadow should say os.environ.
+        if env is not None and not _ALLOW_REAL_DOCKER:
+            assert _docker_the_suite_owns(env.get("PATH", "")), (
+                f"this env resolves docker to "
+                f"{shutil.which('docker', path=env.get('PATH', ''))}, which the "
+                "suite did not create; build PATH as "
+                "f\"{mybin}:{os.environ['PATH']}\" so the stub still wins, or "
+                "use conftest.allow_real_docker()")
+        return real_popen(*a, **kw)
+
+    subprocess.Popen = guarded_popen
+    try:
+        yield
+    finally:
+        subprocess.Popen = real_popen
 
 
 @pytest.fixture
@@ -93,10 +165,7 @@ def run(registry, tmp_path):
         e["PATH"] = f"{b}:{e['PATH']}"
         if env:
             e.update(env)
-        return subprocess.run(
-            [str(ROOT / "agent-mgr"), *args],
-            capture_output=True, text=True, env=e, check=check,
-        )
+        return spawn([str(ROOT / "agent-mgr"), *args], e, check=check)
 
     return _run
 
