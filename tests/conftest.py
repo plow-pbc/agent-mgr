@@ -82,26 +82,6 @@ def registry(tmp_path):
 @pytest.fixture
 def run(registry, tmp_path):
     """Invoke the real agent-mgr CLI with an isolated registry and HOME."""
-    # A docker that REFUSES, installed once before any test body runs.
-    #
-    # This suite was hermetic in every dimension it thought to isolate and not
-    # in the one that mattered: AGENT_PROJECT defaults to `hermes-<name>`, so a
-    # fixture agent called `rowan` or `str` resolves to the LIVE compose
-    # project. A test reaching the real daemon therefore did not fail -- it
-    # restarted production. One run issued 20 `compose restart hermes` calls
-    # against live projects; over a day of PR iteration that was 917 boots of
-    # the rentals gateway, 1,378 of rowan's, and 207 shutdown notices into an
-    # owners' channel (plow-pbc/agent-mgr#13).
-    #
-    # Poisoning PATH kills the class rather than the test that surfaced it:
-    # pinning the project name would fix today's collision and leave the suite
-    # one rename away from the next. Tests that legitimately exercise compose
-    # install fake_docker into this same directory, which replaces this file.
-    poison = tmp_path / "bin"
-    poison.mkdir(exist_ok=True)
-    (poison / "docker").write_text(SAFE_DOCKER)
-    (poison / "docker").chmod(0o755)
-
     def _run(*args, env=None, check=False):
         e = dict(os.environ)
         e["AGENT_MGR_REGISTRY"] = str(registry)

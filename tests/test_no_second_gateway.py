@@ -202,9 +202,16 @@ def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_p
     assert r.returncode != 0, "a lifecycle command reached a docker nothing stubbed"
     assert "did not stub" in r.stderr
 
+    # Process level, so it is red the moment the session fixture stops
+    # shadowing -- deleted, un-autoused, or REAL_PATH captured after the
+    # mutation. Nothing else in the suite would notice: once the fakes are
+    # installed everything goes green again and the class reopens invisibly.
+    import subprocess
     found = shutil.which("docker")
-    assert found and str(tmp_path.parent) in found or "poison-bin" in (found or ""), (
-        f"the real docker is back on PATH at {found}")
+    assert found, "no docker on PATH at all"
+    probe = subprocess.run([found, "info"], capture_output=True, text=True)
+    assert probe.returncode == 97, f"{found} is the real docker, not the stub"
+    assert "refusing a docker call a test did not stub" in probe.stderr
 
 
 def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance, tmp_path):
