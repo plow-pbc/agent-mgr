@@ -55,22 +55,39 @@ def test_no_argument_at_all_prints_usage(run):
 
 
 @pytest.mark.parametrize("name", [".*", ".", "[a-z]*", "s.r"])
-def test_unregister_refuses_a_name_that_is_a_pattern(run, instance, tmp_path, name):
-    """The registry is the only record of name->dir and the rewrite clobbers it
-    in place, so a pattern here is unrecoverable: `.*` matches every tab-bearing
-    row and writes an empty file. This is also the command the fail-closed
-    refusal sends an operator to mid-incident, argument possibly glob-mangled."""
+def test_a_pattern_is_a_name_that_matches_nothing_not_a_wildcard(run, instance, tmp_path, name):
+    """The registry compares the name column as a FIELD, so a pattern is just a
+    name no row has. It used to reach a grep BRE in every function here: `.*`
+    matched every tab-bearing row and `unregister` wrote an empty file -- the
+    whole fleet registry gone, reported as success, unrecoverable because the
+    registry is the only record of name to dir and the rewrite clobbers in
+    place. `s.r` silently dropped `str` and `sar` together."""
     run("register", "str", str(instance("str")))
     run("register", "rowan", str(instance("rowan")))
-    r = run("unregister", name)
-    assert r.returncode != 0, f"unregister {name!r} was accepted"
-    assert "lowercase letters" in r.stderr
-    rows = run("ls").stdout
-    assert "str" in rows and "rowan" in rows, "rows were dropped by a refused unregister"
 
-    # The read path interpolates too, and fails differently: `restore 's.r'`
-    # matches str's ROW while deriving its home from the PATTERN, so the deploy
-    # lands in ~/.hermes-s.r and reports success with the live agent untouched.
+    r = run("unregister", name)
+    assert r.returncode != 0, f"unregister {name!r} matched something"
+    rows = run("ls").stdout
+    assert "str" in rows and "rowan" in rows, "a refused unregister dropped rows"
+
+    # Same on the read path, which failed differently: `restore 's.r'` selected
+    # str's ROW while deriving its home from the PATTERN, so the deploy landed
+    # in ~/.hermes-s.r and reported success with the live agent untouched.
     r = run("restore", name)
     assert r.returncode != 0, f"restore {name!r} resolved to some other agent's row"
-    assert "lowercase letters" in r.stderr
+    assert not (tmp_path / "home" / f".hermes-{name}").exists(), "a phantom home was created"
+
+
+def test_a_hand_edited_row_can_still_be_dropped(run, instance, tmp_path, registry):
+    """Hand-editing is the documented pre-unregister practice, so rows outside
+    [a-z0-9-] exist in the wild. Gating removal on the name made them
+    undroppable -- and an unresolvable one refuses the bare-home agent, so the
+    remedy the refusal names has to work on exactly the row that caused it."""
+    run("register", "rowan", str(instance("rowan")))
+    with registry.open("a") as f:
+        f.write("Property\t/nonexistent/property-repo\n")
+    assert "Property" in run("ls").stdout
+
+    assert run("unregister", "Property").returncode == 0
+    assert "Property" not in run("ls").stdout
+    assert "rowan" in run("ls").stdout

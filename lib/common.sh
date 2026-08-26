@@ -12,15 +12,16 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 
 registry_path() { printf '%s\n' "$AGENT_MGR_REGISTRY"; }
 
-# The name column is matched literally. A name is validated to [a-z0-9-] on the
-# way in, so it carries no regex metacharacters -- but the match is anchored and
-# tab-terminated anyway, so a future name that does cannot match its own prefix.
-# What makes the literal-match property above true. Every path that interpolates
-# a name calls it -- both writers and load_agent, which is the read side -- so
-# the property is enforced rather than merely followed. Without it `unregister
-# '.*'` matches every tab-bearing row and writes an empty file (the whole fleet
-# registry gone, reported as success), and `restore 's.r'` selects str's row
-# while deriving its home from the pattern.
+# The name column is compared as a FIELD, by awk, never interpolated into a
+# pattern. That was three rounds of the same bug: a raw name reached a grep BRE
+# in every one of these, so `unregister '.*'` wiped the fleet registry and
+# `restore 's.r'` resolved str's row while deriving its home from the pattern.
+# Guarding each site with a name check closed those and opened a worse one -- a
+# hand-edited row (the documented pre-unregister practice) then made load_agent
+# die inside the collision loop, refusing the one production bare-`.hermes`
+# agent, with `unregister` refusing the same name and no way out but editing the
+# file again. Comparing fields removes the class instead of gating it: any row an
+# operator can see in `ls` is a row they can read and drop.
 registry_valid_name() {
     case "${1:-}" in
         ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: ${1:-}" ;;
@@ -29,6 +30,8 @@ registry_valid_name() {
 
 registry_add() {
     local name="$1" dir="$2"
+    # Input hygiene, and only here and in `new`: this is where a name is CHOSEN.
+    # Reading or dropping a row that already exists must not depend on it.
     registry_valid_name "$name"
     [ -d "$dir" ] || die "no such directory: $dir"
     dir="$(cd "$dir" && pwd)"
@@ -37,7 +40,7 @@ registry_add() {
     # Rewrite rather than append: registering a name twice must move it, not
     # leave two rows whose order silently decides which one wins.
     local tmp; tmp="$(mktemp)"
-    grep -v "^$name	" "$AGENT_MGR_REGISTRY" > "$tmp" || true
+    awk -F'\t' -v n="$name" '$1 != n' "$AGENT_MGR_REGISTRY" > "$tmp"
     printf '%s\t%s\n' "$name" "$dir" >> "$tmp"
     sort -o "$tmp" "$tmp"
     mv "$tmp" "$AGENT_MGR_REGISTRY"
@@ -45,14 +48,16 @@ registry_add() {
 
 # Drop a row. The remedy for an agent that is GONE: register cannot do it (it
 # refuses a directory that no longer exists), so without this the only way out
-# of an unresolvable row is hand-editing the registry file.
+# of an unresolvable row is hand-editing the registry file. No name check, on
+# purpose -- a row an operator can see in `ls` must be one they can drop,
+# whatever it is called.
 registry_remove() {
     local name="$1"
-    registry_valid_name "$name"
     [ -f "$AGENT_MGR_REGISTRY" ] || die "no registry at $AGENT_MGR_REGISTRY"
-    grep -q "^$name	" "$AGENT_MGR_REGISTRY" || die "$name is not registered"
+    awk -F'\t' -v n="$name" '$1 == n {found=1} END{exit !found}' "$AGENT_MGR_REGISTRY" \
+        || die "$name is not registered"
     local tmp; tmp="$(mktemp)"
-    grep -v "^$name	" "$AGENT_MGR_REGISTRY" > "$tmp" || true
+    awk -F'\t' -v n="$name" '$1 != n' "$AGENT_MGR_REGISTRY" > "$tmp"
     mv "$tmp" "$AGENT_MGR_REGISTRY"
 }
 
@@ -60,7 +65,7 @@ registry_lookup() {
     local name="$1"
     [ -f "$AGENT_MGR_REGISTRY" ] || return 1
     local dir
-    dir="$(grep "^$name	" "$AGENT_MGR_REGISTRY" | head -1 | cut -f2-)"
+    dir="$(awk -F'\t' -v n="$name" '$1 == n {print $2; exit}' "$AGENT_MGR_REGISTRY")"
     [ -n "$dir" ] || return 1
     printf '%s\n' "$dir"
 }
@@ -111,16 +116,6 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 load_agent() {
     local name="${1:-}"
     [ -n "$name" ] || die "which agent? try 'agent-mgr ls'"
-    # The READ path interpolates too, and a pattern here is worse than a wiped
-    # row: `restore 's.r'` matches str's row, so AGENT_DIR and AGENT_CONFIG are
-    # str's while AGENT_NAME is the pattern -- AGENT_HOME then defaults to
-    # ~/.hermes-s.r, require_own_home passes it (the shape arm matches
-    # literally, and a phantom home collides with no sibling), and the deploy
-    # lands in a brand-new empty directory reporting success while the live
-    # agent is never touched. Checked here rather than in registry_lookup: `new`
-    # calls that inside a command substitution, where die would only fail the
-    # subshell.
-    registry_valid_name "$name"
 
     local dir
     dir="$(registry_lookup "$name")" || die "$name is not registered -- run 'agent-mgr register $name <dir>'"
