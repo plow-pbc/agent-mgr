@@ -100,18 +100,12 @@ target="$home/$root/$dest"
 # The suffix bought no isolation either: two concurrent runs already race
 # destructively on $target itself, so there was nothing for it to protect.
 #
-# Fixed names plus an unconditional rm means every run clears every orphan.
-# The rm matters beyond tidiness: `cp -a` into an existing directory copies
-# INSIDE it, and the manifest check above already ran against $src -- so the
-# swap would publish a tree with its plugin.yaml one level down and exit 0
+# Fixed names plus an unconditional rm means every run clears every orphan --
+# including on a first install, where the in-branch rm further down is skipped
+# entirely. The rm matters beyond tidiness: `cp -a` into an existing directory
+# copies INSIDE it, and the manifest check above already ran against $src -- so
+# the swap would publish a tree with its plugin.yaml one level down and exit 0
 # saying "installed". Reproduced against the live repo.
-# Fixed staging and backup names, and one unconditional sweep below.
-#
-# Pid-suffixed names were the first shape and they leak: a run can only ever
-# clean up after its own pid-twin, so every other killed run's tree accumulates
-# forever -- and $target.previous is a COMPLETE, valid tree carrying
-# `name: plow-chat-platform`, sitting in the directory the gateway enumerates.
-# Fixed names let one sweep clear all of them.
 #
 # Deliberately NOT locked. Fixed names are unsafe only against a SECOND
 # fetch-tree run racing this same target, which means two simultaneous
@@ -123,11 +117,6 @@ target="$home/$root/$dest"
 # exactly the class #19 closed. `main` has never had one.
 mkdir -p "$(dirname "$target")"
 
-# Every orphan, not only this run's. Without the sweep below an orphaned
-# .previous is a complete, valid tree carrying `name: plow-chat-platform` sitting
-# beside the real one in the directory the gateway enumerates -- and the
-# in-branch rm further down never reaches it, because on a first install that
-# branch is skipped entirely.
 staging="$target.incoming"
 backup_path="$target.previous"
 # Recover before clearing. A run killed between the two `mv`s below -- SIGKILL,

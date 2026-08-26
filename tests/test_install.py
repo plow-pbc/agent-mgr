@@ -590,3 +590,38 @@ def test_a_rollback_copy_is_promoted_before_the_next_run_can_fail(
     assert r.returncode != 0, "the stubbed find should have failed this install"
     assert (plugins / "plow-chat-platform" / "plugin.yaml").is_file(), \
         "the rollback copy was cleared before the fallible step, leaving no tree"
+
+
+def test_no_host_side_script_depends_on_a_gnu_only_tool():
+    """This class has now cost the Mac twice, and the suite runs on Linux.
+
+    #19 was `realpath -m`, which does not exist on BSD/macOS and took 178 of 220
+    tests with it. One merge later this PR added `flock`, which is util-linux and
+    which macOS does not ship, breaking restore, install-plugin and add-skill on
+    the macOS 12.3 floor README commits to. Both landed green here, because
+    everything exists on Linux; both were found by an operator on a Mac.
+
+    A denylist is only as good as its entries, so this is not a portability
+    proof -- it is a tripwire on the specific forms that have already bitten.
+    `readlink -f` is deliberately absent: it is what SETS the 12.3 floor (that
+    is the release where readlink grew -f) and the entrypoint resolves itself
+    through it before anything else is sourced.
+    """
+    import re
+    banned = {
+        "flock": r"\bflock\b",
+        "realpath": r"\brealpath\s+-",       # the GNU binary; os.path.realpath( is fine
+        "stat -c": r"\bstat\s+-c",
+        "date -d": r"\bdate\s+-d",
+    }
+    scripts = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
+    for script in scripts:
+        # Full-line comments only. common.sh explains why realpath is NOT used,
+        # and that sentence must not trip the check it is documenting.
+        code = "\n".join(l for l in script.read_text().splitlines()
+                         if not l.lstrip().startswith("#"))
+        for tool, pattern in banned.items():
+            assert not re.search(pattern, code), (
+                f"{script.name} uses {tool}, which is GNU/util-linux-only -- "
+                "this repo's floor is macOS 12.3 (README) and the suite runs on "
+                "Linux, so it would land green and fail on the operator's Mac")
