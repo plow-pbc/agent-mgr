@@ -1,5 +1,6 @@
 import os
 
+import pytest
 from conftest import fake_docker
 
 
@@ -31,18 +32,19 @@ def test_sign_in_refuses_before_restore_has_run(run, instance):
     assert "restore" in r.stderr
 
 
-def test_activate_refuses_a_home_that_is_not_this_agents(run, instance):
-    """activate rewrites the chat credential in place. Pointed at a sibling's
-    home it would take that agent off its chat and spend a one-time activation."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_HOME=/etc\n")))
-    r = run("activate", "rowan")
-    assert r.returncode != 0
-    assert "refusing to write" in r.stderr
-
-
-def test_activate_refuses_a_siblings_conventional_home(run, instance):
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_HOME=/tmp/.hermes-property\n")))
-    r = run("activate", "rowan")
+@pytest.mark.parametrize("command", ["activate", "set-latch"])
+@pytest.mark.parametrize(
+    "descriptor",
+    ["AGENT_HOME=/etc\n", "AGENT_HOME=/tmp/.hermes-property\n"],
+    ids=["not-a-hermes-home", "a-siblings-conventional-home"],
+)
+def test_credential_writers_refuse_a_home_that_is_not_this_agents(run, instance, command, descriptor):
+    """Every command that writes a credential into a home takes the same guard.
+    Pointed at a sibling's, activate would take that agent off its chat and spend
+    a one-time activation; set-latch would hand it a relay credential minted
+    against someone else's Mac."""
+    run("register", "rowan", str(instance("rowan", descriptor=descriptor)))
+    r = run(command, "rowan", input="dev_abc\ntok_xyz\n")
     assert r.returncode != 0
     assert "refusing to write" in r.stderr
 
@@ -67,3 +69,55 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
     # same one; the previous two spellings here matched nothing any code emits,
     # so the line could not fail either way.
     assert "refusing to write" not in r.stderr
+
+
+LATCH_CONFIG = (
+    "model:\n  provider: openai-codex\n"
+    "mcp_servers:\n  latch:\n    url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp\n"
+)
+
+
+def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path):
+    """The dotenv is shared -- the rentals agent keeps a PMS token and a lock API
+    key in the same file -- so an upsert that rewrote the file would take those
+    with it."""
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("restore", "rowan")
+    env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env_file.write_text("HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n")
+    b, _ = _fake_docker(tmp_path)
+    r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n",
+            env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    body = env_file.read_text()
+    assert "DOMO_DEVICE_UID=dev_abc" in body
+    assert "DOMO_MCP_TOKEN=tok_xyz" in body
+    assert "HOSTEX_TOKEN=keep-me" in body
+    # One row each, not a second appended beside the empty one it replaced.
+    assert body.count("DOMO_MCP_TOKEN=") == 1
+    # The dotenv holds live credentials and the home is on a shared host.
+    assert (env_file.stat().st_mode & 0o777) == 0o600
+    # Never the whole token, on either stream -- the operator may be screen-sharing.
+    assert "tok_xyz" not in r.stdout
+    assert "tok_xyz" not in r.stderr
+
+
+def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance):
+    """A pair written for an agent with no latch is a credential no gateway ever
+    reads, sitting in a dotenv looking like working configuration."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n")
+    assert r.returncode != 0
+    assert "declares no latch" in r.stderr
+
+
+def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, tmp_path):
+    """An empty write is the failure check-latch already reports as 'mint one
+    from the Mac'; refusing here keeps it from reaching the dotenv at all."""
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("restore", "rowan")
+    r = run("set-latch", "rowan", input="dev_abc\n\n")
+    assert r.returncode != 0
+    assert "DOMO_MCP_TOKEN was empty" in r.stderr
+    assert "DOMO_DEVICE_UID=dev_abc" not in (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()

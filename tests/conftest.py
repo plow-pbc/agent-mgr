@@ -160,7 +160,7 @@ def registry(tmp_path):
 @pytest.fixture
 def run(registry, tmp_path):
     """Invoke the real agent-mgr CLI with an isolated registry and HOME."""
-    def _run(*args, env=None, check=False):
+    def _run(*args, env=None, check=False, input=None):
         e = dict(os.environ)
         e["AGENT_MGR_REGISTRY"] = str(registry)
         e["HOME"] = str(tmp_path / "home")
@@ -174,7 +174,9 @@ def run(registry, tmp_path):
         e["PATH"] = f"{b}:{e['PATH']}"
         if env:
             e.update(env)
-        return spawn([str(ROOT / "agent-mgr"), *args], e, check=check)
+        # `input` for the commands that read a credential on stdin rather than
+        # from argv -- set-latch is the first.
+        return spawn([str(ROOT / "agent-mgr"), *args], e, check=check, input=input)
 
     return _run
 

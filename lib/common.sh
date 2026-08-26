@@ -125,6 +125,7 @@ usage: agent-mgr <command> [args]
   add-skill <name> <repo> [--ref SHA] [--dest PATH] [--src PATH]
   activate <name>             mint the Plow Chat credential pair
   sign-in <name>              model OAuth for this agent
+  set-latch <name>            read the Latch pair on stdin into its dotenv
 
   up|down|restart|logs <name> lifecycle
   agent <name> "<prompt>"     run one turn in the running container
@@ -659,6 +660,17 @@ require_running() {
     # exec a turn inside PRODUCTION's gateway and answer into the live owners'
     # channel, which is worse than restarting it.
     require_running_container_is_ours
+}
+
+# Does the INSTALLED config declare a latch server? The config is the
+# declaration, not the dotenv: a leftover DOMO_* pair from an earlier experiment
+# sits in a dotenv long after the config stopped declaring a latch, and keying
+# off the credential then probes a relay for an agent that cannot reach it.
+#
+# Two callers now -- check-latch reports it, set-latch refuses on it -- so the
+# awk lives here rather than being written twice with one of the copies drifting.
+config_declares_latch() {
+    awk '/^mcp_servers:/{m=1;next} /^[^[:space:]]/{m=0} m && $1=="latch:"{found=1} END{exit !found}' "$1"
 }
 
 # The pinned Plow Chat plugin, into this agent's home. A function rather than
