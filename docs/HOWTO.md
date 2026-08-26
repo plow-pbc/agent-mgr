@@ -139,6 +139,10 @@ Why the recipe is shaped that way:
   of the `~/.hermes*` glob so the nightly does not archive a dead home as live.
   The stamp stops a second attempt nesting inside the first. Delete it once the
   restore is verified.
+- **The archive is contents-rooted** (`./` entries, no top directory), which is
+  why it needs a named target and cannot splat into `$HOME`. `logs/`, `cache/`
+  and `lazy-packages/` are excluded from it, so a restored home does not have
+  them — that is expected, not a truncated archive, and the agent rebuilds them.
 - **If it stops part-way, run `ls -d "$aside"` before undoing anything.** There
   are stop points *before* the rename, and on those nothing moved: `$aside` does
   not exist and `$real` is still your live home, so removing `$real` would
