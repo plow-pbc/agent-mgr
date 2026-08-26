@@ -42,14 +42,10 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # and fails on one of those two strings to make exactly one of these helpers
 # fail while the other keeps working. That is what reaches the refusals PAST
 # load_agent -- with no python3 at all, load_agent's own refusal fires first
-# and the guards are never entered. That buys require_own_home's refusal, not
-# require_running_container_is_ours': both helpers are already called on
-# AGENT_HOME before that guard is ever entered -- abspath in load_agent, then
-# realpath in require_own_home, which lib/resolve-guard runs as a SUBPROCESS on
-# every route in (agent-mgr's transitions, the compose passthrough,
-# reload-if-running). So a stub failing either helper outright stops there,
-# whichever command was run; one aimed at a refusal inside that guard has to key
-# on the mounted path as well.
+# and the guards are never entered. Both helpers are already called on
+# AGENT_HOME before require_running_container_is_ours is entered, on every route
+# into it, so a stub failing either one outright stops earlier than that guard
+# and a stub aimed at a refusal inside it has to key on the mounted path too.
 # A second caller of either call, in any file -- lib/resolve-guard and
 # agent-mgr run python3 too -- silently moves which invocation that test kills.
 #
