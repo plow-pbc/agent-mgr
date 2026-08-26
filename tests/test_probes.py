@@ -180,14 +180,14 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     # The TABLE, not the file: a hook mentioned only in prose or an example block
     # would satisfy a whole-README grep while the row the contract lives in stays
     # missing -- which is the way a third hook would realistically land.
-    section = (root / "README.md").read_text().split("## What belongs in an instance repo")
-    assert len(section) == 2, "the instance-repo section moved -- this probe reads its table"
+    section = (root / "README.md").read_text().split("## What belongs in an agent's repo")
+    assert len(section) == 2, "the agent-repo section moved -- this probe reads its table"
     rows = "\n".join(l for l in section[1].splitlines() if l.startswith("|"))
-    assert rows, "the instance-repo section no longer has a table"
+    assert rows, "the agent-repo section no longer has a table"
     descriptor = (root / "templates" / "agent.env").read_text()
     for hook in loop.group(1).split():
         assert f"`{hook}`" in rows, (
-            f"{hook} is a declared hook but the instance-repo table does not name it")
+            f"{hook} is a declared hook but the agent-repo table does not name it")
         # The descriptor is where an author actually meets the hook: AGENT_PRE_TRANSITION
         # reached the resolver while this template still documented one hook, so a
         # scaffolded repo could not discover the veto it is entitled to.

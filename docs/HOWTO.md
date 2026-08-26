@@ -13,7 +13,7 @@ agent-mgr ls
 ```
 
 The registry lives at `~/.config/agent-mgr/agents` and maps a name to an
-instance repo, so every command works from any directory.
+agent repo, so every command works from any directory.
 
 ## Stand up a new agent
 
@@ -66,69 +66,50 @@ is what has to reach `api.plow.co`. Egress, DNS and CA config all differ between
 your shell and that network namespace, and every one of those failures is
 invisible to a host-side probe. There is deliberately no host fallback.
 
-## Three layers: where does my code go?
+## Two layers: where does my code go?
 
-Ask: **if this agent's product vanished tomorrow, would this code still exist?**
+The contract, the worked example and both repo shapes live in the *Two layers,
+and what belongs in each* section of the [README](../README.md). Ask: **would a
+second agent want this?** No means it belongs in this agent's own repo,
+whatever it is — identity, config, its skill, its scripts.
 
-| | repo | example |
-|---|---|---|
-| **mechanism** | `agent-mgr` | `up`, `activate`, `check-latch` |
-| **instance** | `<agent>-hermes-agent` | `agent.env`, `config.yaml`, `skills.tsv` |
-| **domain** | e.g. `plow-pbc/property-hunt` | the skill, its scripts, its recipes |
+## Adding a shared skill
 
-Worked example — publishing a property map from the Mac. All three pieces live
-in `property-hunt`, none in `agent-mgr` and none in the instance repo:
-
-- the instruction *"to publish the map, run `just serve-map` on the Mac through Latch"* → its `SKILL.md`, delivered to the **container**
-- the recipe `serve-map:` → its `justfile`, delivered to the **Mac**
-- the launchd plist that keeps it up → its `scripts/`, delivered to the **Mac**
-
-The rule is about duplication, not size: a thin instance repo is still an
-instance repo. And it is dynamic — something one agent uses today graduates to
-`agent-mgr` when a second agent wants it.
-
-## Adding a domain skill
+For a skill **another agent also wants**. One agent's own skill is just its
+code — it lives in that agent's repo and needs no pin, because there is no
+second copy to keep in step.
 
 ```sh
-agent-mgr add-skill property plow-pbc/property-hunt --dest productivity/property-hunt
+agent-mgr add-skill rowan plow-pbc/seed-hermes-plow --dest plow-connectors \
+    --src ref/hermes-skill/plow-connectors
 ```
 
-The pin is recorded in the *instance* repo's `skills.tsv`, so what an agent runs
-is reviewable beside its config. Refs are always 40-char SHAs — a branch would
+The pin is recorded in the agent repo's `skills.tsv`, so what an agent runs is
+reviewable beside its config. Refs are always 40-char SHAs — a branch would
 silently re-point a running agent on the next upstream push.
 
-**A skill can reach an agent by two routes.** `add-skill` installs the
-instructions into the container from a pinned SHA; ClawHub installs the whole
-bundle onto the Mac by semver. Only the first is pinned here, so the two can
-skew — the container reading instructions the Mac's code does not implement. If
-a skill misbehaves, compare the two versions before debugging the code.
-
-## What an instance repo contains
+## What an agent's repo contains
 
 The file list, and why each one is or is not there, is the *What belongs in an
-instance repo* section of the [README](../README.md). Two things that only
-matter once you are editing one:
+agent's repo* section of the [README](../README.md). What only matters once you
+are editing one:
 
-`agent.env` can be empty. `AGENT_HOME` defaults to `~/.hermes-<name>`,
-`AGENT_CONTAINER` and `AGENT_PROJECT` to `hermes-<name>`, and the image to the
-fleet-wide digest in `runtime/image.ref`.
+`agent-mgr new` writes **two** files, `agent.env` and `config.yaml`.
+`skills.tsv` appears the first time you `add-skill`, and `compose.override.yml`
+only if you write one -- which you need when the agent has a derived image or
+extra mounts, and there is no template for it. Every key in `agent.env` is an
+override, so the file may be empty.
 
 Relative paths do **not** work in `compose.override.yml`: Compose resolves them
-against `agent-mgr`'s directory, not the instance's. Name paths through a
-variable set in `agent.env`.
+against `agent-mgr`'s directory, not the agent's. Name paths through a variable
+set in `agent.env`.
 
 ## Why `agent` uses `exec`
 
-The Hermes image's s6 entrypoint starts a gateway *whatever command you pass
-it*. `docker compose run ... chat -q` therefore brings up a **second** gateway
-against the same `/opt/data`. It connects to the chat, answers every message
-alongside the real one, and on exit posts a shutdown notice into the owners'
-channel.
-
-Measured on this host over two days before the fix: **25 gateway starts**
-against a 1–6/day baseline, **21 shutdown notices** into an owners' channel in a
-single day, and 6 sqlite errors from two gateways racing one session database.
-`tests/test_no_second_gateway.py` keeps it from coming back.
+Because the image's s6 entrypoint starts a gateway whatever command you pass it,
+so `docker compose run` boots a **second** one against the same `/opt/data`.
+Measured cost and the guarding test:
+the *Why `agent` uses `exec`* section of the [README](../README.md).
 
 ## When something is wrong
 
@@ -138,7 +119,7 @@ single day, and 6 sqlite errors from two gateways racing one session database.
 | `HERMES_UID ... must be set` | you ran `docker compose` directly; go through `agent-mgr` |
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |
-| a skill behaves oddly | compare the container's pinned SHA against the Mac's ClawHub version |
+| a shared skill behaves oddly | compare the SHA in `skills.tsv` against what upstream has since fixed |
 
 ## Bumping the plugin pin
 
