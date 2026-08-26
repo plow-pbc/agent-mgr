@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from conftest import fake_docker
+from conftest import LATCH_CONFIG, fake_docker
 
 
 def _fake_docker(tmp_path, name="rowan"):
@@ -71,39 +71,27 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
     assert "refusing to write" not in r.stderr
 
 
-LATCH_CONFIG = (
-    "model:\n  provider: openai-codex\n"
-    "mcp_servers:\n  latch:\n    url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp\n"
-)
-
-
+# Probe 5: the two axes are independent, so the product ran four redundant CLIs.
+# One row per dotenv shape, with the padded stdin -- the axis that pins the
+# strip -- assigned to one of them.
 @pytest.mark.parametrize(
-    "starting_dotenv",
+    "starting_dotenv,stdin",
     [
-        "HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n",
-        # No DOMO_* at all -- the append arm. An agent whose own .env.example
-        # omits them starts here, and nothing else in the suite reaches it.
-        "HOSTEX_TOKEN=keep-me\n",
+        # Padded: what a paste actually looks like. The value is stripped on the
+        # way in, so the file holds what the gateway loads rather than a value
+        # it would strip differently -- a trailing space otherwise surfaces only
+        # as a REVOKED misdiagnosis on a live host.
+        ("HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n", "  dev_abc \n\ttok_xyz  \n"),
+        # No DOMO_* at all -- the append arm.
+        ("HOSTEX_TOKEN=keep-me\n", "dev_abc\ntok_xyz\n"),
         # The spellings a hand-edited file arrives in, which is how every one of
-        # these was written before this command existed. Each must be replaced
-        # in place, not left underneath an appended second declaration.
-        "HOSTEX_TOKEN=keep-me\nexport DOMO_DEVICE_UID=stale\n  DOMO_MCP_TOKEN = stale\n",
+        # these was written before this command existed. Replaced in place, not
+        # left underneath an appended second declaration.
+        ("HOSTEX_TOKEN=keep-me\nexport DOMO_DEVICE_UID=stale\n  DOMO_MCP_TOKEN = stale\n", "dev_abc\ntok_xyz\n"),
         # Already duplicated. The upsert collapses it rather than adding a third.
-        "HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nexport DOMO_MCP_TOKEN=staler\n",
+        ("HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nexport DOMO_MCP_TOKEN=staler\n", "dev_abc\ntok_xyz\n"),
     ],
-    ids=["pre-seeded-empty", "absent", "hand-edited-spellings", "already-duplicated"],
-)
-@pytest.mark.parametrize(
-    "stdin",
-    [
-        "dev_abc\ntok_xyz\n",
-        # What a paste actually looks like. The value is stripped on the way in,
-        # so the file holds what the gateway loads rather than a value it will
-        # strip differently -- and a trailing space surfaces only as a REVOKED
-        # misdiagnosis on a live host, never in a test that never pads.
-        "  dev_abc \n\ttok_xyz  \n",
-    ],
-    ids=["clean", "padded"],
+    ids=["pre-seeded-empty-padded", "absent", "hand-edited-spellings", "already-duplicated"],
 )
 def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path, starting_dotenv, stdin):
     """The dotenv is shared -- the rentals agent keeps a PMS token and a lock API
@@ -170,3 +158,30 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, 
     body = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
     assert "dev_abc" not in body
     assert "tok_xyz" not in body
+
+
+def test_set_latch_refuses_a_dotenv_that_resolves_outside_the_home(run, instance, tmp_path):
+    """The home is a live container mount, and the agents that most need a latch
+    read attacker-controlled input. A gateway that got out of hand can swap the
+    dotenv for a symlink to any file the operator can read: the upsert would
+    follow it and then write that file's contents back inside the mount, which
+    is an exfiltration path out of the host, not a bad write.
+
+    Both halves are asserted. The refusal is the visible one; that the host file
+    was neither read into the home nor replaced by a regular file is the one
+    that actually says the secret stayed out."""
+    secret = tmp_path / "host-only-secret"
+    secret.write_text("BEGIN OPENSSH PRIVATE KEY\n")
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("restore", "rowan")
+    env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env_file.unlink()
+    env_file.symlink_to(secret)
+    r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n")
+    assert r.returncode != 0
+    assert "outside" in r.stderr
+    # Still a symlink: the mv never landed, so nothing materialised in the mount.
+    assert env_file.is_symlink()
+    assert secret.read_text() == "BEGIN OPENSSH PRIVATE KEY\n"
+    # And the credential did not reach the host file either.
+    assert "tok_xyz" not in secret.read_text()

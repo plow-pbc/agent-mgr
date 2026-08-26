@@ -28,6 +28,8 @@ agent-mgr restore rowan      # the whole deploy: config, plugin, restore hook
 agent-mgr activate rowan     # prints a code; text it from the agent's phone
 agent-mgr up rowan
 agent-mgr sign-in rowan
+agent-mgr set-latch rowan    # the Mac's pair, on stdin; only if it drives one
+agent-mgr check-latch rowan
 ```
 
 ## Why it exists

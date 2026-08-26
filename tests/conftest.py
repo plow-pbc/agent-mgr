@@ -151,6 +151,16 @@ def _no_real_docker_on_path(tmp_path_factory):
         subprocess.Popen = real_popen
 
 
+# The latch declaration an agent's config carries, in one place: check-latch
+# reads it to decide whether an agent has a Mac at all, and set-latch refuses
+# without it, so two test modules need the same contract and had a copy each.
+LATCH_CONFIG = (
+    "model:\n  provider: openai-codex\n"
+    "mcp_servers:\n  latch:\n"
+    "    url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp\n"
+)
+
+
 @pytest.fixture
 def registry(tmp_path):
     """An isolated registry file; never the operator's real one."""

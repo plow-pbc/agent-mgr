@@ -244,6 +244,24 @@ case "$cmd" in
             || die "$AGENT_NAME declares no latch server in $installed -- nothing would read this pair"
         env_file="$AGENT_HOME/.env"
         [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
+        # Resolved before it is read, and everything after uses the resolved
+        # path. This home is a live container mount, and the agents that most
+        # need a latch are the ones reading attacker-controlled input -- a
+        # listing page's JSON-LD, a pasted URL, a texted screenshot. A gateway
+        # that got out of hand can swap this leaf for a symlink to anything the
+        # operator can read; awk would follow it, and the mv below would then
+        # write that file's contents back INSIDE the mount, which turns a
+        # credential writer into a way out of the host. Resolving first also
+        # closes the window between the check and the use: a symlink swapped in
+        # afterwards is not the path this then reads or replaces.
+        home_real="$(canonical_path "$AGENT_HOME")" \
+            || die "refusing to write to $env_file -- could not resolve $AGENT_HOME"
+        env_real="$(canonical_path "$env_file")" \
+            || die "refusing to write to $env_file -- could not resolve it"
+        case "$env_real" in
+            "$home_real"/*) env_file="$env_real" ;;
+            *) die "refusing to write to $env_file -- it resolves to $env_real, outside ${AGENT_NAME}'s home ($home_real). A dotenv that leaves the home is not one this tool wrote." ;;
+        esac
         # On stdin, never argv, and this is the whole reason the command exists
         # in this shape: check-latch already hands the token to curl as a config
         # on stdin because the argv form puts a live relay credential in the

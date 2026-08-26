@@ -1,7 +1,7 @@
 import os
 
 import pytest
-from conftest import fake_docker
+from conftest import LATCH_CONFIG, fake_docker
 
 
 def _bin(tmp_path, name, **kw):
@@ -14,8 +14,6 @@ def _with_latch(tmp_path, name, uid="dev_123", tok="tok_abc"):
         f'DOMO_DEVICE_UID={uid}\nDOMO_MCP_TOKEN="{tok}"\n')
 
 
-LATCH_CONFIG = ("model:\n  provider: openai-codex\nmcp_servers:\n  latch:\n"
-                "    url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp\n")
 NO_LATCH_CONFIG = ("model:\n  provider: openai-codex\nmcp_servers:\n  hostex:\n"
                    "    url: https://example.invalid\n")
 
