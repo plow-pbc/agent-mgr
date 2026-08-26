@@ -617,8 +617,10 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     Measured on macOS 26.5.2 (`so@mbp`, 2026-08-26) rather than assumed:
       /bin/bash          3.2.57  -- the 4.0+ syntax below is a hard failure
       flock              /opt/homebrew/bin/flock -- Homebrew only, not system
-      mktemp / mktemp -d exit 0  -- bare form is FINE, contrary to a review
-                                    finding; it defaults a template like GNU
+      mktemp / mktemp -d exit 0 ON 26.5 ONLY -- NOT verified on the 12.3
+                                    floor. Capabilities get added, not removed,
+                                    so this says nothing about Monterey; the
+                                    open question is tracked in #26
 
     Deliberately absent: `sed -i` (never appears here, and a regex cannot
     reliably span a sed script -- `;` and `|` inside the expression defeat any
