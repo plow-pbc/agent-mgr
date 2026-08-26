@@ -11,6 +11,10 @@ import os
 import re
 from pathlib import Path
 
+import pytest
+
+from conftest import fake_docker
+
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = [ROOT / "agent-mgr", *sorted((ROOT / "lib").glob("*"))]
 
@@ -48,26 +52,15 @@ def test_that_check_is_not_vacuous():
 
 
 def _fake_docker(tmp_path, home, container="hermes-rowan", running=True):
-    """A docker that records its argv, so the assertion is about what actually
-    ran rather than about what the source says."""
-    b = tmp_path / "bin"
-    b.mkdir(exist_ok=True)
+    """conftest's builder plus an argv log, rather than a second 22-line copy.
+
+    The log is what makes these assertions about what actually ran instead of
+    what the source says -- a grep cannot tell an exec that runs from one
+    sitting behind a condition that is false exactly when it matters.
+    """
     log = tmp_path / "docker-argv.log"
-    cfg = (
-        '{"name":"hermes-rowan","services":{"hermes":{"container_name":"%s",'
-        '"volumes":[{"target":"/opt/data","source":"%s"}]}}}' % (container, home)
-    )
-    ps = "echo deadbeef" if running else ":"
-    (b / "docker").write_text(
-        "#!/usr/bin/env bash\n"
-        f'printf "%s\\n" "$*" >> {log}\n'
-        'case "$*" in\n'
-        f'  *"ps --status running --quiet"*) {ps} ;;\n'
-        f"  *\"config --format json\"*) echo '{cfg}' ;;\n"
-        'esac\n'
-        "exit 0\n"
-    )
-    (b / "docker").chmod(0o755)
+    b = fake_docker(tmp_path, home=home, container=container, name="rowan",
+                    running=running, log=log)
     return b, log
 
 
@@ -123,26 +116,27 @@ def test_agent_with_no_prompt_is_refused(run, instance):
     assert "usage" in r.stderr
 
 
-def test_the_compose_passthrough_refuses_run_without_an_entrypoint(run, instance, tmp_path):
-    """The passthrough exists for domain recipes, so it must not become the hole
-    through which a rival gateway gets started."""
+@pytest.mark.parametrize("args, ok, expect", [
+    # The passthrough exists for an agent's own domain recipes, so it must not
+    # become the hole a rival gateway is started through -- but it must still
+    # allow the shape those recipes actually use. Two live callers in the
+    # rentals agent pass --entrypoint for exactly this reason.
+    (["run", "--rm", "hermes", "chat", "-q", "hi"], False, "second gateway"),
+    (["run", "--rm", "--entrypoint", "bash", "hermes", "-c", "true"], True, "--entrypoint bash"),
+    (["ps"], True, "ps"),
+])
+def test_the_compose_passthrough_allows_only_what_starts_no_gateway(
+        run, instance, tmp_path, args, ok, expect):
     run("register", "rowan", str(instance("rowan")))
     b, log = _fake_docker(tmp_path, tmp_path / "home" / ".hermes-rowan")
-    r = run("compose", "rowan", "run", "--rm", "hermes", "chat", "-q", "hi",
-            env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "second gateway" in r.stderr
-    assert not log.exists() or "chat" not in log.read_text()
-
-
-def test_the_compose_passthrough_allows_run_with_an_entrypoint(run, instance, tmp_path):
-    """--entrypoint means s6 never starts, so no gateway is booted."""
-    run("register", "rowan", str(instance("rowan")))
-    b, log = _fake_docker(tmp_path, tmp_path / "home" / ".hermes-rowan")
-    r = run("compose", "rowan", "run", "--rm", "--entrypoint", "bash", "hermes", "-c", "true",
-            env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr
-    assert "--entrypoint bash" in log.read_text()
+    r = run("compose", "rowan", *args, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    if ok:
+        assert r.returncode == 0, r.stderr
+        assert expect in log.read_text()
+    else:
+        assert r.returncode != 0
+        assert expect in r.stderr
+        assert not log.exists() or "chat" not in log.read_text()
 
 
 def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
