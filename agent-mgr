@@ -40,7 +40,7 @@ case "$cmd" in
         ;;
     resolve)
         load_agent "${1:-}"
-        for k in $AGENT_KEYS AGENT_DESCRIPTOR; do
+        for k in $AGENT_KEYS AGENT_DESCRIPTOR AGENT_OVERLAY; do
             printf '%s=%s\n' "$k" "${!k-}"
         done
         ;;

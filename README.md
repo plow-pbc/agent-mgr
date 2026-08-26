@@ -196,6 +196,12 @@ the home ends in `.hermes-$AGENT_NAME`, which an overlay claiming a sibling's
 home passes only if it renames itself too. Excluding the keys is what closes
 that, not a later shape check.
 
+`agent-mgr resolve <name>` prints `AGENT_OVERLAY` — the file that contributed,
+or empty — so "why does this agent think it is in Chicago" has an answer that
+does not require guessing which of two files won. An overlay that tries to set
+an identity key says so on stderr and is ignored, because a home that did not
+move looks identical to one that was never set.
+
 Same contract as the descriptor otherwise — read, never executed; `$HOME` is the
 one expansion; one parser for both files, because a second dialect is what this
 tool already paid for once.

@@ -255,3 +255,22 @@ def test_an_overlay_expands_home_like_the_descriptor(run, instance, registry, tm
     run("register", "rowan", str(instance("rowan")))
     _overlay(registry, "rowan", 'AGENT_CONFIG=$HOME/elsewhere.yaml\n')
     assert f"AGENT_CONFIG={tmp_path / 'home'}/elsewhere.yaml" in run("resolve", "rowan").stdout
+
+
+def test_resolve_shows_which_overlay_contributed(run, instance, registry):
+    """`resolve` is the debugging surface for "why is this agent in Chicago".
+    A second source of values it cannot show is worse than no second source."""
+    run("register", "rowan", str(instance("rowan")))
+    assert "AGENT_OVERLAY=\n" in run("resolve", "rowan").stdout
+    _overlay(registry, "rowan", "AGENT_TZ=America/Chicago\n")
+    assert f"AGENT_OVERLAY={registry.parent / 'rowan.env'}" in run("resolve", "rowan").stdout
+
+
+def test_an_overlay_says_so_when_it_ignores_an_identity_key(run, instance, registry):
+    """A home that did not move looks identical to one never set, so silence
+    would leave an operator believing the overlay took effect."""
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan", "AGENT_HOME=/opt/hijack\n")
+    r = run("resolve", "rowan")
+    assert "may not set AGENT_HOME" in r.stderr
+    assert "/opt/hijack" not in r.stdout

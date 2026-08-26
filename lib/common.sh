@@ -114,6 +114,8 @@ AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_
 # exactly as expected, so nothing downstream notices -- `up` creates a stack
 # under a foreign project against this agent's live home, and `down` then
 # reports success having stopped nothing.
+COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES"
+
 # What a PER-INSTANCE OVERLAY may set: AGENT_KEYS minus the identity ones.
 #
 # AGENT_NAME, AGENT_DIR, AGENT_HOME, AGENT_CONTAINER and AGENT_PROJECT are the
@@ -125,7 +127,6 @@ AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_
 # AGENT_NAME, so a bad one would agree with itself.
 AGENT_OVERLAY_KEYS="AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
 
-COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES"
 
 # Parse one declarative KEY=VALUE file. Read, NEVER execute.
 #
@@ -169,6 +170,12 @@ parse_env_file() {
         # the dangerous names are whatever this tool happens to read.
         if printf '%s' "$allow" | grep -qw "$key"; then
             printf -v "$key" '%s' "$value"
+        elif [ "$collect" != "hooks" ] && printf '%s' "$AGENT_KEYS" | grep -qw "$key"; then
+            # A key this tool owns, in a file not allowed to set it. Silence
+            # would leave an operator believing an overlay took effect, and the
+            # keys this rejects are exactly the ones whose failure is invisible
+            # -- a home that did not move looks identical to one never set.
+            echo "agent-mgr: $file may not set $key -- ignoring it (identity comes from the registry name)" >&2
         elif [ "$collect" = "hooks" ]; then
             # An instance's own variables -- STR_VAULT and friends -- which its
             # compose override and its hooks are written against. Passed to the
@@ -221,10 +228,15 @@ load_agent() {
     # per-instance surface this tool already owns.
     local overlay
     overlay="$(dirname "$AGENT_MGR_REGISTRY")/$name.env"
+    # Exported empty when absent: `resolve` is the debugging surface for "why
+    # does this agent think it is in Chicago", and a second source of values
+    # that the surface cannot show is a worse answer than no second source.
+    AGENT_OVERLAY=""
     # `if`, not `&&`: under set -e a false test as the last command of a block
     # takes the function down with it, which is the shape this file already
     # records paying for in reload-if-running.
     if [ -f "$overlay" ]; then
+        AGENT_OVERLAY="$overlay"
         parse_env_file "$overlay" "$AGENT_OVERLAY_KEYS"
     fi
 
@@ -273,7 +285,7 @@ load_agent() {
 
     export AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT \
            AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION \
-           AGENT_DESCRIPTOR HERMES_UID HERMES_GID
+           AGENT_DESCRIPTOR AGENT_OVERLAY HERMES_UID HERMES_GID
 }
 
 # No fetch through this tool may replace what the host built. This is one of the
