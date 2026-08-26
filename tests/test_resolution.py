@@ -280,14 +280,17 @@ def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instanc
     assert "unregister broken" in r.stderr, "the refusal must name the way out"
 
 
-@pytest.mark.parametrize("line", [
-    "AGENT_TZ = America/Chicago",        # spaces around =
-    "  AGENT_TZ=America/Chicago",        # indented
-    "\tAGENT_TZ=America/Chicago",        # tab-indented
-    "export AGENT_TZ=America/Chicago",   # shell-style export
-    "export\tAGENT_TZ=America/Chicago",  # export + tab
+@pytest.mark.parametrize("line,expected", [
+    ("AGENT_TZ = America/Chicago", "America/Chicago"),        # spaces around =
+    ("  AGENT_TZ=America/Chicago", "America/Chicago"),        # indented
+    ("\tAGENT_TZ=America/Chicago", "America/Chicago"),        # tab-indented
+    ("export AGENT_TZ=America/Chicago", "America/Chicago"),   # shell-style export
+    ("export\tAGENT_TZ=America/Chicago", "America/Chicago"),  # export + tab
+    ("AGENT_TZ=America/Chicago   ", "America/Chicago"),       # trailing space: trimmed
+    ("AGENT_TZ =  America/Chicago  ", "America/Chicago"),     # both sides
+    ('AGENT_TZ="America/Chicago  "', "America/Chicago  "),    # quoted: spaces KEPT
 ])
-def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line):
+def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line, expected):
     """Parity with compose-go, measured rather than assumed.
 
     Compose reads this same file through --env-file, and a real
@@ -300,4 +303,7 @@ def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line):
     run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
     r = run("resolve", "rowan")
     assert r.returncode == 0, r.stderr
-    assert "AGENT_TZ=America/Chicago" in r.stdout
+    # Exact line, not a substring: a substring check cannot tell a normalized
+    # value from one carrying trailing whitespace, which is the half that was
+    # unpinned when this test was written.
+    assert f"AGENT_TZ={expected}\n" in r.stdout

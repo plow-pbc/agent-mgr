@@ -211,6 +211,11 @@ load_agent() {
         value="${line#*=}"
         key="${key%"${key##*[![:space:]]}"}"
         value="${value#"${value%%[![:space:]]*}"}"
+        # Trailing whitespace too, and BEFORE the quotes are stripped below --
+        # that ordering is compose-go's and it is observable: an unquoted
+        # `AGENT_TZ=UTC   ` reads as `UTC` there, while `AGENT_TZ="UTC  "` keeps
+        # its spaces. Trimming after the quote strip would eat the quoted ones.
+        value="${value%"${value##*[![:space:]]}"}"
 
         # What remains after normalization must be a real identifier. This is
         # where the execution hole was: a malformed key matched the allowlist as
