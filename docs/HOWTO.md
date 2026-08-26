@@ -12,6 +12,10 @@ ln -s ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
 agent-mgr ls
 ```
 
+Needs **`gh`, authenticated** (`gh auth status`). `restore` installs the Plow
+Chat plugin through the same `gh api` snapshot that installs a skill, so every
+agent needs it, not only one that ships a `skills.tsv`.
+
 The registry lives at `~/.config/agent-mgr/agents` and maps a name to an
 agent repo, so every command works from any directory.
 
@@ -177,7 +181,14 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 ## Bumping the plugin pin
 
 `agent-mgr restore <name>` installs the plugin as part of the whole deploy, and
-that is the normal path. After bumping `runtime/plow-chat-plugin.ref` alone,
+that is the normal path.
+
+**There are two SHA pins and only one of them may move.** Before bumping either,
+read the *What this builds on* section of the [README](../README.md), which owns
+that rule — restating it here is how this page came to state the opposite of the
+code for a commit.
+
+After bumping `runtime/plow-chat-plugin.ref` alone,
 `agent-mgr install-plugin <name>` does just that step — useful when an agent's
 restore hook is expensive (the rentals agent re-seeds a vault and rebuilds its
 property hubs) and nothing else changed.

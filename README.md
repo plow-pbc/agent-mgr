@@ -162,8 +162,10 @@ nothing verifies.
             │                    (spec, not SDK — this repo never calls it directly)
             │ implemented by
   plow-pbc/hermes-plow-chat      the plow-chat-platform plugin: the phone line
-            │
-            │ pinned by 40-char SHA
+            │                    — and, at an earlier SHA, the activation script
+            │ pinned TWICE, each by 40-char SHA:
+            │   runtime/plow-chat-plugin.ref     the plugin directory
+            │   runtime/plow-chat-activate.ref   create_plow_chat_curl.sh
             ▼
         agent-mgr ───── pinned by image digest ─────▶ nousresearch/hermes-agent
             │                                          (the runtime; third party)
@@ -173,14 +175,32 @@ nothing verifies.
 | dependency | what it is | pinned as |
 |---|---|---|
 | [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **`sha256:` digest** |
-| [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA** |
+| [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, in `runtime/plow-chat-plugin.ref` |
+| the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, in `runtime/plow-chat-activate.ref` |
 | [`plow-pbc/seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) | the protocol that plugin implements | not consumed directly |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
-Both pins are exact on purpose — a `sha256:` digest for the image, a 40-char
-SHA for the plugin. A tag or a branch re-resolves on the next pull, which
-silently changes a large unreviewed surface under a running agent that
-holds live credentials — and for the plugin, one that holds the chat token.
+All three pins are exact on purpose — a `sha256:` digest for the image, a
+40-char SHA for each of the two things taken from `hermes-plow-chat`. A tag or a
+branch re-resolves on the next pull, which silently changes a large unreviewed
+surface under a running agent that holds live credentials — and for the plugin,
+one that holds the chat token.
+
+**The two SHA pins name one repo at two points in its history, and must not be
+collapsed into one.** `Strip the SEED ceremony` deleted `ref/scripts/`, so the
+plugin pin moves forward past that commit while `create_plow_chat_curl.sh`
+exists only before it. A single shared ref would send the plugin's post-strip
+SHA at the activate URL and 404 — on `activate`, the one command that is a
+one-time irreversible spend. `tests/test_install.py` pins the pairing.
+
+**Only `runtime/plow-chat-plugin.ref` may be bumped.**
+`runtime/plow-chat-activate.ref` is frozen at a pre-strip commit and must not be
+bumped forward at all — not to `HEAD`, not to any later SHA. That is the
+realistic slip rather than the collapse above: someone reaching for "latest in
+`hermes-plow-chat`" lands on `HEAD`, where the path this ref names no longer
+exists. No test can prove the *ancestry* — that needs another repo's history —
+so the suite pins the SHA itself, which reddens on any bump and makes moving
+that ref deliberate.
 
 ## Sharing with `plow-pbc/plow`
 
@@ -200,6 +220,9 @@ than tolerated:
   `cloud-agents/hermes` carries its own copy of the plugin, under the same id
 - [`#2`](https://github.com/plow-pbc/agent-mgr/issues/2) — the upstream image
   pin here drifts from plow's blessed base
+- [`plow-pbc/hermes-plow-chat#2`](https://github.com/plow-pbc/hermes-plow-chat/issues/2) —
+  the plugin this repo pins loses inbound turns across a socket gap, which
+  plow's copy already fixed
 
 **Keep the managers separate.** Provisioning here is a bash CLI over Compose;
 there it is a `Provider` protocol behind an HTTP endpoint. Activation here is a
