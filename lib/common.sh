@@ -270,6 +270,31 @@ install_plow_plugin() {
 # sibling's home satisfies perfectly -- it is self-consistent and wrong. This is
 # the check that catches that, and restore, install-plugin and add-skill all
 # write into the home without going near Compose.
+# Resolve a path to filesystem identity, whether or not it exists yet.
+#
+# `realpath -m` is GNU coreutils; BSD/macOS realpath has no -m and fails outright
+# on a path that does not exist -- which is the first restore, every time. Under
+# `set -euo pipefail` that aborted every write path with a raw getopt error
+# before anything else ran, and this repo is macOS-facing (see the 501:20 note
+# above). AGENT_MGR_FORCE_PORTABLE_REALPATH exists so the fallback is testable
+# on a GNU host rather than only on the machine where it would first break.
+canonical_path() {
+    local p="$1" rest=""
+    if [ -z "${AGENT_MGR_FORCE_PORTABLE_REALPATH:-}" ] && realpath -m / >/dev/null 2>&1; then
+        realpath -m "$p"
+        return
+    fi
+    # Walk to the deepest existing ancestor, resolve THAT with cd -P (which
+    # follows symlinks), then re-append what did not exist yet.
+    while [ ! -e "$p" ] && [ "$p" != "/" ] && [ "$p" != "." ]; do
+        rest="$(basename "$p")${rest:+/$rest}"
+        p="$(dirname "$p")"
+    done
+    local base
+    base="$(cd -P "$p" 2>/dev/null && pwd)" || base="$p"
+    printf '%s\n' "${base%/}${rest:+/$rest}"
+}
+
 require_own_home() {
     # Compared as filesystem identity, not as strings. `$HOME/tmp/../.hermes`
     # differs lexically from `$HOME/.hermes`, and `.hermes-copycat` can be a
@@ -278,14 +303,14 @@ require_own_home() {
     # credentials. `realpath -m` resolves both without requiring the path to
     # exist, which a first restore depends on.
     local canon
-    canon="$(realpath -m "$AGENT_HOME")"
+    canon="$(canonical_path "$AGENT_HOME")"
 
     # No two registered agents may resolve to the same home. This is what
     # actually closes the legacy exception: a descriptor copied from the rentals
     # agent declares its bare `.hermes` and satisfies any name-shape test, being
     # self-consistent and wrong. Asking the registry catches it whatever the
     # home is called, so the shape rule below no longer has to carry the weight.
-    local other odir ohome
+    local other odir ohome ocanon
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
         # Resolved by load_agent in a subshell, not by a second parser here. A
@@ -294,12 +319,19 @@ require_own_home() {
         # collision went unseen -- one descriptor grammar, or the two disagree
         # exactly where it matters.
         ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" || continue
-        [ "$(realpath -m "$ohome")" = "$canon" ] \
+        [ -n "$ohome" ] || die "could not resolve ${other}'s home while checking for a collision"
+        ocanon="$(canonical_path "$ohome")" \
+            || die "could not resolve ${other}'s home ($ohome) while checking for a collision"
+        [ "$ocanon" = "$canon" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
-    # The canonical path, so a symlink cannot borrow a sibling's name.
-    case "$canon" in
+    # The DECLARED path, not the canonical one. This rule validates what gets
+    # written, and a symlink at the conventional name is the only way an
+    # operator can relocate a home onto another volume -- canonicalizing here
+    # refused that with a message naming the path that IS the agent's own home.
+    # Borrowing a sibling's home by symlink is caught above, by identity.
+    case "$AGENT_HOME" in
         *"/.hermes-$AGENT_NAME") return 0 ;;
         */.hermes)
             # The legacy shape, allowed only when the descriptor says so -- the

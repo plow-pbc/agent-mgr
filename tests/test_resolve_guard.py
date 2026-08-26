@@ -203,7 +203,10 @@ def test_a_symlinked_home_cannot_borrow_a_siblings_name(run, instance, tmp_path)
     run("register", "copycat", str(instance("copycat")))
     r = run("restore", "copycat")
     assert r.returncode != 0
-    assert "refusing to write" in r.stderr
+    # The specific message: "refusing to write" is emitted by the shape rule
+    # too, so a substring match cannot tell which guard fired -- and this case
+    # is about identity, which only the collision loop compares.
+    assert "rowan is already registered there" in r.stderr
 
 
 def test_a_traversing_home_is_the_same_home(run, instance, tmp_path):
@@ -215,4 +218,42 @@ def test_a_traversing_home_is_the_same_home(run, instance, tmp_path):
         str(instance("copycat", descriptor="AGENT_HOME=$HOME/tmp/../.hermes-rowan\n")))
     r = run("restore", "copycat")
     assert r.returncode != 0
-    assert "refusing to write" in r.stderr
+    assert "rowan is already registered there" in r.stderr
+
+
+def test_a_symlinked_home_at_the_conventional_name_is_allowed(run, instance, tmp_path):
+    """The shape rule validates the DECLARED path, because that is what gets
+    written -- and a symlink at the conventional name is the only way an
+    operator can relocate a home onto another volume. Canonicalizing here
+    refused that, with a message naming the path that IS the agent's own home."""
+    volume = tmp_path / "mnt" / "rowan"
+    volume.mkdir(parents=True)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / ".hermes-rowan").symlink_to(volume)
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restore", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert (volume / "config.yaml").exists(), "the write did not follow the relocation"
+
+
+def test_the_shape_rule_refuses_an_unrelated_home(run, instance):
+    """Reaches `case "$AGENT_HOME"` -- no sibling is registered there, so the
+    collision loop passes and this is the guard that fires. Without a case that
+    gets past the loop, reverting the shape line leaves the file green."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_HOME=/tmp/somewhere-else\n")))
+    r = run("restore", "rowan")
+    assert r.returncode != 0
+    assert "that is not rowan's own home" in r.stderr
+
+
+def test_the_portable_realpath_fallback_agrees_with_the_gnu_one(run, instance, tmp_path):
+    """realpath -m is GNU-only; BSD/macOS fails outright on a path that does not
+    exist, which is every first restore. The fallback has to be exercised
+    somewhere other than the machine where it would first break."""
+    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "home" / ".hermes-copycat").symlink_to(tmp_path / "home" / ".hermes-rowan")
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "copycat", str(instance("copycat")))
+    r = run("restore", "copycat", env={"AGENT_MGR_FORCE_PORTABLE_REALPATH": "1"})
+    assert r.returncode != 0
+    assert "rowan is already registered there" in r.stderr
