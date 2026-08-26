@@ -74,6 +74,11 @@ the section after it, *What belongs in an agent's repo*. Ask: **would a
 second agent want this?** No means it belongs in this agent's own repo,
 whatever it is — identity, config, its skill, its scripts.
 
+One case splits further. When several instances are registered against one
+checkout, a value belonging to a *person* rather than to the agent — a timezone
+— cannot live in `agent.env` either, because every instance reads it. That goes
+in `~/.config/agent-mgr/<name>.env`.
+
 ## Adding a shared skill
 
 For a skill **another agent also wants**. One agent's own skill is just its
@@ -108,7 +113,9 @@ are editing one:
 `skills.tsv` appears the first time you `add-skill`, and `compose.override.yml`
 only if you write one -- which you need when the agent has a derived image or
 extra mounts, and there is no template for it. Every key in `agent.env` is an
-override, so the file may be empty.
+override, so the file may be empty. It is read by *every* instance registered
+against the repo, so a per-person value belongs in that instance's overlay
+instead — see *Two layers* above.
 
 Relative paths do **not** work in `compose.override.yml`: Compose resolves them
 against `agent-mgr`'s directory, not the agent's. Name paths through a variable

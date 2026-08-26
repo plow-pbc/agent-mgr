@@ -116,16 +116,18 @@ AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_
 # reports success having stopped nothing.
 COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES"
 
-# What a PER-INSTANCE OVERLAY may set: AGENT_KEYS minus the identity ones.
+# What a PER-INSTANCE OVERLAY may set. One key, because one is the demonstrated
+# need: a shared descriptor holds one value and a timezone is per-person.
 #
-# AGENT_NAME, AGENT_DIR, AGENT_HOME, AGENT_CONTAINER and AGENT_PROJECT are the
-# registry name's to derive, and that derivation is what lets one repo serve
-# several people -- two rows against one checkout resolve to separate homes and
-# containers. Letting a file override them re-opens the collision class
-# require_own_home closes, and the shape test cannot catch it: that test asks
-# whether AGENT_HOME ends in .hermes-$AGENT_NAME, and an overlay is keyed by
-# AGENT_NAME, so a bad one would agree with itself.
-AGENT_OVERLAY_KEYS="AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
+# Deliberately not "AGENT_KEYS minus the identity ones". A wider surface costs a
+# second descriptor dialect to document and keep tested before anything asks for
+# it, and widening later is one string. The identity keys -- AGENT_NAME,
+# AGENT_DIR, AGENT_HOME, AGENT_CONTAINER, AGENT_PROJECT -- could never be in it:
+# they are the registry name's to derive, that derivation is what lets one repo
+# serve several people, and the shape test cannot catch a bad override because
+# it asks whether AGENT_HOME ends in .hermes-$AGENT_NAME while the overlay is
+# keyed by AGENT_NAME, so a bad one would agree with itself.
+AGENT_OVERLAY_KEYS="AGENT_TZ"
 
 
 # Parse one declarative KEY=VALUE file. Read, NEVER execute.

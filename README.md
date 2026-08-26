@@ -54,6 +54,9 @@ The test for where something belongs: **would a second agent want this?**
 
 - `agent-mgr up` — yes, every agent needs it → **common**
 - `agent.env` — no, it *is* this agent's identity → **its repo**
+- a value belonging to one *person* — a timezone — no, and not its repo
+  either when several instances share that checkout → **its overlay**,
+  `~/.config/agent-mgr/<name>.env`
 - a recipe that publishes a property map — no, one agent runs it → **its repo**
 - the Plow Chat plugin — yes, every agent → **common**, pinned by SHA
 - a skill two agents share — pinned by SHA from upstream, installed by `add-skill`
@@ -188,13 +191,17 @@ Read **after** the repo's `agent.env`, through the same parser, so precedence is
 printf 'AGENT_TZ=America/Chicago\n' > ~/.config/agent-mgr/rowan.env
 ```
 
-It may set `AGENT_TZ`, `AGENT_IMAGE`, `AGENT_CONFIG`, `AGENT_RESTORE_HOOK` and
-`AGENT_PRE_TRANSITION`. It may **not** set `AGENT_HOME`, `AGENT_CONTAINER` or
-`AGENT_PROJECT` — those belong to the registry name, and an overlay is keyed by
-that name, so a bad one would agree with itself: `require_own_home` asks whether
-the home ends in `.hermes-$AGENT_NAME`, which an overlay claiming a sibling's
-home passes only if it renames itself too. Excluding the keys is what closes
-that, not a later shape check.
+It sets `AGENT_TZ` and nothing else — one key, because one is the demonstrated
+need. Any other key is ignored. Widening the surface later is one string in
+`AGENT_OVERLAY_KEYS`; a second descriptor dialect documented and tested before
+anything asks for it is not.
+
+The identity keys could never be in it. `AGENT_HOME`, `AGENT_CONTAINER` and
+`AGENT_PROJECT` belong to the registry name, and an overlay is keyed by that
+name, so a bad one would agree with itself: `require_own_home` asks whether the
+home ends in `.hermes-$AGENT_NAME`, which an overlay claiming a sibling's home
+passes only if it renames itself too. Excluding them is what closes that, not a
+later shape check.
 
 `agent-mgr resolve <name>` prints `AGENT_OVERLAY` — the file that contributed,
 or empty — so "why does this agent think it is in Chicago" has an answer that
