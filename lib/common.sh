@@ -108,6 +108,16 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 load_agent() {
     local name="${1:-}"
     [ -n "$name" ] || die "which agent? try 'agent-mgr ls'"
+    # The READ path interpolates too, and a pattern here is worse than a wiped
+    # row: `restore 's.r'` matches str's row, so AGENT_DIR and AGENT_CONFIG are
+    # str's while AGENT_NAME is the pattern -- AGENT_HOME then defaults to
+    # ~/.hermes-s.r, require_own_home passes it (the shape arm matches
+    # literally, and a phantom home collides with no sibling), and the deploy
+    # lands in a brand-new empty directory reporting success while the live
+    # agent is never touched. Checked here rather than in registry_lookup: `new`
+    # calls that inside a command substitution, where die would only fail the
+    # subshell.
+    registry_valid_name "$name"
 
     local dir
     dir="$(registry_lookup "$name")" || die "$name is not registered -- run 'agent-mgr register $name <dir>'"

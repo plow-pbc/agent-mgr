@@ -67,3 +67,10 @@ def test_unregister_refuses_a_name_that_is_a_pattern(run, instance, tmp_path, na
     assert "lowercase letters" in r.stderr
     rows = run("ls").stdout
     assert "str" in rows and "rowan" in rows, "rows were dropped by a refused unregister"
+
+    # The read path interpolates too, and fails differently: `restore 's.r'`
+    # matches str's ROW while deriving its home from the PATTERN, so the deploy
+    # lands in ~/.hermes-s.r and reports success with the live agent untouched.
+    r = run("restore", name)
+    assert r.returncode != 0, f"restore {name!r} resolved to some other agent's row"
+    assert "lowercase letters" in r.stderr
