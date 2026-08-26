@@ -4,12 +4,10 @@ import os
 from conftest import fake_docker, fake_skill_gh
 
 
-def _fake_bin(tmp_path, skill_name="property-hunt", extra_files=(), agent="property",
-              subdirs=(), src=None):
+def _fake_bin(tmp_path, skill_name="property-hunt", files=(), agent="property", src=None):
     """The gh tarball plus a NOT-running docker: these tests assert what the
     installer wrote, not what the reload did."""
-    b = fake_skill_gh(tmp_path, skill_name=skill_name, extra_files=extra_files,
-                      subdirs=subdirs, src=src)
+    b = fake_skill_gh(tmp_path, skill_name=skill_name, files=files, src=src)
     fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{agent}", name=agent,
                 running=False)
     return {"PATH": f"{b}:{os.environ['PATH']}"}
@@ -89,7 +87,7 @@ def test_a_skill_whose_code_runs_in_the_container_gets_its_script_too(run, insta
     r = run("add-skill", "rowan", "plow-pbc/seed-hermes-plow", "--ref", "a" * 40,
             "--dest", "plow-connectors",
             env=_fake_bin(tmp_path, skill_name="plow-connectors", agent="rowan",
-                          extra_files=[("plow_connector.py", "#!/usr/bin/env python3\nprint('ok')\n")]))
+                          files=[("plow_connector.py", "#!/usr/bin/env python3\nprint('ok')\n")]))
     assert r.returncode == 0, r.stderr
     d = tmp_path / "home" / ".hermes-rowan" / "skills" / "plow-connectors"
     assert (d / "SKILL.md").exists()
@@ -103,7 +101,7 @@ def test_a_fetched_script_is_executable(run, instance, tmp_path):
     run("add-skill", "rowan", "plow-pbc/seed-hermes-plow", "--ref", "a" * 40,
         "--dest", "plow-connectors",
         env=_fake_bin(tmp_path, skill_name="plow-connectors", agent="rowan",
-                      extra_files=[("plow_connector.py", "print('ok')\n")]))
+                      files=[("plow_connector.py", "print('ok')\n")]))
     script = tmp_path / "home" / ".hermes-rowan" / "skills" / "plow-connectors" / "plow_connector.py"
     assert script.stat().st_mode & 0o111, "the script is not executable"
 
@@ -133,7 +131,7 @@ def test_a_nested_directory_is_installed_not_silently_dropped(run, instance, tmp
     run("register", "property", str(instance("property")))
     r = run("add-skill", "property", "plow-pbc/property-hunt", "--ref", "a" * 40,
             "--dest", "productivity/property-hunt",
-            env=_fake_bin(tmp_path, subdirs=[
+            env=_fake_bin(tmp_path, files=[
                 ("scripts/scrape.ts", "export const x = 1\n"),
                 ("references/notes.md", "# notes\n"),
             ]))
@@ -149,7 +147,7 @@ def test_a_file_removed_upstream_does_not_survive_the_next_install(run, instance
     run("register", "property", str(instance("property")))
     run("add-skill", "property", "plow-pbc/property-hunt", "--ref", "a" * 40,
         "--dest", "productivity/property-hunt",
-        env=_fake_bin(tmp_path, extra_files=[("old.py", "print('stale')\n")]))
+        env=_fake_bin(tmp_path, files=[("old.py", "print('stale')\n")]))
     d = tmp_path / "home" / ".hermes-property" / "skills" / "productivity" / "property-hunt"
     assert (d / "old.py").exists()
     run("add-skill", "property", "plow-pbc/property-hunt", "--ref", "b" * 40,
@@ -164,7 +162,7 @@ def test_a_subpath_install_takes_only_that_subtree(run, instance, tmp_path):
             "--dest", "plow-connectors", "--src", "ref/hermes-skill/plow-connectors",
             env=_fake_bin(tmp_path, skill_name="plow-connectors", agent="rowan",
                           src="ref/hermes-skill/plow-connectors",
-                          extra_files=[("plow_connector.py", "print('ok')\n")]))
+                          files=[("plow_connector.py", "print('ok')\n")]))
     assert r.returncode == 0, r.stderr
     d = tmp_path / "home" / ".hermes-rowan" / "skills" / "plow-connectors"
     assert (d / "SKILL.md").exists() and (d / "plow_connector.py").exists()

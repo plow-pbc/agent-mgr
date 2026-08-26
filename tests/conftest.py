@@ -121,7 +121,7 @@ def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
 
 
 
-def fake_skill_gh(tmp_path, *, skill_name="property-hunt", extra_files=(), subdirs=(), src=None):
+def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
     """A `gh` that serves a real tarball, so the REAL fetch-skill runs end to end.
 
     Only the gh half: pairing it with a RUNNING fake_docker is what lets a test
@@ -135,7 +135,7 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", extra_files=(), subdi
     root = "plow-pbc-repo-abc1234"
     prefix = f"{root}/{src}/" if src else f"{root}/"
     members = {f"{prefix}SKILL.md": f"---\nname: {skill_name}\n---\n# {skill_name}\n"}
-    for name, body in (*extra_files, *subdirs):
+    for name, body in files:
         members[f"{prefix}{name}"] = body
 
     buf = io.BytesIO()

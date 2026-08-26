@@ -357,27 +357,12 @@ def test_the_subcommand_is_classified_not_the_flattened_argv(run, instance, tmp_
 def test_restore_replays_every_pinned_skill(run, instance, tmp_path):
     """It is advertised as the whole deploy. A rebuild that omitted them left an
     agent whose skills.tsv said one thing and whose home held another."""
-    import base64
-    import io
-    import tarfile
+    from conftest import fake_docker, fake_skill_gh
     repo = instance("rowan")
     (repo / "skills.tsv").write_text(f"plow-pbc/x\t{'a' * 40}\tmy-skill\t\n")
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        data = b"---\nname: my-skill\n---\n"
-        info = tarfile.TarInfo("r-abc/SKILL.md"); info.size = len(data)
-        tar.addfile(info, io.BytesIO(data))
-    (tmp_path / "skill.tgz").write_bytes(buf.getvalue())
-    b = tmp_path / "skillbin"; b.mkdir(exist_ok=True)
-    (b / "gh").write_text(f'#!/usr/bin/env bash\ncat {tmp_path / "skill.tgz"}\n')
-    (b / "gh").chmod(0o755)
-    (b / "curl").write_text("#!/usr/bin/env bash\nout=\"\"\n"
-                            'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done\n'
-                            'printf "#!/usr/bin/env bash\\nexit 0\\n" > "$out"\n')
-    (b / "curl").chmod(0o755)
+    b = fake_skill_gh(tmp_path, skill_name="my-skill")
     # conftest's docker, which answers `config` -- the bare stub made
     # resolve-guard refuse at the reload, after the skill had installed.
-    from conftest import fake_docker
     d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     run("register", "rowan", str(repo))
     r = run("restore", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
