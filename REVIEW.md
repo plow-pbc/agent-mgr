@@ -16,9 +16,10 @@ that earns it: the restart inside `lib/reload-if-running` is non-fatal for
 every caller, `activate` additionally survives a refused guard because its
 one-time activation is already spent, and several `|| true` / `2>/dev/null`
 sites exist so a missing key or an unreachable relay can be *classified*
-rather than kill the command. A swallowed error with no such comment is a
-finding; one with a comment is a design decision, and disagreeing with it is a
-`[shape]` note, not a bug.
+rather than kill the command. The test is what the suppression hides, not
+whether it is commented: swallowing an **absence** — a missing file, key or
+row that the next line handles — is the idiom here and needs no defence.
+Swallowing a **failure the command then reports as success** is the finding.
 
 The pre-transition veto's contract is owned by `README.md` § What belongs in
 an agent's repo. Do not restate it in a review — flag drift between it and
