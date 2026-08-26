@@ -113,30 +113,36 @@ def _no_real_docker_on_path(tmp_path_factory):
     os.environ["PATH"] = os.pathsep.join([str(b), REAL_PATH])
     SUITE_TMP = tmp_path_factory.getbasetemp()
 
-    # Enforced on subprocess itself, not offered as a helper. Two rounds of
-    # review made the same point: a seam that callers must remember to use is
-    # the convention this change exists to retire, and the violation that
-    # actually restarted production was a bare subprocess.run the `run` fixture
-    # never saw. Patched here, the property holds for code that never heard of
-    # spawn(). An env without its own PATH inherits the shadow above and is
-    # already safe.
-    real_run = subprocess.run
+    # Enforced on subprocess itself, not offered as a helper. A seam callers
+    # must remember to use is the convention this change exists to retire, and
+    # the violation that actually restarted production was a bare
+    # subprocess.run the `run` fixture never saw.
+    #
+    # Popen rather than run: run, call, check_call and check_output all funnel
+    # through it, so one wrapper covers every entry point -- including a module
+    # that bound `from subprocess import run` at import time, which collection
+    # has already done by the time this fixture is set up.
+    real_popen = subprocess.Popen
 
-    def guarded_run(argv, *a, **kw):
+    def guarded_popen(*a, **kw):
         env = kw.get("env")
-        if env and "PATH" in env and not _ALLOW_REAL_DOCKER:
-            assert _docker_the_suite_owns(env["PATH"]), (
+        # `is not None`, not `and "PATH" in env`: an explicit env WITHOUT a PATH
+        # is a violation too, not an exemption -- it resolves no docker at all,
+        # and a test meaning to inherit the shadow should say os.environ.
+        if env is not None and not _ALLOW_REAL_DOCKER:
+            assert _docker_the_suite_owns(env.get("PATH", "")), (
                 f"this env resolves docker to "
-                f"{shutil.which('docker', path=env['PATH'])}, which the suite "
-                "did not create; build PATH as f\"{mybin}:{os.environ['PATH']}\" "
-                "so the stub still wins, or use conftest.allow_real_docker()")
-        return real_run(argv, *a, **kw)
+                f"{shutil.which('docker', path=env.get('PATH', ''))}, which the "
+                "suite did not create; build PATH as "
+                "f\"{mybin}:{os.environ['PATH']}\" so the stub still wins, or "
+                "use conftest.allow_real_docker()")
+        return real_popen(*a, **kw)
 
-    subprocess.run = guarded_run
+    subprocess.Popen = guarded_popen
     try:
         yield
     finally:
-        subprocess.run = real_run
+        subprocess.Popen = real_popen
 
 
 @pytest.fixture

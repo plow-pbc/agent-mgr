@@ -188,6 +188,7 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
 @pytest.mark.parametrize("path, why", [
     ("{outside}", "built from scratch, dropping the shadow entirely"),
     ("{outside}{sep}{inherited}", "inherits the shadow but resolves ahead of it"),
+    ("", "an explicit env with no PATH at all, which resolves no docker"),
 ])
 def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
     """The companion to the fence below: it proves the stub refuses an unstubbed
