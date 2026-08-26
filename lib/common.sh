@@ -73,7 +73,7 @@ USAGE
 # variables ahead of --env-file: a stale AGENT_HOME exported in the caller's
 # shell would otherwise silently mount a different agent's home, which is the
 # same failure class that once rewrote a live home to uid 501:20.
-AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK"
+AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
 
 # Compose's own environment variables, unset for the same reason and with a
 # sharper edge: COMPOSE_PROJECT_NAME outranks the template's `name:` attribute,
@@ -176,19 +176,20 @@ load_agent() {
     # Always defined, empty when the instance declares none: every key in
     # AGENT_KEYS is printed by `resolve`, and an unset one is fatal under `set -u`.
     : "${AGENT_RESTORE_HOOK:=}"
-    if [ -n "$AGENT_RESTORE_HOOK" ]; then
-        case "$AGENT_RESTORE_HOOK" in
-            /*) ;;
-            *) AGENT_RESTORE_HOOK="$dir/$AGENT_RESTORE_HOOK" ;;
+    : "${AGENT_PRE_TRANSITION:=}"
+    for _hook in AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION; do
+        case "${!_hook}" in
+            ''|/*) ;;
+            *) printf -v "$_hook" '%s' "$dir/${!_hook}" ;;
         esac
-    fi
+    done
     AGENT_DESCRIPTOR="$descriptor"
 
     HERMES_UID="$(id -u)"
     HERMES_GID="$(id -g)"
 
     export AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT \
-           AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK \
+           AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION \
            AGENT_DESCRIPTOR HERMES_UID HERMES_GID
 }
 
@@ -261,4 +262,23 @@ require_own_home() {
             die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
     die "refusing to write to $AGENT_HOME -- that is not ${AGENT_NAME}'s own home"
+}
+
+# An instance's own veto on stopping or replacing its container.
+#
+# Declared once in the descriptor and invoked by agent-mgr before EVERY
+# transition, rather than pasted into each documented sequence. The rentals
+# agent's is a nightly-ingest check, and its doc copies drifted across three
+# review rounds: one restatement got corrected while the others kept asserting
+# the opposite placement, and a text scanner written to catch that could not
+# see a table cell, a justfile recipe, or an imperative in prose. A hook the
+# tool calls has none of those blind spots -- there is nothing left to restate.
+#
+# Fatal by design: a guard that says "not now" and is overridden is not a guard.
+require_transition_allowed() {
+    [ -n "$AGENT_PRE_TRANSITION" ] || return 0
+    [ -x "$AGENT_PRE_TRANSITION" ] \
+        || die "$AGENT_NAME declares a pre-transition guard at $AGENT_PRE_TRANSITION, which is missing or not executable"
+    ( cd "$AGENT_DIR" && "$AGENT_PRE_TRANSITION" ) \
+        || die "${AGENT_NAME}'s pre-transition guard refused -- not transitioning the container"
 }

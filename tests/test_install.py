@@ -197,3 +197,64 @@ def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance,
     r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     assert marker.exists(), "restore did not install the plugin"
+
+
+def _guarded(instance, run, tmp_path, *, refuses):
+    """An instance whose pre-transition guard allows or refuses."""
+    repo = instance("rowan", descriptor="AGENT_PRE_TRANSITION=scripts/guard.sh\n")
+    (repo / "scripts").mkdir(exist_ok=True)
+    g = repo / "scripts" / "guard.sh"
+    g.write_text("#!/usr/bin/env bash\n"
+                 + (f'echo "a nightly is mid-ingest" >&2\nexit 1\n' if refuses
+                    else f'touch {tmp_path / "guard-ran"}\n'))
+    g.chmod(0o755)
+    run("register", "rowan", str(repo))
+    return repo
+
+
+def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
+    """The rentals agent's guard is a nightly-ingest check. Its doc copies
+    drifted across three review rounds; a hook the tool calls has no copies."""
+    import os
+    _guarded(instance, run, tmp_path, refuses=True)
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    env = {"PATH": f"{b}:{os.environ['PATH']}"}
+    for cmd in (["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
+                ["compose", "rowan", "up", "-d", "--force-recreate"]):
+        r = run(*cmd, env=env)
+        assert r.returncode != 0, f"{cmd} transitioned past a refusing guard"
+        assert "refused" in r.stderr
+
+
+def test_the_guard_runs_before_a_transition_and_not_before_a_read(run, instance, tmp_path):
+    import os
+    _guarded(instance, run, tmp_path, refuses=False)
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    env = {"PATH": f"{b}:{os.environ['PATH']}"}
+    marker = tmp_path / "guard-ran"
+
+    run("logs", "rowan", env=env)
+    assert not marker.exists(), "a read ran the guard"
+
+    run("up", "rowan", env=env)
+    assert marker.exists(), "a transition did not run the guard"
+
+
+def test_a_declared_guard_that_is_missing_is_named(run, instance, tmp_path):
+    import os
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_PRE_TRANSITION=scripts/gone.sh\n")))
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "pre-transition guard" in r.stderr and "gone.sh" in r.stderr
+
+
+def test_an_agent_with_no_guard_transitions_freely(run, instance, tmp_path):
+    import os
+    from conftest import fake_docker
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    assert run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"}).returncode == 0
