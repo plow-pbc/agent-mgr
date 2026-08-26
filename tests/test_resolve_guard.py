@@ -357,3 +357,15 @@ def test_every_write_command_preflights_the_image(run, instance, tmp_path, args)
     assert "neither a digest nor built here" in r.stderr
     assert not list((tmp_path / "home" / ".hermes-rowan").iterdir()), (
         f"{args[0]} wrote into the home before refusing")
+
+
+def test_a_refetch_declared_in_the_file_is_refused_too(run, instance, tmp_path):
+    """`--pull always` is refused on the argv, but the same substitution can be
+    declared as `pull_policy: always` in an override -- which an argv guard
+    cannot see. This seam reads what Compose resolved, so it can."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    build=True, pull_policy="always")
+    r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, "a built image would be refetched on every up"
+    assert "pull_policy: always" in r.stderr

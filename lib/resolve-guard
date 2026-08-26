@@ -22,7 +22,7 @@ require_own_home
 
 resolved="$(compose config --format json)" || die "compose could not resolve a config for $AGENT_NAME"
 
-read -r got_project got_container got_home got_image got_build <<<"$(printf '%s' "$resolved" | python3 -c '
+read -r got_project got_container got_home got_image got_build got_pull <<<"$(printf '%s' "$resolved" | python3 -c '
 import json, sys
 try:
     cfg = json.load(sys.stdin)
@@ -38,7 +38,8 @@ for v in svc.get("volumes", []):
         home = v.get("source", "")
         break
 print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
-      svc.get("image", "-"), "build" if svc.get("build") else "-")
+      svc.get("image", "-"), "build" if svc.get("build") else "-",
+      svc.get("pull_policy", "-"))
 ' 2>/dev/null)" || die "refusing to act: could not read a Compose config for $AGENT_NAME"
 
 [ "$got_project" = "$AGENT_PROJECT" ] \
@@ -65,6 +66,14 @@ print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
 # passthrough forces --ignore-buildable on `pull` (lib/common.sh), so a service
 # this host builds cannot be replaced by a fetch through this tool, whatever it
 # is named.
+# A fetch can also be declared in the FILE rather than on the argv, and an argv
+# guard cannot see it. This seam reads what Compose resolved, so it can: a
+# service that would refetch on every `up` is the same substitution the CLI
+# flag was refused for.
+case "$got_pull" in
+    always) die "refusing to act: $AGENT_NAME's compose config sets pull_policy: always, which refetches the image on every up -- the substitution --pull always is refused for, declared in the file instead. Remove it, or pin the image by digest so there is nothing mutable to refetch." ;;
+esac
+
 case "$got_build:$got_image" in
     *@sha256:[0-9a-f][0-9a-f]*) ;;
     build:*) ;;

@@ -198,7 +198,8 @@ def instance(tmp_path):
 
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
-                exists=None, all_cids=(), mounts=None, image=None, build=False):
+                exists=None, all_cids=(), mounts=None, image=None, build=False,
+                pull_policy=None):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -225,6 +226,8 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         svc["image"] = image or f"hermes-{name}:local"
     else:
         svc["image"] = image or "nousresearch/hermes-agent@sha256:" + "c" * 64
+    if pull_policy:
+        svc["pull_policy"] = pull_policy
     cfg = json.dumps({"name": project, "services": {"hermes": svc}})
     parts = [
         "#!/usr/bin/env bash",
