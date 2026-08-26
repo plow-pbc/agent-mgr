@@ -272,27 +272,16 @@ install_plow_plugin() {
 # write into the home without going near Compose.
 # Resolve a path to filesystem identity, whether or not it exists yet.
 #
-# `realpath -m` is GNU coreutils; BSD/macOS realpath has no -m and fails outright
-# on a path that does not exist -- which is the first restore, every time. Under
-# `set -euo pipefail` that aborted every write path with a raw getopt error
-# before anything else ran, and this repo is macOS-facing (see the 501:20 note
-# above). AGENT_MGR_FORCE_PORTABLE_REALPATH exists so the fallback is testable
-# on a GNU host rather than only on the machine where it would first break.
+# Python, not realpath: `realpath -m` is GNU coreutils and BSD/macOS realpath has
+# no -m and fails outright on a path that does not exist -- which is every first
+# restore. The hand-rolled fallback that replaced it had its own hole: it walked
+# to the deepest EXISTING ancestor, so `$HOME/missing/../.hermes` kept its
+# unresolved `missing/..` and compared unequal to `$HOME/.hermes` until an
+# mkdir made them aliases. os.path.realpath normalises those components without
+# requiring them to exist, on both platforms, and python3 is already a host
+# dependency here (lib/resolve-guard parses compose config with it).
 canonical_path() {
-    local p="$1" rest=""
-    if [ -z "${AGENT_MGR_FORCE_PORTABLE_REALPATH:-}" ] && realpath -m / >/dev/null 2>&1; then
-        realpath -m "$p"
-        return
-    fi
-    # Walk to the deepest existing ancestor, resolve THAT with cd -P (which
-    # follows symlinks), then re-append what did not exist yet.
-    while [ ! -e "$p" ] && [ "$p" != "/" ] && [ "$p" != "." ]; do
-        rest="$(basename "$p")${rest:+/$rest}"
-        p="$(dirname "$p")"
-    done
-    local base
-    base="$(cd -P "$p" 2>/dev/null && pwd)" || base="$p"
-    printf '%s\n' "${base%/}${rest:+/$rest}"
+    python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
 }
 
 require_own_home() {
@@ -318,8 +307,11 @@ require_own_home() {
         # sed/strip version, compared unequal to the same resolved path, and the
         # collision went unseen -- one descriptor grammar, or the two disagree
         # exactly where it matters.
-        ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" || continue
-        [ -n "$ohome" ] || die "could not resolve ${other}'s home while checking for a collision"
+        # A named refusal, not `continue`: a stale sibling repo or a broken
+        # descriptor made this skip the row, and skipping is fail-open in the
+        # one check that closes the legacy exception.
+        ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" \
+            || die "could not resolve ${other}'s home while checking for a collision -- fix or unregister it"
         ocanon="$(canonical_path "$ohome")" \
             || die "could not resolve ${other}'s home ($ohome) while checking for a collision"
         [ "$ocanon" = "$canon" ] \

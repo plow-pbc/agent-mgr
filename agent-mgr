@@ -5,7 +5,11 @@
 # tests can invoke the real thing rather than grep this file.
 set -euo pipefail
 
-AGENT_MGR_ROOT="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
+# `realpath`, not `readlink -f`: the latter is GNU-only, and this runs BEFORE
+# lib/common.sh is sourced -- so on macOS every command aborted here, and the
+# portable resolution inside common.sh could never be reached. Plain realpath
+# (no -m) is enough and exists on both: this path is the running script.
+AGENT_MGR_ROOT="$(cd "$(dirname "$(realpath "${BASH_SOURCE[0]}")")" && pwd)"
 export AGENT_MGR_ROOT
 # shellcheck source=lib/common.sh
 . "$AGENT_MGR_ROOT/lib/common.sh"

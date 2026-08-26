@@ -246,14 +246,29 @@ def test_the_shape_rule_refuses_an_unrelated_home(run, instance):
     assert "that is not rowan's own home" in r.stderr
 
 
-def test_the_portable_realpath_fallback_agrees_with_the_gnu_one(run, instance, tmp_path):
-    """realpath -m is GNU-only; BSD/macOS fails outright on a path that does not
-    exist, which is every first restore. The fallback has to be exercised
-    somewhere other than the machine where it would first break."""
-    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
-    (tmp_path / "home" / ".hermes-copycat").symlink_to(tmp_path / "home" / ".hermes-rowan")
-    run("register", "rowan", str(instance("rowan")))
-    run("register", "copycat", str(instance("copycat")))
-    r = run("restore", "copycat", env={"AGENT_MGR_FORCE_PORTABLE_REALPATH": "1"})
+def test_a_traversal_through_a_missing_parent_is_still_the_same_home(run, instance, tmp_path):
+    """The hand-rolled fallback walked to the deepest EXISTING ancestor, so
+    `$HOME/missing/../.hermes` kept its unresolved `missing/..` and compared
+    unequal -- until an mkdir made the two aliases and restore overwrote the
+    live legacy agent. os.path.realpath normalises the component without
+    requiring it to exist."""
+    (tmp_path / "home" / ".hermes").mkdir(parents=True, exist_ok=True)
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    run("register", "copycat",
+        str(instance("copycat", descriptor="AGENT_HOME=$HOME/missing/../.hermes\n")))
+    r = run("restore", "copycat")
     assert r.returncode != 0
-    assert "rowan is already registered there" in r.stderr
+    assert "str is already registered there" in r.stderr
+
+
+def test_a_broken_sibling_refuses_rather_than_skipping(run, instance, tmp_path):
+    """A stale sibling repo made the loop `continue`, and skipping a row is
+    fail-open in the one check that closes the legacy exception."""
+    import shutil
+    gone = instance("ghost")
+    run("register", "ghost", str(gone))
+    run("register", "rowan", str(instance("rowan")))
+    shutil.rmtree(gone)
+    r = run("restore", "rowan")
+    assert r.returncode != 0
+    assert "ghost" in r.stderr
