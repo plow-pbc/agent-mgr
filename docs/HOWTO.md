@@ -121,7 +121,17 @@ disk: `mkdir -p` on that path exits 0, creates a plain directory where the link
 was, and the whole restore lands on the wrong volume with no error at all — the
 agent then comes up on a home it was never configured with. (A *dangling*
 symlink is safe; `mkdir -p` refuses it loudly with `File exists`.) So recreate
-the symlink first, and let the `mkdir -p` below be the no-op it should be.
+the link **and its target directory** first, and let the `mkdir -p` below be the
+no-op it should be:
+
+```sh
+mkdir -p /big/disk/rowan && ln -s /big/disk/rowan ~/.hermes-rowan
+```
+
+Both halves, because in the total-loss variant — the big disk replaced or
+reformatted, so link *and* target are gone — recreating only the link leaves a
+dangling one, and then `mkdir -p` refuses it with `File exists` and `tar -C`
+fails too. The procedure would dead-end with the home still missing.
 
 ```sh
 agent-mgr down rowan
@@ -139,6 +149,13 @@ command exists for. Reading the path from `resolve` rather than typing
 else. The `restore` afterwards is what makes the archive's copy of `config.yaml`
 and the installed plugin lose to whatever the repo says today: those are the
 reproducible half, and the archive's copy is as old as the archive.
+
+The archive is **contents-rooted** — it holds `./` entries, not a
+`.hermes-rowan/` prefix — so it unpacks into a directory you name rather than
+splatting a name into `$HOME`, and the `-C` above is what makes that safe. That
+falls out of archiving from *inside* the home, which is what makes a symlinked
+home back up at all: archiving from the parent stores the symlink as a single
+symlink entry and exits 0, having captured no credentials, sessions or memories.
 
 Retention prunes by the date in the archive's **name**, not by mtime, and only
 names this command itself wrote. The destination is a directory you chose and
