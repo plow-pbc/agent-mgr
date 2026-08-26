@@ -365,7 +365,13 @@ EOF
         load_agent "${1:-}"; shift
         [ $# -ge 1 ] || die "usage: agent-mgr compose <name> <docker compose args...>"
         # The subcommand is $1, not a word found somewhere in the argv. agent-mgr
-        # supplies the global options itself, so a caller has none to pass.
+        # supplies the global options itself, so a caller has none to pass --
+        # and that is enforced rather than assumed, because every check below
+        # keys on $1 and a leading global would shift the subcommand out from
+        # under all of them at once.
+        case "$1" in
+            -*) die "refusing 'compose $1': the subcommand must come first. agent-mgr supplies the global options (-p, --env-file, -f) itself, and every guard here reads the subcommand as the first word." ;;
+        esac
         [ "$1" = "run" ] && ! run_replaces_the_entrypoint "$@" \
             && die "refusing 'compose run' without --entrypoint before the service: the image's s6 entrypoint would start a second gateway against ${AGENT_NAME}'s home"
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"

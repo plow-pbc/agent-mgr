@@ -163,7 +163,8 @@ def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
      "has to hold under every flag the subcommand accepts"),
     (("--project-name", "logs", "down"), True,
      "scanning the argv for the first recognised word let a global option's "
-     "VALUE stand in for the subcommand -- it is $1 now"),
+     "VALUE stand in for the subcommand -- it is $1 now, and a leading global "
+     "is refused outright so nothing can shift it"),
     (("run", "--rm", "--entrypoint", "bash", "hermes"), False,
      "a throwaway container beside the live one stops nothing, and refusing it "
      "would break the maintenance shell during exactly the ingest it guards"),
@@ -185,7 +186,11 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
         assert r.returncode != 0, why
         # Either gate may be the one that stops it: the veto for a transition,
         # the entrypoint check for a `run` that would boot a second gateway.
-        assert "refused" in r.stderr or "without --entrypoint before the service" in r.stderr
+        assert ("refused" in r.stderr
+                or "without --entrypoint before the service" in r.stderr
+                # A leading global is now refused before the veto is reached:
+                # the subcommand must be $1 for any of these checks to read it.
+                or "subcommand must come first" in r.stderr)
     else:
         assert r.returncode == 0, f"{why}: {r.stderr}"
 
@@ -526,3 +531,14 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     # trip the guard.
     assert run("compose", "rowan", "exec", "hermes", "git", "pull",
                env=env).returncode == 0, "a container's `git pull` tripped the fetch guard"
+
+    # A leading global option would shift the subcommand out from under every
+    # check that reads it as $1 -- including the fetch guard.
+    r = run("compose", "rowan", "--project-name", "x", "pull", env=env)
+    assert r.returncode != 0, "a global option carried a pull past the subcommand key"
+    assert "subcommand must come first" in r.stderr
+
+    # And a flag the old value-list had never heard of, with the fetch after it.
+    r = run("compose", "rowan", "up", "-d", "--scale", "hermes=1", "--pull", "always", env=env)
+    assert r.returncode != 0, "an unlisted value-taking flag truncated the scan"
+    assert "could replace a built image" in r.stderr
