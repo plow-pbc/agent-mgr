@@ -105,7 +105,7 @@ shape: a second copy of something `agent-mgr` already owns.
 | `tests/` | if it has siblings | what this agent must **not** reach, asserted |
 | `skills.tsv` | if it installs a **shared** skill | written by `add-skill`; one pinned SHA per skill |
 | `SKILL.md`, `scripts/`, `references/` | if the agent does something | its own skill: the instructions the container reads, and whatever runs for them |
-| `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env` |
+| `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` (or `build`) beside it unless the `image:` is a digest — [HOWTO](docs/HOWTO.md#what-an-agents-repo-contains) has the shape and what `resolve-guard` refuses without it |
 | a restore hook | if it has its own deploy step | named by `AGENT_RESTORE_HOOK`; `restore` sequences it, so one command is the whole deploy |
 | a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `restore` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
 
@@ -126,7 +126,9 @@ image then runs with the agent's credentials. With that set, there is nothing
 mutable to substitute. A `pull`, or a `--pull` naming anything but
 `never`/`build`, is refused through this tool for the same reason — `pull` with
 no admitted form, because which spellings of `--ignore-buildable` Compose
-honours is a fact about its flag parser, and every miss fails open. `resolve-guard` checks what Compose **resolves**, so an override cannot
+honours is a fact about its flag parser, and every miss fails open. (`build
+--pull` is the exception: there it is a boolean that re-pulls the base image and
+rebuilds, so the output is still what this host built.) `resolve-guard` checks what Compose **resolves**, so an override cannot
 slip a pulled tag past it.) A moving ref re-points a running
 agent on the next upstream push, and these carry the chat token and drive a
 filesystem. Copying the artifact in instead makes the agent's repo a fork of it
