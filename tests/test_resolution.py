@@ -479,3 +479,25 @@ def test_an_unterminated_quote_in_a_dotenv_is_warned_not_fatal(run, instance, tm
     assert "line 2: unterminated quote" in r.stderr
     assert "sk-notreal" not in r.stderr, "a warning must not quote a credential"
     assert "AGENT_TZ=America/Chicago" in r.stdout
+
+
+def test_the_dotenv_follows_a_declared_home(run, instance, tmp_path):
+    """`$AGENT_HOME/.env`, not `~/.hermes-<name>/.env` by spelling.
+
+    An instance whose descriptor declares AGENT_HOME keeps its dotenv beside
+    that home, and agent-mgr must read whichever home it resolved -- the
+    template documents the path, so a divergence here makes that doc wrong for
+    exactly the declared-home instances it describes.
+    """
+    legacy = tmp_path / "home" / ".hermes"
+    legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / ".env").write_text("AGENT_TZ=America/Chicago\n")
+    # the conventional path must NOT be the one consulted
+    conv = tmp_path / "home" / ".hermes-str"
+    conv.mkdir(parents=True, exist_ok=True)
+    (conv / ".env").write_text("AGENT_TZ=Europe/Berlin\n")
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    r = run("resolve", "str")
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_TZ=America/Chicago" in r.stdout
+    assert "Europe/Berlin" not in r.stdout

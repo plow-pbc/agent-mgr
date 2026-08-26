@@ -5,7 +5,11 @@
 # matters when several instances share one checkout:
 #
 #   the repo's agent.env      what is true of EVERY instance of that agent
-#   ~/.hermes-<name>/.env     what belongs to one PERSON -- AGENT_TZ
+#   $AGENT_HOME/.env          what belongs to one PERSON -- AGENT_TZ
+#
+# That second path is the instance's OWN home, not `~/.hermes-<name>` by
+# spelling: an instance whose descriptor declares AGENT_HOME keeps its dotenv
+# beside that home, and agent-mgr reads whichever one it resolved.
 #
 # Putting a per-person value in agent.env gives it to every instance registered
 # against that repo, which for a timezone means somebody runs on the wrong
