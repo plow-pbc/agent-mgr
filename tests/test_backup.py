@@ -199,7 +199,14 @@ def test_a_failed_archive_never_lands_under_a_valid_name(run, instance, tmp_path
 
     assert r.returncode != 0, "tar status 2 is a real failure, not the tolerated warning"
     assert good.read_text() == "yesterday's, still good", "the previous good archive was destroyed"
-    assert not list(backup_dir.glob("rowan-20260*.tar.gz")), "a partial archive was promoted"
+    # The FULL set, not a negative glob carrying today's date. `rowan-20260*`
+    # stops matching anything the command can write on 2026-10-01, and a
+    # never-matching negative assertion is permanently true -- the same vacuous
+    # shape as the `*.part` glob this test was rewritten to fix, with a delayed
+    # trigger instead of an immediate one. Asserting the whole listing is
+    # date-independent and also catches a partial landing under any other stamp.
+    assert [p.name for p in backup_dir.glob("rowan-*.tar.gz")] == ["rowan-20200101.tar.gz"], \
+        "a partial archive was promoted"
     assert not list(backup_dir.glob(".rowan-*")), "the staged file was left behind"
 
 
