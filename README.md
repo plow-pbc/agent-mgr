@@ -98,10 +98,10 @@ second agent wants it.
 
 ```
 rowans-life-hermes-agent/
-  agent.env               overrides only; every key is optional
-  config.yaml             model, plugins, mcp_servers
-  skills.tsv              pinned domain skills, if any
-  compose.override.yml    only if it needs a derived image or extra mounts
+  agent.env               written by `new`; overrides only, every key optional
+  config.yaml             written by `new`; model, plugins, mcp_servers
+  skills.tsv              created by the first `add-skill`; pinned domain skills
+  compose.override.yml    hand-written, and only for a derived image or extra mounts
 ```
 
 `agent.env` can be empty. `AGENT_HOME` defaults to `~/.hermes-<name>`,

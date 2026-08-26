@@ -91,8 +91,12 @@ a skill misbehaves, compare the two versions before debugging the code.
 ## What an instance repo contains
 
 See [README § What an instance repo contains](../README.md#what-an-instance-repo-contains).
-`agent-mgr new` writes the whole shape for you; every key in `agent.env` is an
-override, and the file may be empty.
+
+`agent-mgr new` writes **two** of those four files, `agent.env` and
+`config.yaml`. `skills.tsv` appears the first time you `add-skill`, and
+`compose.override.yml` only if you write one -- which you need when the agent
+has a derived image or extra mounts, and there is no template for it. Every key
+in `agent.env` is an override, so the file may be empty.
 
 ## Why `agent` uses `exec`
 
