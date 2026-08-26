@@ -45,6 +45,13 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # and the guards are never entered.
 # A second caller of either call, in any file -- lib/resolve-guard and
 # agent-mgr run python3 too -- silently moves which invocation that test kills.
+#
+# And the rule every caller of these two follows, stated once here because
+# stating it at each site is what let one site be fixed and another missed:
+# NEVER assign either one's output to the variable its refusal names. A failed
+# substitution stores its empty output before the `||` arm runs, so such a
+# refusal names the value it just erased -- "cannot resolve rowan's home ()".
+# Resolve into a second variable and name the original.
 normalized_path() {
     python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
 }
@@ -223,10 +230,8 @@ load_agent() {
     # canonical_path: a home symlinked onto a bigger disk is ordinary, and the
     # shape rule below reads this value and must still see the declared name.
     #
-    # Through a temp, because assigning AGENT_HOME directly stores the failed
-    # substitution's empty output BEFORE the `||` arm runs -- so the refusal
-    # interpolated the value it had just erased and read "cannot resolve
-    # rowan's home ()", deleting the one fact the operator needs.
+    # Resolved into `home`, not into AGENT_HOME: the never-assign rule beside
+    # normalized_path.
     local home
     home="$(normalized_path "$AGENT_HOME")" \
         || die "cannot resolve ${name}'s home ($AGENT_HOME)"
@@ -465,13 +470,10 @@ require_running_container_is_ours() {
     # spellings again -- one of them from a source we do not control. Then the
     # same-directory question, resolved on both sides like the collision loop.
     if [ -n "$mounted" ]; then
-        # `mounted` is never assigned from these substitutions -- `norm` carries
-        # the resolved value onward instead. That is what makes the refusals
-        # able to print the raw .Source: a failed substitution stores its empty
-        # output before the `||` arm runs, so a message naming the variable it
-        # just wrote names nothing. Not assigning is stronger than ordering
-        # around it, and it keeps docker's own value for the mismatch die below
-        # rather than the collapsed one.
+        # `norm` carries the resolved value onward and `mounted` is never
+        # assigned from either substitution -- the never-assign rule beside
+        # normalized_path. It also keeps docker's raw .Source for the mismatch
+        # die below, which an operator matches against `docker inspect`.
         norm="$(normalized_path "$mounted")" \
             || die "refusing to touch the container under $AGENT_PROJECT -- could not normalise the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
         m="$(canonical_path "$norm")" \

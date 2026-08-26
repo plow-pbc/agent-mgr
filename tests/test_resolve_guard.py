@@ -413,11 +413,12 @@ def test_a_resolver_that_fails_refuses_and_says_which_path(
     suspends it for the whole call tree.
 
     Failing ONE of the two helpers is what a per-call failure looks like -- a
-    fork the host would not give, an interpreter that crashed -- and it is also
-    the only way to reach either site: removing python3 outright stops
-    load_agent before any guard runs. The stub matches the qualified call, which
-    lib/common.sh notes is unique to each helper, so it stays off the other
-    python3 commands this tool runs.
+    fork the host would not give, an interpreter that crashed. It is also the
+    only way to reach the refusals PAST load_agent, which is the realpath arm
+    here; the abspath arm is load_agent's own, and no python3 at all would reach
+    that one too. The stub matches the qualified call, which lib/common.sh notes
+    is unique to each helper, so it stays off the other python3 commands this
+    tool runs.
     """
     b = tmp_path / "stub-bin"
     b.mkdir()
@@ -435,3 +436,45 @@ def test_a_resolver_that_fails_refuses_and_says_which_path(
     # The message whole, not two substrings that can be satisfied apart: the
     # regression this pins is a path going missing from between the others.
     assert refusal.format(home=tmp_path / "home" / ".hermes-rowan") in r.stderr
+
+
+def test_the_mismatch_names_the_path_docker_reported(run, instance, tmp_path):
+    """Docker's raw `.Source`, not the normalised spelling of it. The guard
+    normalises to compare, and while it assigned that result back over
+    `mounted` this refusal showed the collapsed path -- so an operator matching
+    it against `docker inspect` found no such mount."""
+    foreign = "/home/other/x/../.hermes-rowan"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    all_cids=("theirs",), mounts={"theirs": foreign})
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert foreign in r.stderr
+
+
+def test_a_resolver_failing_on_the_mounted_home_says_so_and_names_it(run, instance, tmp_path):
+    """The container guard's own refusal. Keyed on the path as well as the call:
+    failing every abspath would stop load_agent first, so only the mounted
+    home's resolution is broken here.
+
+    It says "normalise", not "resolve", because the line below it says
+    "resolve" -- the two were byte-identical while holding different values,
+    which is what let a path go missing from one of them unnoticed."""
+    foreign = "/home/other/.hermes-rowan"
+    d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    all_cids=("theirs",), mounts={"theirs": foreign})
+    b = tmp_path / "stub-bin"
+    b.mkdir()
+    (b / "python3").write_text(
+        "#!/bin/sh\n"
+        'case "$*" in *"os.path.abspath("*)\n'
+        f'  case "$*" in *"{foreign}"*) exit 1 ;; esac ;;\n'
+        "esac\n"
+        f'exec {sys.executable} "$@"\n'
+    )
+    (b / "python3").chmod(0o755)
+
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restart", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert f"could not normalise the home it mounts ({foreign})" in r.stderr
