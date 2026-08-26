@@ -219,3 +219,28 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
         # scaffolded repo could not discover the veto it is entitled to.
         assert hook in descriptor, (
             f"{hook} is a declared hook but templates/agent.env does not document it")
+
+
+def test_the_readme_still_states_which_pin_may_move():
+    """Only one of the two hermes-plow-chat pins may be bumped, and no assertion
+    can prove it: the activate ref must stay behind a commit in someone else's
+    history, which is a network call this suite will not make.
+
+    So the README is the enforcement, and this pins the README. It earned that:
+    docs/HOWTO.md restated the same rule, went stale for a commit, and told an
+    operator to source the activate SHA from a repo the command never contacts --
+    a 404 on the one command that is a one-time irreversible spend. The HOWTO
+    now back-references this section rather than carrying a second copy.
+    """
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    # The SECTION, not the file: the rule surviving as a stray sentence
+    # elsewhere is exactly the drift this exists to catch.
+    section = (root / "README.md").read_text().split("## What this builds on")
+    assert len(section) == 2, "the builds-on section moved -- this probe reads it"
+    body = section[1].split("\n## ")[0]
+    for claim in ("plow-chat-activate.ref", "plow-chat-plugin.ref",
+                  "create_plow_chat_curl.sh", "must not be"):
+        assert claim in body, (
+            f"the builds-on section no longer states {claim!r} -- it is the only "
+            "thing keeping the activate pin from being bumped past the strip")

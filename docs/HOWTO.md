@@ -181,14 +181,12 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 ## Bumping the plugin pin
 
 `agent-mgr restore <name>` installs the plugin as part of the whole deploy, and
-that is the normal path. Note there are **two** SHA pins, both into
-`plow-pbc/hermes-plow-chat`, at two points in its history:
-`runtime/plow-chat-plugin.ref` is the adapter directory and moves forward
-freely, while `runtime/plow-chat-activate.ref` names
-`ref/scripts/create_plow_chat_curl.sh`, which `Strip the SEED ceremony` deleted
-— so that pin is **frozen before that commit** and must not be bumped to a
-later SHA. Bumping one does not move the other, and moving the activate pin past
-the strip 404s `activate`, the one command that is a one-time irreversible spend.
+that is the normal path.
+
+**There are two SHA pins and only one of them may move.** Before bumping either,
+read the *What this builds on* section of the [README](../README.md), which owns
+that rule — restating it here is how this page came to state the opposite of the
+code for a commit.
 
 After bumping `runtime/plow-chat-plugin.ref` alone,
 `agent-mgr install-plugin <name>` does just that step — useful when an agent's
