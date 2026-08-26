@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 from conftest import fake_docker
+from test_install import _guarded
 
 ROOT = Path(__file__).resolve().parent.parent
 SOURCES = [ROOT / "agent-mgr", *sorted((ROOT / "lib").glob("*"))]
@@ -158,8 +159,6 @@ def test_run_needs_the_entrypoint_before_the_service(run, instance, tmp_path, ar
     """The whole failure this tool exists to prevent, reached through the escape
     hatch: without a replaced entrypoint the image's s6 boots a second gateway
     against the live agent's home."""
-    import os
-    from conftest import fake_docker
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     r = run("compose", "rowan", *args, env={"PATH": f"{b}:{os.environ['PATH']}"})
@@ -167,60 +166,30 @@ def test_run_needs_the_entrypoint_before_the_service(run, instance, tmp_path, ar
     assert "without --entrypoint before the service" in r.stderr
 
 
-def test_a_subcommand_this_tool_has_not_heard_of_asks_the_veto(run, instance, tmp_path):
-    """`scale hermes=0` stops a container and was in neither list back when the
-    guard enumerated stoppers. Naming what is SAFE instead means an unknown
-    subcommand asks the veto rather than skipping it."""
-    import os
-    from conftest import fake_docker
-    from test_install import _guarded
+@pytest.mark.parametrize("args, refused, why", [
+    (("scale", "hermes=0"), True,
+     "scale stops a container and was in neither list when the guard enumerated "
+     "stoppers -- naming what is SAFE means an unknown subcommand asks the veto"),
+    (("wait", "hermes", "--down-project"), True,
+     "wait --down-project drops the whole project: membership of the safe list "
+     "has to hold under every flag the subcommand accepts"),
+    (("--project-name", "logs", "down"), True,
+     "scanning the argv for the first recognised word let a global option's "
+     "VALUE stand in for the subcommand -- it is $1 now"),
+    (("run", "--rm", "--entrypoint", "bash", "hermes"), False,
+     "a throwaway container beside the live one stops nothing, and refusing it "
+     "would break the maintenance shell during exactly the ingest it guards"),
+])
+def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
+        run, instance, tmp_path, args, refused, why):
+    """One table rather than four near-identical bodies: the contract IS a table
+    of subcommand -> passes or asks the veto, and the next probe should cost a
+    row."""
     _guarded(instance, run, tmp_path, refuses=True)
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    r = run("compose", "rowan", "scale", "hermes=0", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0, "scale stopped a container past a refusing guard"
-    assert "refused" in r.stderr
-
-
-def test_a_global_options_value_cannot_stand_in_for_the_subcommand(run, instance, tmp_path):
-    """Scanning the argv for the first recognised word let `--project-name logs`
-    classify a later `down` as a read. The subcommand is $1 now."""
-    import os
-    from conftest import fake_docker
-    from test_install import _guarded
-    _guarded(instance, run, tmp_path, refuses=True)
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    r = run("compose", "rowan", "--project-name", "logs", "down",
-            env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0, "a down hid behind a global option's value"
-    assert "refused" in r.stderr
-
-
-def test_a_maintenance_run_is_not_refused_while_the_guard_is_refusing(run, instance, tmp_path):
-    """The escape hatch's whole purpose, and what inverting the guard's list
-    nearly broke: `run --entrypoint` starts a throwaway container beside the live
-    one and stops nothing, so a nightly-ingest guard has no business refusing it.
-    The dangerous half -- an unreplaced entrypoint -- is refused upstream."""
-    import os
-    from conftest import fake_docker
-    from test_install import _guarded
-    _guarded(instance, run, tmp_path, refuses=True)
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    r = run("compose", "rowan", "run", "--rm", "--entrypoint", "bash", "hermes",
-            env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, f"a refusing guard blocked a maintenance shell: {r.stderr}"
-
-
-def test_a_teardown_hidden_behind_a_read_shaped_subcommand_asks_the_veto(run, instance, tmp_path):
-    """`docker compose wait --down-project` drops the whole project when the
-    first container stops. Membership of the leaves-it-running list has to hold
-    under every flag the subcommand accepts, and this is the one that does not --
-    the same teardown-past-the-veto route `scale hermes=0` was."""
-    import os
-    from conftest import fake_docker
-    from test_install import _guarded
-    _guarded(instance, run, tmp_path, refuses=True)
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    r = run("compose", "rowan", "wait", "hermes", "--down-project",
-            env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0, "a project teardown went through past a refusing guard"
-    assert "refused" in r.stderr
+    r = run("compose", "rowan", *args, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    if refused:
+        assert r.returncode != 0, why
+        assert "refused" in r.stderr
+    else:
+        assert r.returncode == 0, f"{why}: {r.stderr}"
