@@ -452,20 +452,16 @@ def test_each_pin_is_read_only_where_its_command_fetches():
 def test_the_activate_pin_is_frozen_and_distinct():
     """The activate ref may not be bumped at all, and this is what enforces it.
 
-    `Strip the SEED ceremony` deleted ref/scripts/, so the plugin pin moves
-    forward past it while create_plow_chat_curl.sh exists only before it. The
-    realistic slip is reaching for "latest in hermes-plow-chat" and landing on
-    HEAD, which 404s `activate` -- a one-time irreversible spend.
+    Proving the ref is an ANCESTOR of the strip commit would need that repo's
+    history, which is a network call this suite will not make. Pinning the SHA
+    needs nothing, and reddens on every forward bump -- so the why lives in the
+    failure message below, where whoever tripped it is already looking, rather
+    than in a doc they would have to be sent to. The README's builds-on section
+    is the same rule for someone reading before they bump.
 
-    Proving the ref is an ANCESTOR of the strip would need that repo's history,
-    which is a network call this suite will not make. Pinning the SHA itself
-    needs nothing: any forward bump reddens this test, so moving that ref has to
-    be deliberate enough to edit this line. Three review rounds hardened prose
-    around this before someone pointed out the one-line version.
-
-    The inequality stays for the other direction -- an edit that writes one SHA
-    into both files (a sed over runtime/, a copy-paste) installs the pre-strip
-    layout as a plugin, and would satisfy the equality above on its own.
+    The inequality stays for the other direction: an edit writing one SHA into
+    both files (a sed over runtime/, a copy-paste) installs the pre-strip layout
+    as a plugin, and satisfies the equality above on its own.
     """
     plugin = (ROOT / "runtime" / "plow-chat-plugin.ref").read_text().strip()
     activate = (ROOT / "runtime" / "plow-chat-activate.ref").read_text().strip()
