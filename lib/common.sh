@@ -488,15 +488,9 @@ require_running_container_is_ours() {
     # again -- one of them from a source we do not control.
     if [ -n "$mounted" ]; then
         # Both sides end at realpath, so a match IS the same directory. Only
-        # AGENT_HOME also gets an abspath first, from load_agent, and the two
-        # orders diverge for a `..` following a symlink (`/a/link/..` is `/a`
-        # collapsed lexically, the link's parent resolved physically) -- so that
-        # one-sided asymmetry can cost a false refusal, never a missed foreign
-        # container. Matching it here bought a second interpreter and a second
-        # refusal branch for an answer no path this comparison has seen would
-        # change, and nothing launders `mounted` first: it is whatever
-        # `docker inspect` recorded, on a container this guard exists to
-        # suspect.
+        # AGENT_HOME also arrives abspath'd, from load_agent, so a source
+        # spelled with a `..` after a symlink can cost a false refusal and
+        # nothing worse.
         #
         # `mounted` itself is never assigned from the substitution -- the
         # never-assign rule beside normalized_path -- which is what keeps
