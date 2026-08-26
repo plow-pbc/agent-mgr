@@ -162,8 +162,18 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, 
     assert "tok_xyz" not in body
 
 
-@pytest.mark.parametrize("plant", ["symlink-out", "fifo"])
-def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(run, instance, tmp_path, plant):
+@pytest.mark.parametrize(
+    "plant,expected",
+    [
+        # Which layer speaks differs, so the message does too -- but each must
+        # say something the operator can act on. A symlink passes the `-f` gate
+        # and is stopped by O_NOFOLLOW; a FIFO is not a regular file, so `-f`
+        # turns it away first.
+        ("symlink-out", ["cannot read", "Nothing was written"]),
+        ("fifo", ["run 'agent-mgr restore"]),
+    ],
+)
+def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(run, instance, tmp_path, plant, expected):
     """The home is a live container mount, and the agents that most need a latch
     read attacker-controlled input. A gateway that got out of hand can swap the
     dotenv for a symlink to any file the operator can read: following it would
@@ -172,8 +182,9 @@ def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(run, instance, tmp
 
     The open is O_NOFOLLOW relative to a directory FD on the home, so the kernel
     refuses it -- there is no resolve-then-use window for a link planted after a
-    check. Both halves are asserted: the refusal is the visible one, and that
-    the host file was neither read into the home nor replaced is the one that
+    check. Three things are asserted: that it refused, that the message tells
+    the operator the write did not half-happen, and that the host file was
+    neither read into the home nor replaced -- the last being the one that
     actually says the secret stayed out."""
     secret = tmp_path / "host-only-secret"
     secret.write_text("BEGIN OPENSSH PRIVATE KEY\n")
@@ -186,11 +197,14 @@ def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(run, instance, tmp
     else:
         os.mkfifo(env_file)
     r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n")
-    # Two independent layers refuse these, and which one speaks first differs:
-    # a FIFO is not a regular file so the `-f` gate turns it away before
-    # owned-file is reached, while a symlink passes `-f` and is stopped by
-    # O_NOFOLLOW. The invariant is the same either way and is what is asserted.
     assert r.returncode != 0
+    # Not just non-zero. Under `set -euo pipefail` the script aborts anyway, so
+    # a returncode assertion alone leaves both `|| die` clauses deletable with
+    # the suite green -- and what the operator loses is the line saying the
+    # write did not half-happen, which is what decides whether they go re-mint
+    # and revoke a live credential.
+    for fragment in expected:
+        assert fragment in r.stderr
     # Untouched: the publish never ran, so nothing materialised in the mount.
     assert env_file.is_symlink() or stat.S_ISFIFO(env_file.stat().st_mode)
     assert secret.read_text() == "BEGIN OPENSSH PRIVATE KEY\n"
@@ -250,6 +264,9 @@ def test_a_failed_upsert_leaves_the_dotenv_alone(run, instance, tmp_path):
     r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n",
             env={"PATH": f"{stub}:{os.environ['PATH']}"})
     assert r.returncode != 0
+    # The upsert's own `|| die` message, for the same reason as above: without
+    # this the clause could be deleted and only the abort would remain.
+    assert "Nothing was written" in r.stderr
     assert env_file.read_text() == original, "a failed upsert republished over the dotenv"
 
 
