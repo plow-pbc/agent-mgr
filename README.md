@@ -84,15 +84,12 @@ conversations.
 |---|---|---|
 | [`srosro/str-hermes-agent`](https://github.com/srosro/str-hermes-agent) | short-term rentals — messages guests, answers from the operations wiki, unlocks doors | the only one running its product end to end; carries a vault mount and a PMS |
 | [`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | the skill and the agent are one checkout, mounted rather than pinned; the store, map and browser live on the Mac, reached through Latch |
-| [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar | serves someone who is **not the operator**, on their own Plow account and their own clock |
+| [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar | the thinnest: no vault, no product surface, nothing on the Mac |
 
-**A repo is not an agent — a registry row is.** Identity derives from the
-registered name, so one checkout serves as many people as have rows against it,
-each with its own home, container, project and timezone. That is why the repos
-above are named for what the agent *does* while the rows on `wakeup` are named
-for whose it is (`sam-property`), and why none of these descriptors declares an
-`AGENT_HOME`: a repo that declares one cannot be shared, and `require_own_home`
-refuses the second instance rather than letting the two collide.
+**A repo is not an agent — a registry row is**, which is why these are named for
+what the agent *does* and a row is free to name a person instead
+(`sam-property`) once a checkout serves more than one. See
+[One repo, several people](#one-repo-several-people) for what makes that safe.
 
 One repo in orbit:
 
