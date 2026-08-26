@@ -44,8 +44,13 @@ Minting them needs the `relay:device` scope, which only the Mac running Latch
 holds. **`DOMO_DEVICE_UID` decides which Mac an agent can drive** — Latch
 sandboxes and asks per action, but a credential minted against your Mac lets
 that agent drive *your* machine. Mint each agent's against the Mac it should
-have. Leave both blank and `check-latch` reports it unconfigured, which is the
-honest state, not a failure.
+have.
+
+**An agent that drives no Mac deletes the `latch:` block from its
+`config.yaml`.** The config is the declaration — `check-latch` reads it, not the
+dotenv — so a declared latch with blank `DOMO_*` is a broken agent, not an
+unconfigured one, and it is reported as such. With the block gone,
+`check-latch` says "no latch configured" and exits clean.
 
 ## Day to day
 

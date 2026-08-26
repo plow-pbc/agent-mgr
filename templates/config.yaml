@@ -12,9 +12,13 @@ mcp_servers:
   # authorises each action. Both values come from the agent's own dotenv, so
   # the credential never appears in this file or in a URL in git.
   #
-  # Baseline rather than optional. An agent that drives no Mac simply leaves
-  # DOMO_DEVICE_UID empty and check-latch reports it unconfigured -- presence of
-  # the credential is the declaration, so there is no capability flag to forget.
+  # THIS BLOCK IS THE DECLARATION. An agent that drives no Mac deletes it --
+  # leaving it in place with blank DOMO_* values is a configured latch with no
+  # credential, which is a broken agent rather than an unconfigured one, and
+  # `agent-mgr check-latch` says so.
+  #
+  # Baseline rather than optional because most agents want it: a new one is
+  # wired for Latch and you remove this if it drives nothing.
   latch:
     url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp
     headers:

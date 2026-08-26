@@ -145,3 +145,21 @@ def test_a_missing_connector_skill_is_named_rather_than_reported_per_connector(r
     assert r.returncode != 0
     assert "plow-connectors skill is not installed" in r.stderr
     assert "add-skill" in r.stderr, "the message should name the fix"
+
+
+def test_the_scaffold_and_the_docs_agree_on_what_declares_latch(run, tmp_path):
+    """The scaffold ships a latch block, and check-latch reads the config rather
+    than the dotenv -- so the docs must not tell a no-Mac agent to leave DOMO_*
+    blank. That combination is a declared latch with no credential, which fails."""
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    run("new", "acme", str(tmp_path / "acme-hermes-agent"))
+    cfg = (tmp_path / "acme-hermes-agent" / "config.yaml").read_text()
+    assert "latch:" in cfg
+    assert "deletes it" in cfg or "delete" in cfg.lower(), (
+        "the scaffolded config must say how to opt out")
+    for doc in ("templates/env.example", "docs/HOWTO.md"):
+        text = (root / doc).read_text()
+        assert "Leave both blank" not in text, f"{doc} still promises blank means unconfigured"
+        assert "latch:` block" in text and "delet" in text, (
+            f"{doc} does not say how to opt out")
