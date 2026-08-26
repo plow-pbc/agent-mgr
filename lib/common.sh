@@ -233,6 +233,11 @@ load_agent() {
 # builds cannot be silently replaced by a fetch, whatever it is named -- and a
 # bare name IS fetchable, since Docker resolves it against Hub's library/.
 compose_pull_is_safe() {
+    # `pull` is not the only way to fetch: `up`, `run` and `create` all take
+    # --pull always, which is the same substitution through a different door.
+    case " $* " in
+        *" --pull always "*|*" --pull=always "*) return 1 ;;
+    esac
     case " $* " in
         *" pull "*)
             case " $* " in *" --ignore-buildable "*) return 0 ;; esac
@@ -358,6 +363,8 @@ require_running_container_is_ours() {
 # Every route to a container transition goes through here, so the instance's
 # veto cannot be bypassed by adding a call site that forgets it.
 compose_transition() {
+    compose_pull_is_safe "$@" \
+        || die "refusing a fetch that could replace a built image: '--pull always' would substitute whatever a registry serves, and resolve-guard exempts a built image only because a fetch through this tool cannot"
     require_running_container_is_ours
     require_transition_allowed
     compose "$@"

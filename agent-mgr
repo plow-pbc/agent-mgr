@@ -376,7 +376,7 @@ EOF
             # in lib/common.sh for which and why. Locally: `compose rowan cp
             # ./x hermes:/opt/data/` writes into whatever runs under that project.
             compose_pull_is_safe "$@" \
-                || die "refusing 'compose pull' without --ignore-buildable: a service this host builds would be replaced by whatever a registry serves under that name, and resolve-guard's build exemption rests on that not happening"
+                || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull always' has no such escape. resolve-guard exempts a built image from the digest rule only because a fetch through this tool cannot replace it."
             case " $COMPOSE_NEEDS_NO_IDENTIFICATION " in
                 *" $1 "*) ;;
                 *) require_running_container_is_ours ;;

@@ -506,5 +506,13 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     assert r.returncode != 0, "a pull could have replaced a built image"
     assert "--ignore-buildable" in r.stderr
 
+    # `pull` is not the only door: up/run/create all take --pull always, which
+    # is the same substitution by a different route.
+    for args in (("up", "-d", "--pull", "always"), ("up", "-d", "--pull=always"),
+                 ("run", "--rm", "--entrypoint", "bash", "--pull", "always", "hermes")):
+        r = run("compose", "rowan", *args, env=env)
+        assert r.returncode != 0, f"{args} fetched past the guard"
+        assert "could replace a built image" in r.stderr
+
     assert run("compose", "rowan", "pull", "--ignore-buildable",
                env=env).returncode == 0, "the safe form was refused too"
