@@ -6,6 +6,7 @@ and every home's own backups/ directory existed and was empty. This is the
 command that fills them.
 """
 import os
+import shutil
 import tarfile
 
 import pytest
@@ -286,3 +287,58 @@ def test_an_unknown_option_is_refused_rather_than_read_as_a_target(
     assert r.returncode != 0
     assert "unknown option" in r.stderr
 
+
+
+def test_a_descriptor_cannot_point_the_archive_at_the_whole_account(
+        run, instance, tmp_path, backup_dir):
+    """The archive SOURCE is descriptor-controlled. A hand-edited
+    `AGENT_HOME=$HOME` would copy every unrelated credential on the account
+    into the backup directory, so the home must be the one this agent's own
+    name implies before anything is read."""
+    repo = instance("rowan", descriptor="AGENT_HOME=$HOME\n")
+    assert run("register", "rowan", str(repo)).returncode == 0
+
+    r = run("backup", "rowan", env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
+    assert r.returncode != 0
+    assert "own home" in r.stderr
+    assert not list(backup_dir.glob("*.tar.gz")), "it archived the account anyway"
+
+
+def test_one_broken_registry_row_does_not_cost_the_healthy_agents_their_backup(
+        run, instance, tmp_path, backup_dir):
+    """`--all`'s whole contract is that a bad row costs only its own backup.
+    Taking the collision half of require_own_home here would invert it: that
+    loop is deliberately fail-closed on any sibling it cannot resolve, so one
+    stale row -- a repo moved, an agent.env gone -- would abort every healthy
+    agent's archive and report the entire fleet as failed."""
+    _, home = registered(run, instance, "rowan")
+    (home / ".env").write_text("x\n")
+    gone = instance("ghost")
+    assert run("register", "ghost", str(gone)).returncode == 0
+    shutil.rmtree(gone)
+
+    r = run("backup", "--all", env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
+    assert r.returncode != 0, "the broken row must still be reported"
+    assert "ghost" in r.stderr
+    assert [p.name.split("-")[0] for p in backup_dir.glob("*.tar.gz")] == ["rowan"], \
+        "a stale sibling row cost the healthy agent its backup"
+
+
+def test_a_hand_edited_registry_name_cannot_escape_the_backup_directory(
+        run, instance, registry, tmp_path, backup_dir):
+    """The archive DESTINATION is built from the registry name. `register`
+    validates it, so the vector is a hand-edited row — and that is exactly the
+    file this command reads. A traversing name would write the archive, and
+    aim retention's glob, outside AGENT_MGR_BACKUP_DIR entirely."""
+    repo = instance("escape")
+    home = tmp_path / "home" / ".hermes-escape"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("x\n")
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    registry.write_text(f"../../tmp/pwned\t{repo}\n")
+
+    r = run("backup", "../../tmp/pwned",
+            env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
+    assert r.returncode != 0
+    assert "lowercase" in r.stderr
+    assert not list(tmp_path.glob("**/*pwned*.tar.gz")), "the archive escaped the destination"

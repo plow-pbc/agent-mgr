@@ -152,17 +152,23 @@ case "$cmd" in
             while IFS=$'\t' read -r name _; do
                 [ -n "$name" ] || continue
                 if ( load_agent "$name"
-                     # The same two validators every direct-write command takes,
-                     # because the archive SOURCE is descriptor-controlled and
-                     # its DESTINATION name is registry-controlled. Without
-                     # them a hand-edited descriptor declaring AGENT_HOME=$HOME
-                     # copies every unrelated credential on this account into
-                     # the backup directory, and a row named `../../tmp/foo`
-                     # writes the archive outside AGENT_MGR_BACKUP_DIR. Reading
-                     # is not a reason to skip them: the read is what decides
-                     # what gets written.
+                     # The archive SOURCE is descriptor-controlled and its
+                     # DESTINATION name is registry-controlled, so both get
+                     # validated: an AGENT_HOME=$HOME declaration would copy
+                     # every unrelated credential on this account into the
+                     # backup directory, and a row named `../../tmp/foo` would
+                     # write outside AGENT_MGR_BACKUP_DIR. Reading is not a
+                     # reason to skip them -- the read decides what gets written.
+                     #
+                     # require_home_shape, NOT require_own_home: the collision
+                     # half of that guard answers "does anyone else claim this
+                     # home", which only a write cares about, and it is
+                     # deliberately fail-closed on a sibling it cannot resolve.
+                     # Taking it here made one stale registry row abort every
+                     # healthy agent's backup -- the exact outcome the contract
+                     # two lines below exists to prevent.
                      registry_valid_name "$AGENT_NAME"
-                     require_own_home
+                     require_home_shape
                      [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
                      "$AGENT_MGR_ROOT/lib/backup" "$AGENT_NAME" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep" ); then
                     backed_up=$((backed_up + 1))
@@ -183,7 +189,7 @@ EOF
         else
             load_agent "$target"
             registry_valid_name "$AGENT_NAME"
-            require_own_home
+            require_home_shape
             [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
             "$AGENT_MGR_ROOT/lib/backup" "$AGENT_NAME" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep"
         fi

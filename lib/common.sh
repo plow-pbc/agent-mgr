@@ -682,6 +682,22 @@ require_own_home() {
     [ "$skipped" -eq 0 ] \
         || die "refusing to write to $AGENT_HOME -- ${skipped_named} could not be resolved (reason above), so this tool cannot prove no one else claims that home. Fix that descriptor if the agent is still there; 'agent-mgr unregister ${skipped_named}' only if it is gone."
 
+    require_home_shape
+}
+
+# Is this home the one this agent's own name implies? Extracted from
+# require_own_home rather than copied, and the split is the point: the
+# collision loop above answers "does anyone ELSE claim this home", which only
+# a WRITE cares about, while this answers "is this home this agent's at all",
+# which a read needs too.
+#
+# `backup` takes this half alone. Reading a descriptor-controlled AGENT_HOME is
+# how an AGENT_HOME=$HOME declaration would copy every unrelated credential on
+# the account into the backup directory, and this case refuses it. Taking the
+# whole of require_own_home there instead made one stale registry row abort the
+# entire fleet's nightly backup, because the loop is deliberately fail-closed on
+# a sibling it cannot resolve -- inverting the very contract backup documents.
+require_home_shape() {
     case "$AGENT_HOME" in
         *"/.hermes-$AGENT_NAME") return 0 ;;
         */.hermes)
