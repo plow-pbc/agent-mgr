@@ -1,6 +1,8 @@
 import os
 import pathlib
 import pytest
+
+from conftest import fake_docker
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
@@ -315,3 +317,163 @@ def test_an_unterminated_quote_is_refused(run, instance, line):
     r = run("resolve", "rowan")
     assert r.returncode != 0, f"accepted an unterminated quote: {line!r}"
     assert "unterminated quote" in r.stderr
+
+
+def _home_env(tmp_path, name, text):
+    """The dotenv the operator already keeps per person, mounted at /opt/data."""
+    h = tmp_path / "home" / f".hermes-{name}"
+    h.mkdir(parents=True, exist_ok=True)
+    (h / ".env").write_text(text)
+    return h / ".env"
+
+
+def test_two_instances_of_one_repo_take_their_own_zones(run, instance, tmp_path):
+    """One checkout, two registry rows, two dotenvs -- the shape this exists for."""
+    repo = str(instance("life"))
+    run("register", "life", repo)
+    run("register", "rowan", repo)
+    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
+    life, rowan = run("resolve", "life").stdout, run("resolve", "rowan").stdout
+    assert "AGENT_TZ=America/Los_Angeles" in life and "/.hermes-life" in life
+    assert "AGENT_TZ=America/Chicago" in rowan and "/.hermes-rowan" in rowan
+
+
+def test_the_dotenv_cannot_set_anything_but_the_zone(run, instance, tmp_path):
+    """It holds credentials. Exactly one non-secret value is taken from it, and
+    identity is already derived before it is read, so it cannot move its home."""
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan",
+              "AGENT_TZ=America/Chicago\nAGENT_HOME=/opt/hijack\n"
+              "AGENT_IMAGE=pinned:by-hand\nPLOW_CHAT_TOKEN=sk-secret\n")
+    r = run("resolve", "rowan")
+    assert "AGENT_TZ=America/Chicago" in r.stdout
+    assert "/opt/hijack" not in r.stdout
+    assert "pinned:by-hand" not in r.stdout
+    assert "sk-secret" not in r.stdout
+    assert f"AGENT_HOME={tmp_path / 'home'}/.hermes-rowan" in r.stdout
+
+
+def test_the_dotenv_is_read_never_executed(run, instance, tmp_path, injection_marker):
+    """Read, never executed -- and now not even parsed.
+
+    agent-mgr wants one key from this file, so anything else is skipped before
+    key or value validation. The exploit key never reaches a pattern position or
+    `printf -v`, and nothing is said about it: a line agent-mgr does not consume
+    is not its business to comment on, least of all in a file full of secrets.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan", f"AGENT_T[$(touch {injection_marker})Z]=1\n")
+    r = run("resolve", "rowan")
+    assert not injection_marker.exists(), "a dotenv key executed host code"
+    assert r.returncode == 0, r.stderr
+    assert r.stderr.strip() == "", "agent-mgr commented on a line it does not own"
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+
+
+def test_a_malformed_AGENT_TZ_value_is_warned_not_fatal(run, instance, tmp_path):
+    """The one key it DOES consume still gets a diagnostic.
+
+    Warned rather than fatal: Compose never reads this file, so there is no
+    parity to keep, and a stray line here must not cost the instance its
+    commands. The warning names file, line and kind -- never content, because
+    this file sits beside credentials.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan", 'PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n')
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "line 2: unterminated quote" in r.stderr
+    assert "sk-notreal" not in r.stderr and "America/Chicago" not in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+def test_an_unterminated_final_line_is_still_read(run, instance, tmp_path):
+    """The dotenv is maintained by hand and by the gateway, so a last line with
+    no trailing newline is ordinary. `read` returns non-zero at EOF even having
+    filled $line, so without the guard the zone silently falls back."""
+    run("register", "rowan", str(instance("rowan")))
+    h = tmp_path / "home" / ".hermes-rowan"
+    h.mkdir(parents=True, exist_ok=True)
+    (h / ".env").write_text("AGENT_TZ=America/Chicago")  # no trailing newline
+    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
+
+
+def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
+    """The whole chain, end to end -- the only test that proves the feature.
+
+    Three hops, and any two green while the third is broken says nothing:
+    load_agent must READ the dotenv, EXPORT the resolved AGENT_TZ, and Compose
+    must prefer that export over the --env-file it is handed (which is the
+    SHARED descriptor, carrying somebody else's zone). `resolve` reads ${!k} and
+    never needs the export; a rendering test that injects AGENT_TZ by hand never
+    runs the read.
+
+    So this runs the real CLI against a stub docker that reports the AGENT_TZ it
+    was handed. Deleting AGENT_TZ from the export list, or the dotenv read,
+    fails here and nowhere else.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ=America/Los_Angeles\n")))
+    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
+
+    seen = tmp_path / "seen-tz"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    stub = b / "docker"
+    stub.write_text(stub.read_text().replace(
+        "#!/usr/bin/env bash",
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "${{AGENT_TZ-<unset>}}" >> {seen}', 1))
+
+    r = run("compose", "rowan", "config", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    assert seen.exists(), "the stub docker never ran -- the chain was not exercised"
+    saw = seen.read_text()
+    assert "America/Chicago" in saw, (
+        f"compose was handed {saw.strip()!r}; the dotenv's zone did not reach it, "
+        f"so the container would run on the shared descriptor's clock"
+    )
+    assert "America/Los_Angeles" not in saw
+
+
+def test_a_broken_dotenv_does_not_take_down_other_agents(run, instance, tmp_path):
+    """The asymmetry, pinned.
+
+    A malformed line in a DESCRIPTOR is fatal, and through require_own_home's
+    fail-closed arm that reaches every other registered agent -- deliberate,
+    because Compose reads that file and a descriptor it cannot parse is one this
+    tool cannot reason about.
+
+    A dotenv is not that file. Compose never reads it, it is hand-maintained
+    beside credentials, and the only thing agent-mgr wants from it is a
+    timezone. A stray line there must cost that instance its zone and nothing
+    else -- not its own commands, and certainly not anybody else's.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "other", str(instance("other")))
+    _home_env(tmp_path, "rowan", "AGENT_T[oops]=1\n")
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    # restore, not resolve: require_own_home runs on direct-write commands only,
+    # so `resolve` cannot observe the amplification this test exists to deny.
+    other = run("restore", "other")
+    assert other.returncode == 0, other.stderr
+    assert "could not resolve rowan" not in other.stderr
+
+
+def test_the_dotenv_follows_a_declared_home(run, instance, tmp_path):
+    """`$AGENT_HOME/.env`, not `~/.hermes-<name>/.env` by spelling.
+
+    An instance whose descriptor declares AGENT_HOME keeps its dotenv beside
+    that home, and agent-mgr must read whichever home it resolved -- the
+    template documents the path, so a divergence here makes that doc wrong for
+    exactly the declared-home instances it describes.
+    """
+    legacy = tmp_path / "home" / ".hermes"
+    legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / ".env").write_text("AGENT_TZ=America/Chicago\n")
+    # the conventional path must NOT be the one consulted
+    conv = tmp_path / "home" / ".hermes-str"
+    conv.mkdir(parents=True, exist_ok=True)
+    (conv / ".env").write_text("AGENT_TZ=Europe/Berlin\n")
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    r = run("resolve", "str")
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_TZ=America/Chicago" in r.stdout
+    assert "Europe/Berlin" not in r.stdout
