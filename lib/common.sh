@@ -237,6 +237,11 @@ load_agent() {
 # about --ignore-buildable.
 compose_fetch_is_safe() {
     local sub="${1:-}"
+    # Every guard here reads the subcommand as $1, so a leading global would
+    # shift it out from under all of them at once. Refused with the guards
+    # rather than only at the passthrough, so the invariant travels with the
+    # code that depends on it.
+    case "$sub" in -*) return 1 ;; esac
     case "$sub" in
         pull)
             case " $* " in *" --ignore-buildable "*) return 0 ;; esac
@@ -405,26 +410,23 @@ compose_transitions_nothing() {
 }
 
 # `run` must replace the image entrypoint, or s6 boots a gateway beside the live
-# one. --entrypoint has to come before the SERVICE, which is the first word
-# after `run` that is not a flag or a flag's value: docker treats a later one as
-# an argument to the service's own command, so the flag is present, s6 still
-# starts, and a substring check for it passes.
+# one. The flag must be the FIRST argument after `run`.
+#
+# Position, and exactly one position, because every looser rule needs to know
+# something the argv cannot tell it. "Before the service" needs a complete list
+# of value-taking flags, and a missing entry puts the boundary in the wrong
+# place. "Before the first non-flag word" needs no list but cannot tell
+# `--entrypoint` used as a flag from `-e --entrypoint`, where it is another
+# flag's VALUE and overrides nothing. Both fail by ADMITTING an invocation that
+# boots a second gateway, which is the one outcome this tool exists to prevent.
+#
+# First position is unambiguous, and it costs a caller only an argument order:
+# `run --entrypoint bash --rm --no-deps -T hermes`. Nothing becomes impossible.
 run_replaces_the_entrypoint() {
     shift  # the `run` subcommand itself
-    local a
-    while [ $# -gt 0 ]; do
-        a="$1"; shift
-        case "$a" in
-            --entrypoint|--entrypoint=*) return 0 ;;
-            # Flags that consume the next word. Anything else starting with `-`
-            # is a bare flag; anything not starting with `-` is the service, and
-            # by then it is too late.
-            -e|--env|-l|--label|-p|--publish|-u|--user|-v|--volume|-w|--workdir|--name)
-                shift || true ;;
-            -*) ;;
-            *) return 1 ;;
-        esac
-    done
+    case "${1:-}" in
+        --entrypoint|--entrypoint=*) return 0 ;;
+    esac
     return 1
 }
 

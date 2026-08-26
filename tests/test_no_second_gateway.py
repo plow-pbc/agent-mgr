@@ -129,7 +129,7 @@ def test_agent_with_no_prompt_is_refused(run, instance):
     # allow the shape those recipes actually use. Two live callers in the
     # rentals agent pass --entrypoint for exactly this reason.
     (["run", "--rm", "hermes", "chat", "-q", "hi"], False, "second gateway"),
-    (["run", "--rm", "--entrypoint", "bash", "hermes", "-c", "true"], True, "--entrypoint bash"),
+    (["run", "--entrypoint", "bash", "--rm", "hermes", "-c", "true"], True, "--entrypoint bash"),
     (["ps"], True, "ps"),
 ])
 def test_the_compose_passthrough_allows_only_what_starts_no_gateway(
@@ -154,28 +154,35 @@ def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
     assert "refusing to act" in r.stderr
 
 
-@pytest.mark.parametrize("args, refused, why", [
+@pytest.mark.parametrize("args, refused, why, expect_msg", [
     (("scale", "hermes=0"), True,
      "scale stops a container and was in neither list when the guard enumerated "
-     "stoppers -- naming what is SAFE means an unknown subcommand asks the veto"),
+     "stoppers -- naming what is SAFE means an unknown subcommand asks the veto",
+     "refused"),
     (("wait", "hermes", "--down-project"), True,
      "wait --down-project drops the whole project: membership of the safe list "
-     "has to hold under every flag the subcommand accepts"),
+     "has to hold under every flag the subcommand accepts", "refused"),
     (("--project-name", "logs", "down"), True,
      "scanning the argv for the first recognised word let a global option's "
      "VALUE stand in for the subcommand -- it is $1 now, and a leading global "
-     "is refused outright so nothing can shift it"),
-    (("run", "--rm", "--entrypoint", "bash", "hermes"), False,
+     "is refused outright so nothing can shift it", "subcommand must come first"),
+    (("run", "--entrypoint", "bash", "--rm", "hermes"), False,
      "a throwaway container beside the live one stops nothing, and refusing it "
-     "would break the maintenance shell during exactly the ingest it guards"),
+     "would break the maintenance shell during exactly the ingest it guards", ""),
+    (("run", "--rm", "--entrypoint", "bash", "hermes"), True,
+     "not first: locating the service to check 'before it' needs a complete "
+     "list of value-taking flags, and a missing entry admits a second gateway",
+     "first argument is not --entrypoint"),
     (("run", "--rm", "hermes", "--entrypoint", "bash"), True,
      "--entrypoint AFTER the service is an argument to the service's own "
-     "command, so s6 still boots -- a substring check for the flag passed this"),
+     "command, so s6 still boots -- a substring check for the flag passed this",
+     "first argument is not --entrypoint"),
     (("run", "--rm", "-e", "--entrypoint", "hermes"), True,
-     "--entrypoint as another flag's VALUE is not an entrypoint override"),
+     "--entrypoint as another flag's VALUE is not an entrypoint override",
+     "first argument is not --entrypoint"),
 ])
 def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
-        run, instance, tmp_path, args, refused, why):
+        run, instance, tmp_path, args, refused, why, expect_msg):
     """One table rather than four near-identical bodies: the contract IS a table
     of subcommand -> passes or asks the veto, and the next probe should cost a
     row."""
@@ -186,11 +193,10 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
         assert r.returncode != 0, why
         # Either gate may be the one that stops it: the veto for a transition,
         # the entrypoint check for a `run` that would boot a second gateway.
-        assert ("refused" in r.stderr
-                or "without --entrypoint before the service" in r.stderr
-                # A leading global is now refused before the veto is reached:
-                # the subcommand must be $1 for any of these checks to read it.
-                or "subcommand must come first" in r.stderr)
+        # Each row asserts ITS refusal, not any refusal: widening the accepted
+        # set let the global-option row pass on a message it was not written
+        # for, which is the row stopping being exercised rather than passing.
+        assert expect_msg in r.stderr, f"refused, but not for the reason under test: {r.stderr}"
     else:
         assert r.returncode == 0, f"{why}: {r.stderr}"
 
@@ -518,7 +524,7 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
                  # words to the container, so only they may stop scanning there.
                  ("up", "hermes", "--pull", "always"),
                  ("create", "hermes", "--pull=always"),
-                 ("run", "--rm", "--entrypoint", "bash", "--pull", "always", "hermes")):
+                 ("run", "--entrypoint", "bash", "--rm", "--pull", "always", "hermes")):
         r = run("compose", "rowan", *args, env=env)
         assert r.returncode != 0, f"{args} fetched past the guard"
         assert "could replace a built image" in r.stderr
