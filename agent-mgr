@@ -362,8 +362,9 @@ EOF
             # project. `config`, `version`, `ls`, `images`, `build`, `pull`,
             # `push` and `run` touch no running container, and gating them would
             # make `config` need a live daemon it never needed.
-            case " $COMPOSE_ADDRESSES_A_CONTAINER " in
-                *" $1 "*) require_running_container_is_ours ;;
+            case " $COMPOSE_NEEDS_NO_IDENTIFICATION " in
+                *" $1 "*) ;;
+                *) require_running_container_is_ours ;;
             esac
             compose "$@"
         else

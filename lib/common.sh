@@ -258,11 +258,20 @@ compose() {
 # is a trade rather than a free win.
 COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec run cp pull build push"
 
-# The subset that reaches an EXISTING container, and so needs it identified.
-# `config`, `version`, `ls`, `images`, `build`, `pull` and `push` do not, and
-# `run` starts a throwaway beside it -- gating those would make `config`
-# require a live daemon it never needed.
-COMPOSE_ADDRESSES_A_CONTAINER="logs exec cp top port"
+# The subset that needs NO identification, stated that way round for the same
+# reason COMPOSE_LEAVES_IT_RUNNING is: a list of things that must be gated has
+# to be complete to be correct, and the first attempt at this one was not --
+# `events` fell in neither list and streamed the live project ungated, by
+# omission rather than by decision.
+#
+# These touch no running container: `config`, `version`, `ls`, `images`,
+# `build`, `pull` and `push` are file and image operations, and `run` starts a
+# throwaway beside the live one. `ps` is exempt because the identification
+# itself issues a `compose ps` -- gating it would recurse.
+#
+# Anything not named here is gated, heard of or not. Missing an entry costs a
+# needless `compose ps`; missing one from a gate-these list skipped the check.
+COMPOSE_NEEDS_NO_IDENTIFICATION="config version ls images build pull push run ps"
 
 # The container that already EXISTS under this project may not be ours.
 #

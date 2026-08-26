@@ -289,6 +289,9 @@ def test_no_state_of_the_foreign_mount_produces_a_removal_command(run, instance,
     ("sign-in", "rowan"),
     ("compose", "rowan", "exec", "hermes", "cat", "/opt/data/.env"),
     ("compose", "rowan", "cp", "./x", "hermes:/opt/data/"),
+    ("compose", "rowan", "top"),
+    ("compose", "rowan", "events"),
+    ("compose", "rowan", "port", "hermes", "8080"),
 ])
 def test_every_command_that_reaches_an_existing_container_identifies_it(
         run, instance, tmp_path, args):
@@ -303,14 +306,20 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
     home = tmp_path / "home" / ".hermes-rowan"
     home.mkdir(parents=True, exist_ok=True)
     (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
+    log = tmp_path / "argv"
     b = fake_docker(tmp_path, home=home, name="rowan",
-                    mount="/home/someone-else/.hermes-rowan", exec_output="x")
+                    mount="/home/someone-else/.hermes-rowan", exec_output="x", log=log)
     r = run(*args, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, f"{args[0]} reached a container mounting a different home"
     assert "not rowan's home" in r.stderr
+    # Order, not just the exit code: checking afterwards would leave both
+    # assertions above green with the command already sent to the live project.
+    argv = log.read_text()
+    for verb in ("logs", " cp ", "exec", "top", "events"):
+        assert verb not in argv, f"{verb.strip()} reached compose before the check"
 
 
-@pytest.mark.parametrize("sub", ["config", "version", "ls", "images", "build", "pull"])
+@pytest.mark.parametrize("sub", ["config", "version", "ls", "images", "build", "pull", "push", "ps"])
 def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, tmp_path, sub):
     """The identification costs a `compose ps`, which needs a live daemon. Gating
     the whole leaves-it-running list would make `config` -- which never contacted
