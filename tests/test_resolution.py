@@ -238,6 +238,23 @@ def test_an_overlay_cannot_retarget_identity(run, instance, registry, tmp_path):
     assert "may not set AGENT_HOME" in r.stderr
 
 
+def test_an_overlay_cannot_set_a_non_identity_key_either(run, instance, registry):
+    """The overlay is AGENT_TZ alone, so keys that were allowed before the
+    narrowing are dropped too -- and they get a different sentence.
+
+    AGENT_IMAGE has nothing to do with the registry name, so telling an operator
+    that identity comes from it would point them at the wrong file to fix.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan", "AGENT_IMAGE=nousresearch/hermes-agent:pinned-by-hand\n")
+    r = run("resolve", "rowan")
+    assert "pinned-by-hand" not in r.stdout
+    assert "AGENT_IMAGE=nousresearch/hermes-agent@sha256:" in r.stdout
+    assert "may not set AGENT_IMAGE" in r.stderr
+    assert "identity comes from the registry name" not in r.stderr
+    assert "agent.env" in r.stderr
+
+
 def test_an_overlay_is_read_never_executed(run, instance, registry):
     """Same contract as the descriptor: a value cannot reach $(...)."""
     run("register", "rowan", str(instance("rowan")))

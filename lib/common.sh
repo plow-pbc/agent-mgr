@@ -129,6 +129,11 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 # keyed by AGENT_NAME, so a bad one would agree with itself.
 AGENT_OVERLAY_KEYS="AGENT_TZ"
 
+# The keys an overlay could never set, named once so the comment above, the
+# refusal message and any future allowlist all read from the same list rather
+# than restating it and drifting.
+AGENT_IDENTITY_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT"
+
 
 # Parse one declarative KEY=VALUE file. Read, NEVER execute.
 #
@@ -177,7 +182,16 @@ parse_env_file() {
             # would leave an operator believing an overlay took effect, and the
             # keys this rejects are exactly the ones whose failure is invisible
             # -- a home that did not move looks identical to one never set.
-            echo "agent-mgr: $file may not set $key -- ignoring it (identity comes from the registry name)" >&2
+            #
+            # Two reasons a key lands here and they point at different fixes, so
+            # they get different sentences. An identity key is nobody's to
+            # declare; anything else is simply outside the overlay's surface and
+            # belongs in the repo's own agent.env.
+            if printf '%s' "$AGENT_IDENTITY_KEYS" | grep -qw "$key"; then
+                echo "agent-mgr: $file may not set $key -- ignoring it (identity comes from the registry name)" >&2
+            else
+                echo "agent-mgr: $file may not set $key -- ignoring it (an overlay sets AGENT_TZ only; put this in the agent's agent.env)" >&2
+            fi
         elif [ "$collect" = "hooks" ]; then
             # An instance's own variables -- STR_VAULT and friends -- which its
             # compose override and its hooks are written against. Passed to the

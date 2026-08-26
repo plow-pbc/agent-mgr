@@ -192,9 +192,16 @@ printf 'AGENT_TZ=America/Chicago\n' > ~/.config/agent-mgr/rowan.env
 ```
 
 It sets `AGENT_TZ` and nothing else — one key, because one is the demonstrated
-need. Any other key is ignored. Widening the surface later is one string in
-`AGENT_OVERLAY_KEYS`; a second descriptor dialect documented and tested before
-anything asks for it is not.
+need. Widening the surface later is one string in `AGENT_OVERLAY_KEYS`; a second
+descriptor dialect documented and tested before anything asks for it is not.
+
+Anything else in the file falls into one of two cases, and they behave
+differently on purpose:
+
+| in the file | what happens |
+|---|---|
+| another key `agent-mgr` owns — `AGENT_IMAGE`, `AGENT_CONFIG`, a hook | **named on stderr and dropped**, with the reason: identity keys point at the registry name, the rest at the agent's own `agent.env` |
+| anything else — including a typo like `AGENT_TIMEZONE` | **silently ignored**, the same as in a descriptor |
 
 The identity keys could never be in it. `AGENT_HOME`, `AGENT_CONTAINER` and
 `AGENT_PROJECT` belong to the registry name, and an overlay is keyed by that
@@ -203,8 +210,8 @@ home ends in `.hermes-$AGENT_NAME`, which an overlay claiming a sibling's home
 passes only if it renames itself too. Excluding them is what closes that, not a
 later shape check.
 
-`agent-mgr resolve <name>` prints `AGENT_OVERLAY` — the file that contributed,
-or empty — so "why does this agent think it is in Chicago" has an answer that
+`agent-mgr resolve <name>` prints `AGENT_OVERLAY` — the overlay that was *read*,
+or empty if there is none — so "why does this agent think it is in Chicago" has an answer that
 does not require guessing which of two files won. An overlay that tries to set
 an identity key says so on stderr and is ignored, because a home that did not
 move looks identical to one that was never set.

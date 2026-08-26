@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parent.parent
 DIGEST = "nousresearch/hermes-agent@sha256:" + "c" * 64
 
 
-def compose_config(tmp_path, home, name, override=None, extra_env=None):
+def compose_config(tmp_path, home, name, override=None, extra_env=None, env_file=None):
     """Resolve the template the way agent-mgr will, and return the CompletedProcess.
 
     The one place in the suite that runs the REAL docker, and it opts back in
@@ -31,6 +31,8 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
     if extra_env:
         env.update(extra_env)
     files = ["-f", str(ROOT / "templates" / "compose.yml")]
+    if env_file:
+        files += ["--env-file", str(env_file)]
     if override:
         files += ["-f", str(override)]
     with allow_real_docker():
@@ -118,3 +120,31 @@ def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):
     r = compose_config(tmp_path, tmp_path / ".hermes", "str", override=override)
     assert r.returncode != 0
     assert "STR_VAULT" in r.stderr
+
+
+def test_the_overlays_timezone_beats_the_shared_descriptors(tmp_path):
+    """The precedence the per-instance overlay rests on, pinned past `resolve`.
+
+    `compose()` passes --env-file <the agent's OWN agent.env>, which in a shared
+    repo may declare a zone for somebody else. load_agent exports the resolved
+    AGENT_TZ -- overlay first -- and Compose resolves shell variables AHEAD of
+    --env-file, so the export wins. That ordering is the only thing making an
+    overlay reach the container.
+
+    Untested, an inversion is silent: every resolve test still passes (they read
+    the exported variable, not the rendered service) while the running gateway
+    keeps the other person's clock -- the feature's whole purpose, void.
+    """
+    descriptor = tmp_path / "agent.env"
+    descriptor.write_text("AGENT_TZ=America/Los_Angeles\n")
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan",
+                       env_file=descriptor,
+                       extra_env={"AGENT_TZ": "America/Chicago"})
+    assert r.returncode == 0, r.stderr
+    env = json.loads(r.stdout)["services"]["hermes"]["environment"]
+    tz = env["TZ"] if isinstance(env, dict) else \
+        next(v.split("=", 1)[1] for v in env if v.startswith("TZ="))
+    assert tz == "America/Chicago", (
+        f"the shared descriptor's zone won ({tz}); an overlay cannot reach the "
+        f"container and every per-instance zone is silently the wrong person's"
+    )
