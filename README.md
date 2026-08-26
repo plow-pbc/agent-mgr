@@ -53,7 +53,7 @@ thin instance repo is the target, not a stage on the way to a thick one.
 | `skills.tsv` | if it runs a domain skill | Written by `add-skill`; one pinned SHA per skill |
 | `compose.override.yml` | if it needs a derived image or extra mounts | Paths must go through a variable set in `agent.env` |
 | a restore hook | if it has its own deploy step | Named by `AGENT_RESTORE_HOOK`; `restore` sequences it |
-| a pre-transition guard | if stopping it at the wrong moment costs something | Named by `AGENT_PRE_TRANSITION`; `agent-mgr` runs it before every transition — `restore` and a transitioning `compose` passthrough included — and a refusal aborts the command |
+| a pre-transition guard | if stopping it at the wrong moment costs something | Named by `AGENT_PRE_TRANSITION`; `agent-mgr` runs it before every transition. On one the operator asked for — `up`, `down`, `restart`, `restore`, a transitioning `compose` passthrough — a refusal aborts the command. On the reload that follows a write (`install-plugin`, `activate`, `sign-in`, `add-skill`) it skips the restart and the command still succeeds, because the write has already landed |
 
 Nothing else. In particular **no `compose.yml`, no activation script, no
 `model-provider` or `reload-if-running`** — `agent-mgr` owns all of those, and a
