@@ -115,47 +115,38 @@ agent-mgr down rowan \
   && agent-mgr up rowan
 ```
 
-Three things that recipe is doing on purpose:
+Why the recipe is shaped that way:
 
-- **`readlink -f`**, then move and recreate the *target*. A home symlinked onto
-  a bigger disk is supported, and moving `$home` itself would move the **link** —
-  the next `mkdir -p` would then make a plain directory on the root disk, the
-  restore would land on the wrong volume, and the real data would be orphaned at
-  the old target. Resolving first makes the symlinked and plain cases identical.
-- **One `&&` chain from `down`, not `set -e`.** Chained rather than `set -e`
-  because this is a paste-into-your-shell block: bash honours `errexit`
-  interactively, so the first non-zero exit would close the operator's session —
-  over SSH on the fleet host, taking the veto message they need to read with it —
-  and without a `set +e` it would survive into the verification that follows.
-  Chained from `down` because that is the precondition, and it can legitimately
-  fail: it goes through
-  `compose_transition`, which runs `resolve-guard` and the agent's
-  `AGENT_PRE_TRANSITION` veto — the rentals agent refuses to stop mid-ingest by
-  design. On a vetoed `down` an unguarded recipe renames the home out from under
-  a *running* container (the rename succeeds; the gateway keeps writing to the
-  moved inode), extracts into a fresh `$real`, and brings the agent up on it —
-  the live writes land in the set-aside and the restored copy goes live. A
-  failed `mv` has the same shape one step later: `mkdir -p` succeeds trivially
-  and `tar` overlays the live home.
-- **If it stops part-way, `$aside` is the real home.** The likely trigger is the
-  extract: `backup-homes` accepts tar's "file changed as we read it" as success,
-  so an archive whose session database was torn mid-write is an ordinary
-  artifact. To back out, remove the partial `$real` and move `$aside` back to
-  it — nothing is lost, because the set-aside was a rename, not a copy. A sibling because `dirname "$real"` is the same filesystem, so the
-  move is a rename; parking it under `$HOME` instead would make it a
-  cross-device *copy* of the whole home onto the root disk, which is exactly the
-  disk that was too small in the symlinked case.
-- **`restoring-${b#.}-<stamp>`.** The dot is stripped so a plain `ls` shows it —
-  `backup-homes` made the same call for the same reason, and a hidden
-  credential-bearing copy is one nobody remembers to delete. The prefix keeps it
-  out of the `~/.hermes*` glob, so the nightly does not start archiving a dead
-  home as though it were live. The timestamp means a second restore attempt
-  cannot move the new home *inside* the first set-aside. Delete it once the
+- **`readlink -f`, then move and recreate the *target*.** Moving `$home` itself
+  would move the **link**, and the next `mkdir -p` would make a plain directory
+  on the root disk — the restore landing on the wrong volume with the real data
+  orphaned at the old target. Resolving first makes the symlinked and plain
+  cases identical.
+- **A `&&` chain starting at `down`, not `set -e`.** `down` is the precondition
+  and it can legitimately fail: it runs the agent's `AGENT_PRE_TRANSITION` veto,
+  and the rentals agent refuses to stop mid-ingest by design. Unguarded, a
+  vetoed `down` renames the home out from under a *running* container and brings
+  the agent up on the restored copy while the live gateway writes into the
+  set-aside. `set -e` would be worse than the chain: interactive bash honours
+  it, so the first failure closes the operator's session — over SSH, taking the
+  veto message with it.
+- **The set-aside is a sibling of `$real`.** `dirname "$real"` is the same
+  filesystem, so the move is a rename. Under `$HOME` it would be a cross-device
+  *copy* of the whole home onto the root disk — the disk that was too small in
+  the symlinked case to begin with.
+- **`restoring-${b#.}-<stamp>`.** Dot stripped so a plain `ls` shows it, because
+  a hidden credential-bearing copy is one nobody deletes. The prefix keeps it out
+  of the `~/.hermes*` glob so the nightly does not archive a dead home as live.
+  The stamp stops a second attempt nesting inside the first. Delete it once the
   restore is verified.
-- The archive is **contents-rooted** (`./` entries), which is why it needs a
-  named target and cannot splat into `$HOME`. `logs/`, `cache/` and
-  `lazy-packages/` are excluded from it and are not recreated; the agent
-  rebuilds them.
+- **If it stops part-way, run `ls -d "$aside"` before undoing anything.** There
+  are stop points *before* the rename, and on those nothing moved: `$aside` does
+  not exist and `$real` is still your live home, so removing `$real` would
+  destroy the thing the recipe was protecting. If `$aside` does exist it holds
+  the real home — move the partial `$real` out of the way, then `mv "$aside"
+  "$real"`. The likely stop point is the extract, since `backup-homes` accepts
+  tar's "file changed as we read it" and a session database torn mid-write is an
+  ordinary nightly artifact.
 
 ## Two layers: where does my code go?
 
