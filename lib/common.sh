@@ -473,7 +473,7 @@ install_plow_plugin() {
     # the next upstream push, and this plugin holds the chat token.
     [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
     local tmp; tmp="$(mktemp)"
-    curl -fsSL "https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow/$ref/ref/scripts/install_direct_mount.sh" -o "$tmp" \
+    curl -fsSL "https://raw.githubusercontent.com/plow-pbc/hermes-plow-chat/$ref/ref/scripts/install_direct_mount.sh" -o "$tmp" \
         || { rm -f "$tmp"; die "could not fetch the plugin installer at ${ref:0:7}"; }
     PLOW_CHAT_PLUGIN_REF="$ref" bash "$tmp" --data-dir "$AGENT_HOME"
     rm -f "$tmp"

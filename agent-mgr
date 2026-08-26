@@ -62,11 +62,8 @@ case "$cmd" in
         ;;
     restore)
         load_agent "${1:-}"
-        require_own_home
-        # Before the write, not only via reload-if-running on the last line:
-        # resolve-guard owns the image rule, and a deploy that installs config,
-        # the plugin and every pinned skill before refusing has already done the
-        # thing the refusal exists to prevent.
+        # resolve-guard calls require_own_home itself, so the direct call here
+        # was the same registry walk twice per command.
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         require_transition_allowed
         # Preflight everything this command depends on BEFORE it writes
@@ -123,10 +120,8 @@ case "$cmd" in
         ;;
     install-plugin)
         load_agent "${1:-}"
-        require_own_home
-        # Same preflight as restore: resolve-guard owns the image rule, and
-        # reaching it through reload-if-running on the last line means the
-        # plugin is already in the credential home before the refusal.
+        # resolve-guard calls require_own_home itself, so the direct call here
+        # was the same registry walk twice per command.
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
         install_plow_plugin
@@ -165,7 +160,7 @@ case "$cmd" in
         ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
         [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
         tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
-        curl -fsSL "https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow/$ref/ref/scripts/create_plow_chat_curl.sh" -o "$tmp"
+        curl -fsSL "https://raw.githubusercontent.com/plow-pbc/hermes-plow-chat/$ref/ref/scripts/create_plow_chat_curl.sh" -o "$tmp"
         bash "$tmp" --data-dir "$AGENT_HOME"
         # Non-fatal, and the message matters more than the restart: by this line
         # the one-time activation is already spent and the token is written. A
@@ -205,7 +200,8 @@ case "$cmd" in
                 *) die "unknown option: $1" ;;
             esac
         done
-        require_own_home
+        # resolve-guard calls require_own_home itself, so the direct call here
+        # was the same registry walk twice per command.
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         [ -n "$skill_ref" ] || skill_ref="$(gh api "repos/$skill_repo/commits/HEAD" --jq .sha)"
         [[ "$skill_ref" =~ ^[0-9a-f]{40}$ ]] || die "the skill ref must be a 40-char SHA, got: $skill_ref"

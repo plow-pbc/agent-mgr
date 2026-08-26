@@ -68,25 +68,15 @@ print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
 # is named.
 case "$got_build:$got_image" in
     *@sha256:[0-9a-f][0-9a-f]*) ;;
-    build:*) ;;
+    # A build alone is not enough: Compose's DEFAULT policy is `missing`, so an
+    # ordinary `up` fetches the registry image the moment the local tag is
+    # absent -- a first bring-up, a pruned store -- and runs it with the agent's
+    # mounted credentials. The service has to say it will not fetch.
+    build:*)
+        case "$got_pull" in
+            never|build) ;;
+            *) die "refusing to act: ${AGENT_NAME}'s service builds its image but does not set pull_policy: never, so Compose's default (missing) would fetch '$got_image' from a registry the first time the local tag is absent and run it with this agent's credentials. Add 'pull_policy: never' beside the build, or pin a digest." ;;
+        esac ;;
     *) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which is neither a digest nor built here. A pulled tag re-resolves on the next pull and this container holds the agent's credentials -- pin it as ...@sha256:..., or give the service a build." ;;
 esac
 
-# A fetch can also be declared in the FILE rather than on the argv, and an argv
-# guard cannot see it. This seam reads what Compose resolved, so it can.
-#
-# AFTER the digest arm, deliberately: refetching a digest is a no-op, since a
-# digest names one immutable image -- so gating first would have refused the
-# very remedy the message recommends. And every policy that refetches, not just
-# `always`: Compose also takes daily, weekly and every_<duration>.
-case "$got_image" in
-    # Immutable: refetching a digest yields the same image, so a policy cannot
-    # change anything -- gating it here would refuse the very remedy the message
-    # recommends.
-    *@sha256:[0-9a-f][0-9a-f]*) ;;
-    *)
-        case "$got_pull" in
-            always|daily|weekly|every_*)
-                die "refusing to act: ${AGENT_NAME}'s compose config sets pull_policy: $got_pull, which refetches a mutable tag -- the substitution --pull always is refused for, declared in the file instead. Remove it, or pin the image by digest so there is nothing mutable to refetch." ;;
-        esac ;;
-esac

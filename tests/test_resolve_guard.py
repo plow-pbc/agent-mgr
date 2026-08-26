@@ -292,19 +292,30 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     assert run("restore", name).returncode == 0, "unregister did not clear it"
 
 
-@pytest.mark.parametrize(("kw", "refused", "why"), [
+@pytest.mark.parametrize(("kw", "refused", "why", "expect"), [
     ({"image": "nousresearch/hermes-agent:latest"}, True,
      "a pulled tag re-resolves on the next pull, and this container holds the "
-     "agent's credentials"),
-    ({"build": True}, False,
-     "the rentals agent's shape, and refusing it broke every command"),
-    ({"build": True, "image": "nousresearch/hermes-agent:latest"}, False,
+     "agent's credentials", "neither a digest nor built here"),
+    ({"build": True, "pull_policy": "never"}, False,
+     "the rentals agent's shape, and refusing it broke every command", ""),
+    ({"build": True, "image": "nousresearch/hermes-agent:latest",
+      "pull_policy": "never"}, False,
      "a built service is exempt whatever it is NAMED -- two attempts to derive "
      "safety from the reference string were both wrong, so the passthrough "
-     "forces --ignore-buildable on pull and makes the exemption true instead"),
-    ({}, False, "the fleet-wide digest"),
+     "forces --ignore-buildable on pull and makes the exemption true instead", ""),
+    ({}, False, "the fleet-wide digest", ""),
+    ({"build": True}, True,
+     "a build alone is not enough: Compose's default policy is `missing`, so an "
+     "ordinary up fetches the registry image the moment the local tag is absent",
+     "does not set pull_policy: never"),
+    ({"build": True, "pull_policy": "always"}, True,
+     "and a policy that refetches is the same hole declared explicitly",
+     "does not set pull_policy: never"),
+    ({"build": True, "pull_policy": "build"}, False,
+     "`build` is the other policy that never fetches", ""),
 ])
-def test_the_image_rule_reads_what_compose_resolved(run, instance, tmp_path, kw, refused, why):
+def test_the_image_rule_reads_what_compose_resolved(
+        run, instance, tmp_path, kw, refused, why, expect):
     """On the resolved-Compose seam, not the descriptor variable. Checking
     AGENT_IMAGE in load_agent was wrong in both directions: it refused the
     supported `build:` shape outright, while an override replacing
@@ -316,7 +327,10 @@ def test_the_image_rule_reads_what_compose_resolved(run, instance, tmp_path, kw,
     r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     if refused:
         assert r.returncode != 0, f"accepted a mutable image: {why}"
-        assert "neither a digest nor built here" in r.stderr
+        # Each row names ITS refusal: the image rule and the build-policy arm
+        # give different messages, and one shared assertion let a row pass on
+        # the other's.
+        assert expect in r.stderr, f"refused, but not for the reason under test: {r.stderr}"
     else:
         assert r.returncode == 0, f"refused a legitimate image ({why}): {r.stderr}"
 
@@ -359,22 +373,12 @@ def test_every_write_command_preflights_the_image(run, instance, tmp_path, args)
         f"{args[0]} wrote into the home before refusing")
 
 
-def test_a_refetch_declared_in_the_file_is_refused_too(run, instance, tmp_path):
-    """`--pull always` is refused on the argv, but the same substitution can be
-    declared as `pull_policy: always` in an override -- which an argv guard
-    cannot see. This seam reads what Compose resolved, so it can."""
-    run("register", "rowan", str(instance("rowan")))
-    for policy in ("always", "daily", "weekly", "every_12h"):
-        b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                        build=True, pull_policy=policy)
-        r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-        assert r.returncode != 0, f"pull_policy: {policy} refetches and was allowed"
-        assert f"pull_policy: {policy}" in r.stderr
-
-    # A DIGEST is immutable, so refetching it is a no-op -- gating before the
-    # digest arm refused the very remedy the message recommends.
+def test_a_digest_is_exempt_from_the_fetch_policy(run, instance, tmp_path):
+    """A digest names one immutable image, so any policy refetches the same
+    thing -- gating it would refuse the very remedy the build arm recommends."""
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     pull_policy="always")
+    run("register", "rowan", str(instance("rowan")))
     assert run("resolve-guard", "rowan",
                env={"PATH": f"{b}:{os.environ['PATH']}"}).returncode == 0, (
         "a pinned digest was refused for a policy that cannot change it")
