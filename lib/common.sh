@@ -227,7 +227,7 @@ load_agent() {
     # the collision loop clears a copycat and restore overwrites the live
     # sibling. Resolved rather than collapsing slashes by hand, which left
     # `$HOME/foo/../.hermes` intact and evading the check. normalized_path, not
-    # canonical_path: a home symlinked onto a bigger disk is ordinary, and the
+    # canonical_path: a home symlinked onto a bigger disk is ordinary, and
     # require_home_shape reads this value and must still see the declared name.
     #
     # Resolved into `home`, not into AGENT_HOME: the never-assign rule beside
