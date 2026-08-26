@@ -9,6 +9,7 @@ day, and 6 sqlite errors from two gateways racing one session database.
 """
 import os
 import re
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -224,6 +225,21 @@ def _docker_outside_the_suite(d):
     (Path(d) / "docker").write_text("#!/bin/sh\nexit 0\n")
     (Path(d) / "docker").chmod(0o755)
     return d
+
+
+def test_an_explicit_env_with_no_path_is_refused():
+    """An env with no PATH key does not mean "no docker" -- it means CPython
+    resolves through os.defpath, which is /bin:/usr/bin, and finds the
+    operator's real one with the session shadow gone. Verified: an unguarded
+    `subprocess.run(["docker", "--version"], env={})` on this host resolves
+    /bin/docker and runs it.
+
+    The `run` fixture always builds a PATH key, so the parametrized rows above
+    cannot reach this branch; without this test, narrowing the guard back to
+    "explicit env that carries a PATH" leaves the suite green.
+    """
+    with pytest.raises(AssertionError, match="the suite did not create"):
+        subprocess.run([str(ROOT / "agent-mgr"), "ls"], env={})
 
 
 def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_path):
