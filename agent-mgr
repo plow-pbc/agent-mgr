@@ -258,6 +258,15 @@ case "$cmd" in
         # prompt is unconditional rather than gated on a tty test.
         IFS= read -rs tok || die "no DOMO_MCP_TOKEN on stdin"
         printf '\n' >&2
+        # Stripped, so what lands in the file IS what the gateway loads -- it
+        # strips the value too, and a pasted credential routinely arrives with a
+        # trailing space or newline from whatever it was copied out of.
+        uid="${uid#"${uid%%[![:space:]]*}"}"; uid="${uid%"${uid##*[![:space:]]}"}"
+        tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
+        # And empty means the parser's empty, not the shell's: `[ -n "   " ]` is
+        # true, so an all-whitespace paste used to be written out as a key the
+        # gateway then loads as nothing -- the half-configured state check-latch
+        # exists to report, created by the command meant to prevent it.
         [ -n "$uid" ] || die "DOMO_DEVICE_UID was empty -- mint the pair on the Mac running Latch"
         [ -n "$tok" ] || die "DOMO_MCP_TOKEN was empty -- mint the pair on the Mac running Latch"
         # Beside the target, so the rename is atomic: a mktemp in /tmp can land

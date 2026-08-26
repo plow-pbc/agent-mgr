@@ -699,8 +699,16 @@ val = ""
 try:
     with open(path, encoding="utf-8-sig", errors="replace") as f:
         lines = f.readlines()
-except OSError:
+except FileNotFoundError:
     sys.exit(0)
+except OSError as exc:
+    # Not the same answer as "the key is not there". check-latch has already
+    # proved the file exists, so what is left is unreadable -- a dotenv written
+    # 600 under another account, say. Swallowed, that surfaced as "is empty",
+    # which sends the operator to re-mint and revoke a live credential over a
+    # permission problem.
+    sys.stderr.write("cannot read %s: %s\n" % (path, exc))
+    sys.exit(1)
 for line in lines:
     line = line.strip()
     if not line or line.startswith("#") or "=" not in line:

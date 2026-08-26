@@ -87,15 +87,11 @@ def test_the_token_never_reaches_the_process_table(run, instance, tmp_path):
     exec` for the length of the probe -- readable by `ps` from any account on
     the host. It goes in on stdin as a curl config instead, so the recorded argv
     must not carry it."""
-    import os
-    from conftest import fake_docker
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
     run("restore", "property")
     _with_latch(tmp_path, "property", tok="supersecrettokenvalue")
     log = tmp_path / "docker.log"
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-property",
-                    name="property", exec_output="200", log=log)
-    run("check-latch", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
     argv = log.read_text()
     assert "exec -T" in argv, "no -T, so docker would allocate a TTY and refuse the pipe"
     assert "supersecrettokenvalue" not in argv, "the token was passed in argv"
@@ -245,14 +241,18 @@ def test_check_latch_sends_the_value_the_gateway_would_load(run, instance, tmp_p
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
     run("restore", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
-        "DOMO_DEVICE_UID=dev_123\n" + dotenv)
+        dotenv.replace("DOMO_MCP_TOKEN", "DOMO_DEVICE_UID").replace("tok_abc", "dev_123")
+        + dotenv)
     log = tmp_path / "docker.log"
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-property",
-                    name="property", exec_output="200", log=log)
-    r = run("check-latch", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
     assert r.returncode == 0, r.stderr
     stdin = (tmp_path / "docker.log.stdin").read_text()
     assert 'header = "Authorization: Bearer tok_abc"' in stdin
+    # The uid is parsed by the same reader and goes in the URL, so it fails the
+    # same way -- a quoted one would request .../devices/"dev_123"/mcp and earn
+    # a 404 that check-latch reports as a relay error rather than a bad value.
+    assert "https://api.plow.co/v1/relay/devices/dev_123/mcp" in (
+        tmp_path / "docker.log.argv").read_text()
 
 
 def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, instance, tmp_path):
@@ -280,9 +280,7 @@ def test_check_latch_probes_the_declaration_the_gateway_actually_loaded(run, ins
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=stale_first\nexport DOMO_MCP_TOKEN=live_last\n")
     log = tmp_path / "docker.log"
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-property",
-                    name="property", exec_output="200", log=log)
-    r = run("check-latch", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
     assert r.returncode == 0, r.stderr
     stdin = (tmp_path / "docker.log.stdin").read_text()
     assert 'header = "Authorization: Bearer live_last"' in stdin
