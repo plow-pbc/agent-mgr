@@ -195,16 +195,25 @@ compose() {
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
 }
 
-# Compose subcommands that leave the container running as it is. `exec` is here
-# because it runs INSIDE a container without stopping or replacing one, which is
-# what the veto guards.
+# Compose subcommands that leave the LIVE container as it is. `exec` runs inside
+# one, `run` starts a separate throwaway beside it, `cp`/`pull`/`build`/`push`
+# touch files and images -- none of them stops or replaces the gateway, which is
+# what the veto guards. `run` is here deliberately: it is what the escape hatch
+# exists for, its two live callers are a maintenance shell and a host-side
+# ingest, and the thing that makes it dangerous -- an unreplaced entrypoint --
+# is refused upstream by run_replaces_the_entrypoint rather than by the veto.
 #
-# Stated as what is safe rather than what is dangerous, which is the safe
-# direction and the reason this replaced the transition list it used to be: a
-# list of stoppers has to be complete to be correct, and it was not -- `scale
-# hermes=0` stops a container and appeared in neither list. Missing an entry
-# here costs a needless guard call; missing one there skipped the veto.
-COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec"
+# Stated as what is safe rather than what is dangerous, because a list of
+# stoppers has to be complete to be correct and the one this replaced was not:
+# `scale hermes=0` stops a container and was in neither list.
+#
+# Both directions cost something, so neither is free. An entry missing HERE is a
+# hard refusal of a command that was safe -- and while a guard is refusing, that
+# is every invocation of it, which is exactly when a maintenance shell is
+# wanted. An entry missing from the old list skipped the veto silently. Refusing
+# loudly is the better failure, which is why the list is this way round, but it
+# is a trade rather than a free win.
+COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec run cp pull build push wait"
 
 # Every route to a container transition goes through here, so the instance's
 # veto cannot be bypassed by adding a call site that forgets it.

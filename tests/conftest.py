@@ -83,6 +83,10 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     parts = [
         "#!/usr/bin/env bash",
         f'printf "%s\\n" "$*" >> {log}' if log else "",
+        # stdin beside argv, in its OWN file: a test asserting a secret is
+        # absent from argv proves nothing about whether it still reaches the
+        # command, and one file could not tell the two apart.
+        f'case "$*" in *exec*) cat >> {log}.stdin ;; esac' if log else "",
         'case "$*" in',
         f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;",
         f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',

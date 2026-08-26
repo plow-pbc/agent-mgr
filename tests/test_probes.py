@@ -98,6 +98,12 @@ def test_the_token_never_reaches_the_process_table(run, instance, tmp_path):
     argv = log.read_text()
     assert "exec" in argv, "the probe did not run, so this asserts nothing"
     assert "supersecrettokenvalue" not in argv, "the token was passed in argv"
+    # And the other half: it must still REACH curl. Misspell the config keyword
+    # or lose the -T and the probe gets an unauthenticated 401, which check-latch
+    # reports as REVOKED -- sending the operator to mint a replacement for a
+    # credential that was never sent.
+    stdin = (tmp_path / "docker.log.stdin").read_text()
+    assert 'header = "Authorization: Bearer supersecrettokenvalue"' in stdin
 
 
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):

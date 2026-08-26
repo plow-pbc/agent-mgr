@@ -193,3 +193,18 @@ def test_a_global_options_value_cannot_stand_in_for_the_subcommand(run, instance
             env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, "a down hid behind a global option's value"
     assert "refused" in r.stderr
+
+
+def test_a_maintenance_run_is_not_refused_while_the_guard_is_refusing(run, instance, tmp_path):
+    """The escape hatch's whole purpose, and what inverting the guard's list
+    nearly broke: `run --entrypoint` starts a throwaway container beside the live
+    one and stops nothing, so a nightly-ingest guard has no business refusing it.
+    The dangerous half -- an unreplaced entrypoint -- is refused upstream."""
+    import os
+    from conftest import fake_docker
+    from test_install import _guarded
+    _guarded(instance, run, tmp_path, refuses=True)
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    r = run("compose", "rowan", "run", "--rm", "--entrypoint", "bash", "hermes",
+            env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, f"a refusing guard blocked a maintenance shell: {r.stderr}"
