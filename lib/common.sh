@@ -247,6 +247,12 @@ require_running() {
 #
 # Reloads nothing -- callers do, once, after everything boot-read has landed.
 install_plow_plugin() {
+    # Bound here, not interpolated inside the die below. Inside the string it is
+    # expanded only on the failure branch -- so a caller that forgot it looked
+    # fine until the day it mattered, and then bash aborted on the expansion
+    # BEFORE die ran, replacing the gh-auth diagnosis with "1: the caller must
+    # say what landed". A caller contract belongs at entry.
+    local landed="${1:?install_plow_plugin: the caller must say what landed}"
     local ref
     ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
     # A SHA, never a branch: a branch would silently re-point a running agent on
@@ -276,7 +282,7 @@ install_plow_plugin() {
     # the obvious response to that is to re-run restore over a healthy agent.
     "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" plugins plugin.yaml \
         plow-pbc/hermes-plow-chat "$ref" plow-chat-platform plow-chat-platform \
-        || die "could not install the Plow Chat plugin from plow-pbc/hermes-plow-chat at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? ${1:?the caller must say what landed}"
+        || die "could not install the Plow Chat plugin from plow-pbc/hermes-plow-chat at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? $landed"
 }
 
 # Refuse to write into a home that is not this agent's.

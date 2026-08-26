@@ -60,10 +60,18 @@ def test_every_shipped_pin_is_a_sha_not_a_branch(pin):
 
 
 def _block(text, start, end):
-    """The lines of one command's block, so a match cannot come from elsewhere."""
+    """The lines of one command's block, so a match cannot come from elsewhere.
+
+    The end delimiter is an EXACT line match. A substring match on "}" would hit
+    the `{40}` in the SHA regex, and the first version of this used "\n}" --
+    which can never match, because the text was already split on newlines. That
+    made the plugin "block" run to end-of-file: the positive assertions would
+    have stayed green with the ref read moved into any later helper, and the
+    negative one spanned ~65 unrelated lines.
+    """
     lines = text.split("\n")
     i = next(n for n, l in enumerate(lines) if start in l)
-    j = next((n for n, l in enumerate(lines[i + 1:], i + 1) if end in l), len(lines))
+    j = next(n for n, l in enumerate(lines[i + 1:], i + 1) if l.rstrip() == end)
     return "\n".join(lines[i:j])
 
 
@@ -80,7 +88,7 @@ def test_each_pin_is_read_only_where_its_own_repo_is_fetched():
     they read -- precisely the failure it was written for.
     """
     plugin = _block((ROOT / "lib" / "common.sh").read_text(),
-                    "install_plow_plugin()", "\n}")
+                    "install_plow_plugin()", "}")
     assert "plow-chat-plugin.ref" in plugin
     assert "plow-pbc/hermes-plow-chat" in plugin
     assert "plow-chat-activate.ref" not in plugin, "the plugin install must not read the activate pin"
@@ -388,3 +396,34 @@ def test_a_runtime_hook_failure_says_what_landed(run, instance, tmp_path):
     r = run("restore", "rowan", env=_transition_env(tmp_path))
     assert r.returncode != 0
     assert "ARE installed" in r.stderr and "is NOT" in r.stderr
+
+
+def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
+    """restore and install-plugin leave the agent in opposite states on a failed fetch.
+
+    One hard-coded sentence told the install-plugin operator their config and
+    skills were gone, when install-plugin gates on an existing home and leaves
+    both untouched -- and the obvious response to that message is to re-run
+    restore over a healthy agent. Nothing pinned the split, so a revert to one
+    sentence would have been silent.
+    """
+    import os
+    b = tmp_path / "failing-bin"
+    b.mkdir()
+    (b / "gh").write_text("#!/usr/bin/env bash\nexit 1\n")
+    (b / "gh").chmod(0o755)
+    failing = {"PATH": f"{b}:{os.environ['PATH']}"}
+
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restore", "rowan", env=failing)
+    assert r.returncode != 0
+    assert "gh auth status" in r.stderr, "the gh diagnosis must survive"
+    assert "config.yaml and skills are NOT" in r.stderr
+
+    # A home restore already made, so install-plugin gets past its own gate.
+    run("restore", "rowan")
+    r = run("install-plugin", "rowan", env=failing)
+    assert r.returncode != 0
+    assert "gh auth status" in r.stderr
+    assert "untouched" in r.stderr
+    assert "are NOT" not in r.stderr, "install-plugin must not claim the config is gone"

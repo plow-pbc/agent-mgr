@@ -105,6 +105,12 @@ find "$staging" -type f \( -name '*.py' -o -name '*.sh' \) -exec chmod 755 {} +
 # tree at all, which is worse than the stale one it replaced.
 if [ -e "$target" ]; then
     backup="$target.previous.$$"
+    # Same collision as $staging above, same reason. A run killed between this
+    # mv and the publish leaves a complete, valid tree at $target.previous.<pid>
+    # in the directory the gateway enumerates -- and it persists, because a
+    # later run at that pid would `mv` the target INSIDE it, leaving a nested
+    # tree that cleanup would then restore as the "previous copy".
+    rm -rf "$backup"
     mv "$target" "$backup"
 fi
 if ! mv "$staging" "$target"; then
