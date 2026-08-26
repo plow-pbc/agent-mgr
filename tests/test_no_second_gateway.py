@@ -586,9 +586,17 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     assert r.returncode != 0, "the whole-argv scan is supposed to catch this"
     assert "INSIDE the container" in r.stderr, "no remedy for the one it cannot type"
     assert "sh -c" in r.stderr, "the named escape must be the one that works"
+    log = tmp_path / "escape.log"
+    b2 = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                     log=log)
     assert run("compose", "rowan", "exec", "hermes", "sh", "-c",
-               "docker build --pull -t x .", env=env).returncode == 0, (
+               "docker build --pull -t x .",
+               env={"PATH": f"{b2}:{os.environ['PATH']}"}).returncode == 0, (
         "the escape the message names does not actually work")
+    # Reached compose, not merely "not refused": an exit 0 from a guard that
+    # silently swallowed the command would satisfy the line above.
+    assert "docker build --pull -t x ." in log.read_text(), (
+        "the wrapped command never reached compose")
 
     # A leading global option would shift the subcommand out from under every
     # check that reads it as $1 -- including the fetch guard.
