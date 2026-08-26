@@ -1,3 +1,6 @@
+import pytest
+
+
 def test_ls_on_an_empty_registry_reports_no_agents(run):
     r = run("ls")
     assert r.returncode == 0
@@ -49,3 +52,18 @@ def test_no_argument_at_all_prints_usage(run):
     r = run()
     assert r.returncode != 0
     assert "usage" in (r.stdout + r.stderr).lower()
+
+
+@pytest.mark.parametrize("name", [".*", ".", "[a-z]*", "s.r"])
+def test_unregister_refuses_a_name_that_is_a_pattern(run, instance, tmp_path, name):
+    """The registry is the only record of name->dir and the rewrite clobbers it
+    in place, so a pattern here is unrecoverable: `.*` matches every tab-bearing
+    row and writes an empty file. This is also the command the fail-closed
+    refusal sends an operator to mid-incident, argument possibly glob-mangled."""
+    run("register", "str", str(instance("str")))
+    run("register", "rowan", str(instance("rowan")))
+    r = run("unregister", name)
+    assert r.returncode != 0, f"unregister {name!r} was accepted"
+    assert "lowercase letters" in r.stderr
+    rows = run("ls").stdout
+    assert "str" in rows and "rowan" in rows, "rows were dropped by a refused unregister"

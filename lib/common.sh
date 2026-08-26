@@ -15,11 +15,18 @@ registry_path() { printf '%s\n' "$AGENT_MGR_REGISTRY"; }
 # The name column is matched literally. A name is validated to [a-z0-9-] on the
 # way in, so it carries no regex metacharacters -- but the match is anchored and
 # tab-terminated anyway, so a future name that does cannot match its own prefix.
+# What makes the literal-match property above true. Both writers call it: without
+# it `unregister '.*'` passes the existence probe, matches every tab-bearing row
+# and writes an empty file -- the whole fleet registry gone, reported as success.
+registry_valid_name() {
+    case "${1:-}" in
+        ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: ${1:-}" ;;
+    esac
+}
+
 registry_add() {
     local name="$1" dir="$2"
-    case "$name" in
-        ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: $name" ;;
-    esac
+    registry_valid_name "$name"
     [ -d "$dir" ] || die "no such directory: $dir"
     dir="$(cd "$dir" && pwd)"
     mkdir -p "$(dirname "$AGENT_MGR_REGISTRY")"
@@ -38,6 +45,7 @@ registry_add() {
 # of an unresolvable row is hand-editing the registry file.
 registry_remove() {
     local name="$1"
+    registry_valid_name "$name"
     [ -f "$AGENT_MGR_REGISTRY" ] || die "no registry at $AGENT_MGR_REGISTRY"
     grep -q "^$name	" "$AGENT_MGR_REGISTRY" || die "$name is not registered"
     local tmp; tmp="$(mktemp)"
