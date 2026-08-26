@@ -173,7 +173,7 @@ def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
      "not first: locating the service to check 'before it' needs a complete "
      "list of value-taking flags, and a missing entry admits a second gateway",
      "first argument is not --entrypoint"),
-    (("run", "--entrypoint", "hermes"), True,
+    (("run", "--entrypoint"), True,
      "a bare --entrypoint with nothing after it overrides with nothing, so s6 "
      "is still the entrypoint",
      "first argument is not --entrypoint"),
@@ -422,7 +422,13 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
         assert verb not in argv, f"{verb.strip()} reached compose before the check"
 
 
-@pytest.mark.parametrize("sub", ["config", "version", "ls", "images", "build", "push", "ps"])
+@pytest.mark.parametrize("sub", [
+    ["config"], ["version"], ["ls"], ["images"], ["build"], ["push"], ["ps"],
+    # `pull` still needs no live daemon -- it needs the flag that keeps it from
+    # replacing a built image, which is a different property and was tested by
+    # dropping this row rather than adapting it.
+    ["pull", "--ignore-buildable"],
+])
 def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, tmp_path, sub):
     """The identification costs a `compose ps`, which needs a live daemon. Gating
     the whole leaves-it-running list would make `config` -- which never contacted
@@ -430,7 +436,7 @@ def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, t
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     mount="/home/someone-else/.hermes-rowan")
-    r = run("compose", "rowan", sub, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("compose", "rowan", *sub, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"{sub} was gated on a container it never touches: {r.stderr}"
 
 

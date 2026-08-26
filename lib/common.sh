@@ -226,15 +226,15 @@ load_agent() {
            AGENT_DESCRIPTOR HERMES_UID HERMES_GID
 }
 
-# Every Compose invocation goes through here so the file list, the override
-# convention and the descriptor's env-file have exactly one definition.
 # No fetch through this tool may replace what the host built. That is what makes
 # resolve-guard's build-exemption true rather than assumed -- two attempts to
 # derive it from the image name were both wrong, so the guarantee lives here.
 #
-# Keyed on the SUBCOMMAND and on flags before the service, per this file's own
-# rule: scanning the whole argv made `compose rowan exec hermes git pull` die
-# about --ignore-buildable.
+# The SUBCOMMAND is $1, per this file's own rule: scanning the whole argv for it
+# made `compose rowan exec hermes git pull` die about --ignore-buildable. The
+# FLAG scan then runs to the end of the argv, with no service boundary, because
+# locating one needed a complete list of value-taking flags and a missing entry
+# silently let a real fetch through.
 compose_fetch_is_safe() {
     local sub="${1:-}"
     # Every guard here reads the subcommand as $1, so a leading global would
@@ -268,8 +268,11 @@ compose_fetch_is_safe() {
     return 0
 }
 
+# Every Compose invocation goes through here so the file list, the override
+# convention and the descriptor's env-file have exactly one definition -- which
+# is also why the fetch refusal lives here rather than at the call sites.
 compose() {
-    # Here, so there is one site and one message: every Compose invocation in
+    # One site and one message: every Compose invocation in
     # this tool goes through this function, which the two call-site copies did
     # not -- they disagreed on wording and the passthrough's was redundant for
     # anything reaching compose_transition.
