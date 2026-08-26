@@ -570,15 +570,10 @@ def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
 
 def test_a_rollback_copy_is_promoted_before_the_next_run_can_fail(
         run, instance, tmp_path):
-    """A SIGKILL between the two publish `mv`s leaves `.previous` holding the
-    agent's only valid tree and no target at all -- the trap does not fire.
-    Clearing it before the fallible `cp -a`/`chmod` pair means one more failure
-    leaves the agent with NO plugin, which is the phone line gone for good and
-    the one outcome this installer exists to prevent.
+    """An install that fails after an interrupted one still leaves a valid tree.
 
-    `find` is stubbed to fail because it drives the chmod pass -- the first
-    fallible step after the recovery point. Without the promotion the home ends
-    with nothing installed.
+    `find` is stubbed because it drives the chmod pass -- the first fallible
+    step after the recovery point.
     """
     run("register", "rowan", str(instance("rowan")))
     plugins = tmp_path / "home" / ".hermes-rowan" / "plugins"
