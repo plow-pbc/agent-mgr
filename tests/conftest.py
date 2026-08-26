@@ -126,14 +126,22 @@ def _no_real_docker_on_path(tmp_path_factory):
 
     def guarded_popen(*a, **kw):
         env = kw.get("env")
-        # `is not None`, not `and "PATH" in env`: an explicit env WITHOUT a PATH
-        # is a violation too, not an exemption -- it resolves no docker at all,
-        # and a test meaning to inherit the shadow should say os.environ.
+        # `is not None`, not `and "PATH" in env`: an env with no PATH key is not
+        # inert. CPython falls back to os.defpath -- /bin:/usr/bin -- and the
+        # child finds the operator's docker there. It can never be shown to be
+        # suite-owned either, since shutil.which on the empty string returns
+        # None, so it is refused rather than exempted.
         if env is not None and not _ALLOW_REAL_DOCKER:
-            assert _docker_the_suite_owns(env.get("PATH", "")), (
-                f"this env resolves docker to "
-                f"{shutil.which('docker', path=env.get('PATH', ''))}, which the "
-                "suite did not create; build PATH as "
+            path = env.get("PATH")
+            if path is None:
+                raise AssertionError(
+                    "this env carries no PATH, so the child would resolve docker "
+                    "through os.defpath (/bin:/usr/bin) and find the operator's; "
+                    "pass os.environ['PATH'] to inherit the suite's stub, which "
+                    "the suite did not create otherwise")
+            assert _docker_the_suite_owns(path), (
+                f"this env resolves docker to {shutil.which('docker', path=path)}, "
+                "which the suite did not create; build PATH as "
                 "f\"{mybin}:{os.environ['PATH']}\" so the stub still wins, or "
                 "use conftest.allow_real_docker()")
         return real_popen(*a, **kw)

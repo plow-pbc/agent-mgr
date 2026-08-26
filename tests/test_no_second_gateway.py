@@ -219,10 +219,16 @@ def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
     # assert fires before the spawn, so this never executes.
     with tempfile.TemporaryDirectory() as outside:
         _docker_outside_the_suite(outside)
-        with pytest.raises(AssertionError, match="the suite did not create"):
-            run("ls", env={"PATH": path.format(
-                outside=outside, sep=os.pathsep,
-                inherited=os.environ["PATH"])}), why
+        env = {"PATH": path.format(outside=outside, sep=os.pathsep,
+                                   inherited=os.environ["PATH"])}
+        # `why` carried into BOTH failure modes rather than dangling beside the
+        # call: a bare DID NOT RAISE names only the parametrize id.
+        try:
+            run("ls", env=env)
+        except AssertionError as refusal:
+            assert "the suite did not create" in str(refusal), why
+        else:
+            pytest.fail(f"this PATH was not refused -- {why}")
 
 
 def _docker_outside_the_suite(d):
@@ -232,13 +238,15 @@ def _docker_outside_the_suite(d):
 
 
 def test_an_explicit_env_with_no_path_is_refused():
-    """The `run` fixture cannot express this: it always builds a PATH, so the
-    row above reaches the guard as {"PATH": ""}. An env with no PATH KEY takes
-    a different branch -- CPython falls back to os.defpath, which is
-    /bin:/usr/bin, and finds the operator's docker there. Spawned directly so
-    the case is actually pinned rather than described.
+    """The `run` fixture always builds a PATH, so no row above can hand the guard
+    an env lacking the key -- this has to be spawned directly.
+
+    The guard treats a missing key and an empty one identically. What this pins
+    is the CHILD's behaviour, which does not: with no PATH, CPython falls back
+    to os.defpath (/bin:/usr/bin) and finds the operator's docker, so an env
+    that looks inert is the opposite.
     """
-    with pytest.raises(AssertionError, match="the suite did not create"):
+    with pytest.raises(AssertionError, match="carries no PATH"):
         subprocess.run([str(ROOT / "agent-mgr"), "ls"], env={})
 
 
