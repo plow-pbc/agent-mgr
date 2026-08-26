@@ -674,9 +674,16 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
 
     Stated as a POSITIVE invariant -- every mention of the array is guarded --
     rather than as a pattern per bad spelling. That is the whole point: quoted,
-    unquoted, `env`-prefixed or not, there is nothing to enumerate, which is
-    what the denylist above could not manage for this form. Counted per
-    occurrence rather than searched per line, so the claim holds literally.
+    unquoted, `env`-prefixed or not: the expansion has no spelling this can
+    miss, which is what the denylist above could not manage for this form.
+
+    Two things it does enumerate, stated so the claim does not exceed the check.
+    The GUARD has exactly two writes -- `[@]+` and `[@]:+`, both set-tests and
+    both safe on 3.2 -- so `:+` is normalised to `+` before counting rather than
+    reddening a correct line. And the assertion is a per-line BALANCE, not a
+    per-occurrence proof: a bare expansion offset by an extra guard mention
+    elsewhere on the same line would still pass. Neither shape occurs here, and
+    the real check is #26.
     """
     root_files = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
     for script in root_files:
@@ -685,6 +692,10 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
                 continue
             if "AGENT_HOOK_ENV[@]" not in line:
                 continue
+            # `:+` and `+` are both set-tests and both safe; normalise so the
+            # ratio does not redden a correct line and tell its author the
+            # opposite of the truth.
+            line = line.replace("AGENT_HOOK_ENV[@]:+", "AGENT_HOOK_ENV[@]+")
             # Counted, not searched. A substring test is per-LINE: one guarded
             # and one bare expansion on the same line passes, because the
             # guarded spelling itself supplies the `+`. The canonical form
