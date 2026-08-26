@@ -70,8 +70,17 @@ it is the whole mechanism (*One repo, several people* in the
 ```sh
 agent-mgr register bob ~/services/shared-hermes-agent
 agent-mgr restore bob
+printf '\nAGENT_TZ=America/Chicago\n' >> "$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')/.env"
 agent-mgr up bob
 ```
+
+**The zone goes in before `up`, and it is the one value that has to.** Everything
+else per-person reaches the agent from that dotenv at runtime; `AGENT_TZ` reaches
+the *container* through Compose `environment:`, which is rendered when the
+container is created. Set it afterwards and it is not applied — and `restart`
+will not pick it up either, because `restart` does not recreate. `agent-mgr up`
+does. (The leading newline is not decoration; *One repo, several people* in the
+[README](../README.md) says why.)
 
 `up` before the codes, not after: `sign-in` runs `hermes auth add` **inside the
 container**, so it refuses until one is running. `activate` does not care — it
@@ -81,7 +90,7 @@ Then two codes out, two answers back:
 
 | | who | what |
 |---|---|---|
-| 1 | you | `agent-mgr activate bob` — prints `Plow Activate: <code>`, then restarts the gateway |
+| 1 | you | `agent-mgr activate bob` — prints `Plow Activate: <code>`, then reloads the gateway if one is up |
 | 2 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code, then waits |
 | 3 | **them** | open the URL in *their* browser, enter the device code |
 | 4 | **them** | text the activation code **from the handset that should own the agent** |
@@ -90,13 +99,19 @@ Then two codes out, two answers back:
 
 Steps 1 and 2 send together; 3 and 4 come back together.
 
-**`activate` first, and let it finish.** It ends by restarting the gateway to
-load the credential it just wrote, and `sign-in` runs `hermes auth add` through
-`compose exec` **in that same container** — so an `activate` completing while a
-`sign-in` waits kills the device-code session under it. Running them in two
-terminals to save a minute is the one arrangement that breaks. If it happens
-anyway, re-run `sign-in`: it costs nothing, unlike the step above it. Which is
-why:
+Steps 5 and 6 assume **their** Mac is already running Plow Latch, which is a
+prerequisite you cannot satisfy for them. If this agent drives no Mac, skip
+both and delete the `latch:` block from its `config.yaml` — per the section
+above, a declared latch with no credential is a broken agent rather than an
+unconfigured one.
+
+**`activate` first, and let it finish.** `sign-in` holds a `compose exec`
+session open in the container while it waits, and **any** command that restarts
+that container drops it — `activate` and `restore` both end by reloading a
+running gateway, and `restart` is the whole point of itself. So run nothing
+against this agent from a second terminal while a `sign-in` is waiting. If one
+lands anyway, re-run `sign-in`: it costs nothing, unlike the step above it.
+Which is why:
 
 **Do not run 1 and 2 until they say they are at their phone.** Both codes are
 short-lived — minutes, not hours — and the activation is a **one-time spend**:
