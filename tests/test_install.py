@@ -615,12 +615,17 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     fast local signal for the two that already bit, not a substitute for it.
 
     Measured on macOS 26.5.2 (`so@mbp`, 2026-08-26) rather than assumed:
-      /bin/bash          3.2.57  -- the 4.0+ syntax below is a hard failure
-      flock              /opt/homebrew/bin/flock -- Homebrew only, not system
-      mktemp / mktemp -d exit 0 ON 26.5 ONLY -- NOT verified on the 12.3
-                                    floor. Capabilities get added, not removed,
-                                    so this says nothing about Monterey; the
-                                    open question is tracked in #26
+      flock     /opt/homebrew/bin/flock -- Homebrew only, not system, so a Mac
+                without it fails and one with it would have passed the break
+      /bin/bash 3.2.57 -- the floor is real and CURRENT, but nothing here
+                checks bash-version syntax; that is #26's job, not this test's
+
+    Checked and deliberately NOT added: bare `mktemp`, which a review flagged as
+    BSD-hostile. It exits 0 on 26.5, but that is a capability observed fourteen
+    majors above the floor and says nothing about Monterey, so the seven call
+    sites stay an open question on #26 rather than a cleared one. The obvious
+    remedy is also wrong: `mktemp -t name` exits 1 on GNU coreutils ("too few
+    X's"), so it would trade a hypothetical Mac break for a certain Linux one.
 
     Deliberately absent: `sed -i` (never appears here, and a regex cannot
     reliably span a sed script -- `;` and `|` inside the expression defeat any
@@ -650,3 +655,35 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
                 f"{script.name} uses {tool}, which is not portable to the "
                 "macOS 12.3 floor README commits to -- the suite runs on Linux, "
                 "so it lands green here and fails on the operator's Mac")
+
+
+def test_the_possibly_empty_array_is_always_expansion_guarded():
+    """`${AGENT_HOOK_ENV[@]}` must never appear without its `+` guard.
+
+    bash before 4.4 treats an empty array as unset under `set -u`, and macOS
+    ships 3.2 (measured: 3.2.57 on 26.5). This array is empty for any agent with
+    no extra descriptor keys, so the bare expansion killed `restore` and every
+    guarded transition with "AGENT_HOOK_ENV[@]: unbound variable" -- common.sh
+    records it. The safe spelling, ${AGENT_HOOK_ENV[@]+"${AGENT_HOOK_ENV[@]}"},
+    reads like removable ceremony, and simplifying it passes on Linux.
+
+    Stated as a POSITIVE invariant -- every code line mentioning the array is
+    also guarded -- rather than as a pattern per bad spelling. That is the whole
+    point: quoted, unquoted, `env`-prefixed or not, there is nothing to
+    enumerate, which is what the denylist above could not manage for this form.
+    """
+    root_files = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
+    for script in root_files:
+        for n, line in enumerate(script.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            # A trailing comment can legitimately name the array while
+            # explaining the guard; cut at " #" -- which cannot hit a `${x##*/}`
+            # expansion, since that has no space before the hash.
+            code = line.split(" #", 1)[0]
+            if "AGENT_HOOK_ENV[@]" not in code:
+                continue
+            assert "AGENT_HOOK_ENV[@]+" in code, (
+                f"{script.name}:{n} expands AGENT_HOOK_ENV[@] without the `+` "
+                "guard -- empty under `set -u` on the bash 3.2 macOS ships, so "
+                "this passes here and breaks restore on the operator's Mac")
