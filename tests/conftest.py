@@ -166,8 +166,8 @@ def run(registry, tmp_path):
         e["HOME"] = str(tmp_path / "home")
         (tmp_path / "home").mkdir(exist_ok=True)
         # restore installs the plugin through the same fetch-tree the skills
-        # use, and activate still curls the activation script out of the
-        # archived seed -- so both a hermetic `gh` and a hermetic `curl` are on
+        # use, and activate curls the activation script from an earlier SHA of
+        # that same repo -- so both a hermetic `gh` and a hermetic `curl` are on
         # PATH for every invocation unless a test overrides PATH deliberately.
         b = fake_curl(tmp_path)
         install_fake_gh(tmp_path, b)

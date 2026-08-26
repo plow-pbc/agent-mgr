@@ -450,11 +450,20 @@ def test_each_pin_is_read_only_where_its_command_fetches():
 
 
 def test_the_two_pins_are_not_the_same_commit():
-    """One repo at two points in its history, so one SHA in both is a bump gone wrong.
+    """Catches the COLLISION only -- an edit that wrote one SHA into both files.
 
-    The plugin pin moving onto the activate pin's commit would install the
-    pre-strip layout as a plugin; the activate pin moving onto the plugin's
-    would 404 the one command that is a one-time irreversible spend.
+    Worth keeping: both pins now name one repo, so a bump that rewrites both
+    (a sed over runtime/, a copy-paste) produces a state that no longer looks
+    obviously wrong, and it installs the pre-strip layout as a plugin.
+
+    What it does NOT catch, stated because the old two-repo docstring implied
+    otherwise: bumping plow-chat-activate.ref to any OTHER post-strip commit --
+    the realistic slip, since "latest in hermes-plow-chat" is HEAD, not the
+    plugin's pin. That 404s `activate` at runtime and passes here. Proving it
+    would mean asserting ancestry against the real repo, which is a network
+    call in a suite that is hermetic by design, so the constraint is carried by
+    the README and docs/HOWTO.md § Bumping the plugin pin instead -- which is
+    where someone bumping a pin is actually reading.
     """
     plugin = (ROOT / "runtime" / "plow-chat-plugin.ref").read_text().strip()
     activate = (ROOT / "runtime" / "plow-chat-activate.ref").read_text().strip()
