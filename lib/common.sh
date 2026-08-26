@@ -218,8 +218,15 @@ load_agent() {
     # `$HOME/foo/../.hermes` intact and evading the check. normalized_path, not
     # canonical_path: a home symlinked onto a bigger disk is ordinary, and the
     # shape rule below reads this value and must still see the declared name.
-    AGENT_HOME="$(normalized_path "$AGENT_HOME")" \
+    #
+    # Through a temp, because assigning AGENT_HOME directly stores the failed
+    # substitution's empty output BEFORE the `||` arm runs -- so the refusal
+    # interpolated the value it had just erased and read "cannot resolve
+    # rowan's home ()", deleting the one fact the operator needs.
+    local home
+    home="$(normalized_path "$AGENT_HOME")" \
         || die "cannot resolve ${name}'s home ($AGENT_HOME)"
+    AGENT_HOME="$home"
     : "${AGENT_CONTAINER:=hermes-$name}"
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"

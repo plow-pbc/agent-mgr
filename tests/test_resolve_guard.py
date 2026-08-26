@@ -396,42 +396,48 @@ def test_a_digest_is_exempt_from_the_fetch_policy(run, instance, tmp_path):
         "a pinned digest was refused for a policy that cannot change it")
 
 
-def test_a_resolver_that_fails_refuses_instead_of_passing(run, instance, tmp_path):
-    """The ownership guard compares two resolved paths, so a resolver that
-    cannot run left "" on both sides, matched, and let the write through. That
-    is why the refusal is spelled `|| die` and not left to `set -e`: every
-    write-then-reload subcommand reaches this code from the left of a `||` in
-    lib/reload-if-running, where bash suspends `set -e` for the whole call tree.
+@pytest.mark.parametrize("call, refusal, names_the_home", [
+    # canonical_path, the ownership comparison: two unresolvable paths compared
+    # equal and let the write through, so this refusal is what closes it.
+    ("os.path.realpath(", "refusing to write to", False),
+    # normalized_path, load_agent's own: assigning AGENT_HOME direct from the
+    # failed substitution erased it before the refusal could name it.
+    ("os.path.abspath(", "cannot resolve rowan's home", True),
+])
+def test_a_resolver_that_fails_refuses_and_says_which_path(
+        run, instance, tmp_path, call, refusal, names_the_home):
+    """A resolver that cannot run must refuse, naming the path it could not
+    resolve. Not left to `set -e`: every write-then-reload subcommand reaches
+    this code from the left of a `||` in lib/reload-if-running, where bash
+    suspends it for the whole call tree.
 
-    What this pins is the refusal an operator sees. Without it the command still
-    exits 1 here -- but with EMPTY stderr, which tells them nothing about a
-    resolver that a re-run would likely get past.
-
-    The stub fails only `canonical_path`'s realpath and lets `normalized_path`'s
-    abspath through, which is what a per-call failure looks like -- a fork the
-    host would not give, an interpreter that crashed. Removing python3 outright
-    would not reach this: load_agent resolves through it first and refuses
-    earlier, for a different reason.
+    Failing ONE of the two helpers is what a per-call failure looks like -- a
+    fork the host would not give, an interpreter that crashed -- and it is also
+    the only way to reach either site: removing python3 outright stops
+    load_agent before any guard runs. `os.path.realpath(` and `os.path.abspath(`
+    each appear once in lib/common.sh, with a note beside them saying so;
+    matching the qualified call rather than a bare word keeps this stub off
+    lib/resolve-guard's own python3.
     """
     b = tmp_path / "stub-bin"
     b.mkdir()
-    # Matched on the full call and on the qualified name, not on `$2` and a
-    # bare `realpath`: argument position and a loose word would both make this
-    # stub silently start killing some other python3 call -- lib/resolve-guard
-    # runs one too. `os.path.realpath(` is canonical_path's alone, and there is
-    # a note beside it in lib/common.sh saying so.
     (b / "python3").write_text(
         "#!/bin/sh\n"
-        'case "$*" in *"os.path.realpath("*) exit 1 ;; esac\n'
+        f'case "$*" in *"{call}"*) exit 1 ;; esac\n'
         f'exec {sys.executable} "$@"\n'
     )
     (b / "python3").chmod(0o755)
+    home = tmp_path / "home" / ".hermes-rowan"
 
     run("register", "rowan", str(instance("rowan")))
     r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+
     assert r.returncode != 0
-    # The whole refusal, not just "could not resolve": that phrase appears in
-    # every one of these guards, so a looser assertion stays green if the
-    # refusal relocates between them -- which is the failure this pins.
-    assert "refusing to write to" in r.stderr
-    assert "could not resolve" in r.stderr
+    # The whole refusal, not just "could not resolve": that phrase is in every
+    # one of these guards, so a looser assertion stays green if the refusal
+    # relocates between them -- which is the failure this pins.
+    assert refusal in r.stderr
+    # And the path, which the load_agent site erased by assigning the failed
+    # substitution to the variable the message reads.
+    if names_the_home:
+        assert str(home) in r.stderr
