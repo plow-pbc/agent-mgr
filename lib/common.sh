@@ -211,11 +211,6 @@ load_agent() {
         value="${line#*=}"
         key="${key%"${key##*[![:space:]]}"}"
         value="${value#"${value%%[![:space:]]*}"}"
-        # Trailing whitespace too, and BEFORE the quotes are stripped below --
-        # that ordering is compose-go's and it is observable: an unquoted
-        # `AGENT_TZ=UTC   ` reads as `UTC` there, while `AGENT_TZ="UTC  "` keeps
-        # its spaces. Trimming after the quote strip would eat the quoted ones.
-        value="${value%"${value##*[![:space:]]}"}"
 
         # What remains after normalization must be a real identifier. This is
         # where the execution hole was: a malformed key matched the allowlist as
@@ -226,10 +221,33 @@ load_agent() {
             ''|*[!A-Za-z0-9_]*) die "$descriptor: malformed key: $key" ;;
         esac
 
-        # One layer of surrounding quotes, the way a dotenv file is usually written.
+        # The value grammar, ported from compose-go in one pass rather than a
+        # rule per review round -- measured against a real `docker compose
+        # --env-file`, because Compose reads this same file and the two
+        # disagreeing about it is the whole failure mode:
+        #
+        #   VAL # c        -> VAL          (inline comment starts at SPACE-hash)
+        #   VAL# c         -> VAL# c       (no space: not a comment)
+        #   a#b            -> a#b          (ditto)
+        #   "VAL # c"      -> VAL # c      (quotes protect it)
+        #   'VAL # c'      -> VAL # c
+        #   "VAL" trailing -> VAL          (anything after the closing quote is dropped)
+        #   VAL␠␠          -> VAL          (unquoted trailing space trimmed)
+        #   "VAL␠␠"        -> VAL␠␠        (quoted trailing space kept)
+        #
+        # Escape processing inside double quotes ("a\nb" -> a<newline>b) is
+        # NOT ported. It is the one rule where a divergence is inert: every
+        # AGENT_* value is a zone, a path or an image digest, so a value that
+        # needs an escape is not a value this parser has a use for -- and it is
+        # measured, not assumed, so a future need has a place to start.
         case "$value" in
-            \"*\") value="${value#\"}"; value="${value%\"}" ;;
-            "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
+            \"*)
+                value="${value#\"}"; value="${value%%\"*}" ;;
+            "'"*)
+                value="${value#\'}"; value="${value%%\'*}" ;;
+            *)
+                case "$value" in *" #"*) value="${value%%" #"*}" ;; esac
+                value="${value%"${value##*[![:space:]]}"}" ;;
         esac
         value="${value//\$\{HOME\}/$HOME}"
         value="${value//\$HOME/$HOME}"

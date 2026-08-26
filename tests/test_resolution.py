@@ -289,6 +289,11 @@ def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instanc
     ("AGENT_TZ=America/Chicago   ", "America/Chicago"),       # trailing space: trimmed
     ("AGENT_TZ =  America/Chicago  ", "America/Chicago"),     # both sides
     ('AGENT_TZ="America/Chicago  "', "America/Chicago  "),    # quoted: spaces KEPT
+    ("AGENT_TZ=America/Chicago # the default", "America/Chicago"),   # inline comment
+    ("AGENT_TZ=America/Chicago# no space", "America/Chicago# no space"),  # not a comment
+    ('AGENT_TZ="America/Chicago # kept"', "America/Chicago # kept"),      # quotes protect
+    ("AGENT_TZ='America/Chicago # kept'", "America/Chicago # kept"),
+    ('AGENT_TZ="America/Chicago" trailing', "America/Chicago"),  # dropped after close quote
 ])
 def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line, expected):
     """Parity with compose-go, measured rather than assumed.
