@@ -162,6 +162,7 @@ load_agent() {
 
     # shellcheck disable=SC2086
     unset $AGENT_KEYS $COMPOSE_KEYS
+    AGENT_HOME_DECLARED=0
 
     # Read, never execute. This used to dot-source the descriptor, which made a
     # file documented as declarative into host shell code: any repo registered
@@ -294,6 +295,13 @@ load_agent() {
         # because loosening that check must not silently re-open the sink.
         # `--` for uniformity with the other guarded greps.
         if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$key"; then
+            # Recorded by the parser that accepted it, so require_own_home does
+            # not need a second opinion about the same file. Its raw
+            # `grep '^[[:space:]]*AGENT_HOME='` predated the normalization and
+            # could not see `export AGENT_HOME=…` or `AGENT_HOME = …`, both of
+            # which load_agent accepts -- so a descriptor resolved fine and then
+            # every direct-write command refused it as undeclared.
+            [ "$key" = AGENT_HOME ] && AGENT_HOME_DECLARED=1
             printf -v "$key" '%s' "$value"
         else
             # An instance's own variables -- STR_VAULT and friends -- which its
@@ -774,7 +782,7 @@ require_own_home() {
             # convention can never produce a bare `.hermes`, so this is always a
             # deliberate declaration, and the collision check above is what
             # stops a second agent from making the same one.
-            grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
+            [ "${AGENT_HOME_DECLARED:-0}" = 1 ] && return 0
             die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
     die "refusing to write to $AGENT_HOME -- that is not ${AGENT_NAME}'s own home"

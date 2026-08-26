@@ -479,3 +479,24 @@ def test_a_resolver_failing_on_the_mounted_home_names_it(run, instance, tmp_path
     r = run("restart", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert f"could not resolve the home it mounts ({foreign})" in r.stderr
+
+
+@pytest.mark.parametrize("spelling", [
+    "AGENT_HOME=$HOME/.hermes",
+    "export AGENT_HOME=$HOME/.hermes",
+    "AGENT_HOME = $HOME/.hermes",
+    "  AGENT_HOME=$HOME/.hermes",
+])
+def test_a_declared_home_is_recognised_however_it_is_spelled(run, instance, spelling):
+    """One owner for "did this descriptor declare its own home?".
+
+    require_own_home used to answer that with its own `grep '^AGENT_HOME='` over
+    the raw file -- a second opinion about a file load_agent had already parsed.
+    Once the parser learned compose-go's normalization, the two disagreed: a
+    descriptor saying `export AGENT_HOME=…` resolved fine and was then refused
+    as undeclared by every direct-write command. The parser records the fact
+    now, and the grep is gone.
+    """
+    run("register", "str", str(instance("str", descriptor=f"{spelling}\n")))
+    r = run("restore", "str")
+    assert "did not declare that home" not in r.stderr
