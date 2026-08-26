@@ -329,7 +329,13 @@ require_own_home() {
     local other odir ohome
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
-        ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )"
+        # `|| true` is load-bearing under set -e: a bare assignment carries the
+        # substitution's status, and this is a while BODY rather than a
+        # condition, so a sibling load_agent refuses -- a registry row whose dir
+        # was moved, a repo with no agent.env -- would abort the caller. With
+        # both streams already redirected the operator would get exit 1 and no
+        # output, from one unrelated stale row, on every direct-write command.
+        ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" || true
         [ -n "$ohome" ] || continue
         [ "$ohome" = "$AGENT_HOME" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"

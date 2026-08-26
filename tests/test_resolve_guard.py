@@ -189,3 +189,18 @@ def test_a_siblings_single_quoted_home_still_collides(run, instance, tmp_path):
     r = run("restore", "rowan")
     assert r.returncode != 0, "a second agent claimed a home a sibling already declares"
     assert "str is already registered there" in r.stderr
+
+
+def test_one_stale_registry_row_does_not_break_every_other_agent(run, instance, tmp_path):
+    """The collision check resolves each sibling through load_agent, which dies
+    on a row whose repo is gone. Under set -e a bare assignment carries that
+    status out of the loop, so one stale row aborted restore for every healthy
+    agent -- with both streams redirected, silently and with no output."""
+    import shutil
+    gone = instance("gone")
+    run("register", "gone", str(gone))
+    shutil.rmtree(gone)
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restore", "rowan")
+    assert r.returncode == 0, f"a stale sibling row broke a healthy agent: {r.stderr}"
+    assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
