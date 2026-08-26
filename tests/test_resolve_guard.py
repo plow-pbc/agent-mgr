@@ -8,6 +8,7 @@ the real docker shadowed, because a fixture agent named `rowan` or `str`
 resolves to the LIVE compose project (plow-pbc/agent-mgr#13).
 """
 import os
+import sys
 
 import pytest
 
@@ -393,3 +394,35 @@ def test_a_digest_is_exempt_from_the_fetch_policy(run, instance, tmp_path):
     assert run("resolve-guard", "rowan",
                env={"PATH": f"{b}:{os.environ['PATH']}"}).returncode == 0, (
         "a pinned digest was refused for a policy that cannot change it")
+
+
+def test_a_resolver_that_fails_refuses_instead_of_passing(run, instance, tmp_path):
+    """The ownership guard compares two resolved paths, so a resolver that
+    cannot run left "" on both sides, matched, and let the write through. That
+    is why the refusal is spelled `|| die` and not left to `set -e`: every
+    write-then-reload subcommand reaches this code from the left of a `||` in
+    lib/reload-if-running, where bash suspends `set -e` for the whole call tree.
+
+    What this pins is the refusal an operator sees. Without it the command still
+    exits 1 here -- but with EMPTY stderr, which tells them nothing about a
+    resolver that a re-run would likely get past.
+
+    The stub fails only `canonical_path`'s realpath and lets `normalized_path`'s
+    abspath through, which is what a per-call failure looks like -- a fork the
+    host would not give, an interpreter that crashed. Removing python3 outright
+    would not reach this: load_agent resolves through it first and refuses
+    earlier, for a different reason.
+    """
+    b = tmp_path / "stub-bin"
+    b.mkdir()
+    (b / "python3").write_text(
+        "#!/bin/sh\n"
+        'case "$2" in *realpath*) exit 1 ;; esac\n'
+        f'exec {sys.executable} "$@"\n'
+    )
+    (b / "python3").chmod(0o755)
+
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "could not resolve" in r.stderr

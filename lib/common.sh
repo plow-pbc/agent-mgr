@@ -213,7 +213,8 @@ load_agent() {
     # `$HOME/foo/../.hermes` intact and evading the check. normalized_path, not
     # canonical_path: a home symlinked onto a bigger disk is ordinary, and the
     # shape rule below reads this value and must still see the declared name.
-    AGENT_HOME="$(normalized_path "$AGENT_HOME")"
+    AGENT_HOME="$(normalized_path "$AGENT_HOME")" \
+        || die "cannot resolve ${name}'s home ($AGENT_HOME)"
     : "${AGENT_CONTAINER:=hermes-$name}"
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"
@@ -438,19 +439,20 @@ require_running_container_is_ours() {
     # the assignment would quietly leave "" there too. `|| die` holds in any
     # caller context; the exit status is the only thing that does.
     self="$(canonical_path "$AGENT_HOME")" \
-        || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve $AGENT_HOME"
+        || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve $AGENT_HOME. Anything already written is written; re-run once that is fixed."
     for cid in $cids; do
     mounted="$(docker inspect --format \
         '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
         "$cid")" \
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
     # Same canonicalisation as AGENT_HOME, or the comparison is between two
-    # spellings again -- one of them from a source we do not control.
-    [ -z "$mounted" ] || mounted="$(normalized_path "$mounted")"
-    # Same-directory question, so resolved on both sides like the collision loop.
+    # spellings again -- one of them from a source we do not control. Then the
+    # same-directory question, resolved on both sides like the collision loop.
     if [ -n "$mounted" ]; then
+        mounted="$(normalized_path "$mounted")" \
+            || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts. Anything already written is written; re-run once that is fixed."
         m="$(canonical_path "$mounted")" \
-            || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts"
+            || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
         [ "$m" = "$self" ] && continue
     fi
     # No removal command here, deliberately, and no branch that could produce
