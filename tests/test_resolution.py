@@ -452,3 +452,30 @@ def test_a_broken_dotenv_does_not_take_down_other_agents(run, instance, tmp_path
     other = run("restore", "other")
     assert other.returncode == 0, other.stderr
     assert "could not resolve rowan" not in other.stderr
+
+
+def test_the_dotenv_warning_points_at_the_right_line(run, instance, tmp_path):
+    """Pinned against a multi-line file, so an off-by-one cannot pass. A line
+    number is the whole diagnostic here -- the warning quotes nothing, because
+    this file sits beside credentials."""
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan",
+              "AGENT_TZ=America/Chicago\n# a comment\n\nBAD KEY=x\n")
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "line 4: malformed key" in r.stderr
+    assert "AGENT_TZ=America/Chicago" in r.stdout
+    assert "BAD" not in r.stderr
+
+
+def test_an_unterminated_quote_in_a_dotenv_is_warned_not_fatal(run, instance, tmp_path):
+    """The arm likeliest to fire on a real credential file -- a token pasted
+    with one quote. Warned and skipped: Compose never reads this file, so there
+    is no parity to keep, and it must not cost the instance its commands."""
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan", 'AGENT_TZ=America/Chicago\nPLOW_CHAT_TOKEN="sk-notreal\n')
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "line 2: unterminated quote" in r.stderr
+    assert "sk-notreal" not in r.stderr, "a warning must not quote a credential"
+    assert "AGENT_TZ=America/Chicago" in r.stdout
