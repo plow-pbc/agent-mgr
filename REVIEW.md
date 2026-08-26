@@ -11,19 +11,34 @@ speed beats hardening for scale: prefer loud failures to fallbacks, pragmatic
 DRY architecture to defensive layering, and don't guard edge cases that cannot
 trigger at this size. A handled case the intent never asked for is a cost.
 
-One deliberate exception to "fail loudly", and it is the only one: the reload
-that follows a write is non-fatal at the `activate` call site, because by then
-a one-time activation has already been spent and a red exit invites the re-run
-that costs another. Anywhere else, a swallowed error is a finding.
+"Fail loudly" has documented exceptions here, and each carries the comment
+that earns it: the restart inside `lib/reload-if-running` is non-fatal for
+every caller, `activate` additionally survives a refused guard because its
+one-time activation is already spent, and several `|| true` / `2>/dev/null`
+sites exist so a missing key or an unreachable relay can be *classified*
+rather than kill the command. A swallowed error with no such comment is a
+finding; one with a comment is a design decision, and disagreeing with it is a
+`[shape]` note, not a bug.
+
+The pre-transition veto's contract is owned by `README.md` § What belongs in
+an agent's repo. Do not restate it in a review — flag drift between it and
+`require_transition_allowed` / `lib/reload-if-running`. The three rounds that
+contract already drifted are why the tool owns it and the prose does not.
 
 ## Review priority
 
-Subtractive remedies outrank additive ones. This repo is **mechanism** — it
-holds what is true of every Hermes agent and nothing about any particular one —
-so the falsifiable gate is the layer boundary: an agent's name, a personal
-path, a credential, or a product-specific recipe appearing here is a real
-finding however small, and a suggestion that would make this file *more*
-general than one agent needs is usually the bloat.
+Subtractive remedies outrank additive ones. This repo is the **common** half of
+a two-layer fleet — what is true of every Hermes agent — so the falsifiable
+gate is what the tool *resolves or executes*: a hardcoded home, an agent's name
+reaching a code path, a credential, or a recipe only one agent would ever run.
+
+Three things are deliberately **not** violations of that gate, and flagging
+them is a false finding: agent names used illustratively in comments, docs and
+test fixtures; the Plow-platform commands this repo owns on purpose
+(`check-latch`, `check-connectors`, the plugin and activation fetches), which
+are specific to Plow rather than to any one agent; and a suggestion that would
+make this tool *more* general than one operator's fleet needs, which is the
+bloat rather than the fix.
 
 The failure class this tool exists to prevent is **two gateways against one
 home**. The image's s6 entrypoint starts a gateway whatever command you pass
@@ -40,11 +55,11 @@ racing one session database. Anything that reopens that path is blocking.
 | Ask for a fallback when `docker`, `compose` or the relay fails. Refusing loudly is the design — a host-side answer is exactly the evidence entering the container's namespace was meant to stop accepting. | Flag an error that is **swallowed or misreported**: a failed `compose ps` read as "no gateway running", a dead credential and a dead network collapsed into one message, a probe that reports success without having run. |
 | Demand a config-schema validator, a plugin abstraction, or a packaging story. This is one bash script symlinked onto one host, for one operator. | Flag a **new route to a container transition** that does not go through `compose_transition`, or a `compose run` that does not require `--entrypoint`. Both reopen the second-gateway class above. |
 | Suggest guards for an agent count, host count or concurrency this fleet will not reach. | Flag a **write into an agent's home that skips `require_own_home`**. `resolve-guard` proves Compose agrees with the descriptor, which a descriptor copied from a sibling satisfies perfectly — it is self-consistent and wrong, and the write lands on the sibling. |
-| Treat doc-only edits to `README.md` / `docs/HOWTO.md` as low-value churn. | Flag **prose↔code drift**. The README owns the instance-repo contract; a behaviour change that leaves its table describing the old behaviour is the canonical regression here, and it has recurred across rounds. |
+| Treat doc-only edits to `README.md` / `docs/HOWTO.md` as low-value churn. | Flag **prose↔code drift**. The README owns the agent-repo contract; a behaviour change that leaves its table describing the old behaviour is the canonical regression here, and it has recurred across rounds. |
 | Propose vendoring an upstream artifact to avoid a fetch. | Flag any ref that is **not a 40-char SHA** — image digest, plugin, skill. A branch silently re-points a running agent on the next upstream push, and these carry the chat token and drive a filesystem. |
 | — | Flag a **path that can traverse out of the agent's home**. Destinations are joined onto it and the result is `rm -rf`'d during a swap, so a traversing `--dest` is a delete primitive aimed at the operator's home. Reject by component, not substring — a legitimate `..foo` must still install. |
 | — | Flag any **secret reaching argv, a URL, or a log line**. Credentials belong in the agent's dotenv, read through the home mount; compose passes none, and a token travels in a header rather than a path. |
-| — | Flag an **instance-layer or domain-layer fact landing in this repo**: an agent name, `~/.hermes-<something>`, a PMS token, a recipe that exists for one product. The test is whether the code would still exist if that agent's product vanished tomorrow. |
+| — | Flag an **agent-specific fact reaching a code path here**: a hardcoded `~/.hermes-<something>`, a PMS token, a Hostex or Seam call, a recipe only one agent would run. The test is whether a second agent would want it — not whether it mentions an agent, which comments and fixtures do freely. |
 
 ## Product context
 
@@ -56,15 +71,19 @@ a different person — as containers on a single Linux host (`wakeup`).
 `agent-mgr` script symlinked onto `PATH`. No release, no package, no versioning.
 The registry at `~/.config/agent-mgr/agents` maps a name to an instance repo.
 
-**What this repo is:** the **mechanism** layer of a three-layer fleet.
+**What this repo is:** the **common** half of a two-layer fleet.
 
 | layer | lives in | what it is |
 |---|---|---|
-| mechanism | this repo | true of *every* Hermes agent, whatever it does |
-| instance | `<agent>-hermes-agent` | *which* agent this is — name, home, which Mac it drives |
-| domain | e.g. `plow-pbc/property-hunt` | what the agent actually *does* |
+| common | this repo | true of *every* Hermes agent — bring-up, activation, the pins, the veto seam |
+| agent | `<agent>-hermes-agent` | everything else that agent needs: identity, config, its own skill, scripts, recipes |
 
-`README.md` § What belongs in an instance repo is the single owner of that
+There is no third repo per skill. A skill only one agent runs lives in that
+agent's repo; a skill two agents share is pinned by SHA from wherever it lives
+upstream, which is what `add-skill` is for. The dividing question is **would a
+second agent want this**, not whether it is code or config.
+
+`README.md` § What belongs in an agent's repo is the single owner of that
 contract; findings about it are doc findings, and drift between it and the
 resolver is a real one.
 
