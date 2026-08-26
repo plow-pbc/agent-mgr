@@ -486,10 +486,9 @@ require_own_home() {
         if [ -z "$ohome" ]; then
             skipped=1
             # The REASON, not just the name. load_agent refuses a present,
-            # healthy, running agent whose descriptor fails validation just as
-            # readily as one whose repo is gone -- a tag-pinned AGENT_IMAGE is
-            # the likeliest -- and telling that operator to unregister a live
-            # agent is worse than saying nothing.
+            # healthy, running agent whose descriptor it cannot read just as
+            # readily as one whose repo is gone, and telling that operator to
+            # unregister a live agent is worse than saying nothing.
             echo "agent-mgr: could not resolve $other -- ${why#agent-mgr: }" >&2
             skipped_named="$other"
             continue

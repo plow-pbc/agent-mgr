@@ -297,8 +297,12 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
      "a pulled tag re-resolves on the next pull, and this container holds the "
      "agent's credentials"),
     ({"build": True}, False,
-     "a derived image never pulls, so its local tag names an artifact this host "
-     "built -- the rentals agent's shape, and refusing it broke every command"),
+     "the rentals agent's shape: a bare local tag names no registry, so there is "
+     "nothing to fetch it from -- and refusing it broke every command"),
+    ({"build": True, "image": "nousresearch/hermes-agent:latest"}, True,
+     "`build:` is not what makes a tag safe. compose pull takes buildable "
+     "services by default, so an override keeping upstream's NAME gets replaced "
+     "in the local store by the next pull"),
     ({}, False, "the fleet-wide digest"),
 ])
 def test_the_image_rule_reads_what_compose_resolved(run, instance, tmp_path, kw, refused, why):
