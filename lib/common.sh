@@ -481,13 +481,16 @@ require_own_home() {
         # was moved, a repo with no agent.env -- would abort the caller. With
         # both streams already redirected the operator would get exit 1 and no
         # output, from one unrelated stale row, on every direct-write command.
-        # One invocation, not two: load_agent is a subshell, a descriptor
-        # parse, a realpath and a digest validation, and the second call's
-        # result was discarded for every row that resolves -- the common case.
-        # Stdout carries the home, stderr the reason it refused.
-        local why
-        why="$( load_agent "$other" 2>&1 >/dev/null )" || true
-        ohome="$( { load_agent "$other" 2>/dev/null && printf '%s' "$AGENT_HOME"; } )" || true
+        # ONE invocation, with the streams kept apart. stdout is discarded --
+        # capturing it would concatenate whatever load_agent prints in front of
+        # the home, which is a silent corruption of the value the comparison
+        # below depends on -- and stderr goes to a file so the reason survives
+        # for the refusal. The previous shape ran load_agent twice per row on
+        # every direct-write command and threw the second result away for every
+        # row that resolves, which is the common case.
+        local err; err="$(mktemp)"
+        ohome="$( load_agent "$other" >/dev/null 2>"$err" && printf '%s' "$AGENT_HOME" )" || true
+        why="$(cat "$err")"; rm -f "$err"
         if [ -z "$ohome" ]; then
             skipped=1
             # The REASON, not just the name. load_agent refuses a present,
