@@ -125,10 +125,15 @@ home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p'); echo "$home"
 would then run against an empty path and report the same thing whatever the
 truth is. Fix the registry row or the descriptor first.
 
-**If the home was a symlink, recreate the link before you do anything else.**
+**Now look at what is actually at that path, before anything else.** Do not skip
+this on the belief that your home is not a symlink: telling a plain directory
+from a link that a previous pass replaced is exactly what the table below is
+for, and getting it wrong is the silent wrong-volume restore this section
+exists to prevent. Two read-only commands.
+
 `agent-mgr resolve` reports `AGENT_HOME` as it was *declared* — `load_agent`
 normalises rather than canonicalises, so you get the link path, never its
-target. (Not a symlink? Skip to the restore block; `$home` is already bound.)
+target.
 
 Four states at the link path, and only one means "carry on":
 
@@ -151,7 +156,7 @@ row:
 
 | what is there | what it tells you | what to do |
 |---|---|---|
-| a live symlink | link and target both fine | nothing — skip to the restore block |
+| a live symlink | link and target both fine | nothing to recreate — go to the restore block |
 | a dangling symlink | the link survived, its target did not | recreate the target directory; leave the link |
 | nothing at all | the link is gone; this says **nothing** about the target | look for the target first, recreate whichever is missing, then the link |
 | a plain directory | **undecidable from here** — a previous pass may have run `mkdir -p` on a vanished link, or this home was never a symlink and that directory *is* the live agent | look inside it *before* moving anything |
