@@ -1,4 +1,5 @@
 import os
+import pathlib
 import shutil
 import subprocess
 from pathlib import Path
@@ -11,9 +12,34 @@ ROOT = Path(__file__).resolve().parent.parent
 # tests/test_compose.py uses it -- see the fixture below.
 REAL_PATH = os.environ.get("PATH", "")
 
-# The real docker, resolved once against the PATH above -- before the session
-# fixture shadows it. What the `run` fixture below asserts no test can reach.
+# The real docker, resolved once before the shadow goes up. Only the fence test
+# uses it, to build a PATH that reaches it wherever it happens to live.
 REAL_DOCKER = shutil.which("docker", path=REAL_PATH)
+
+# Pytest's tmp root: every docker this suite is allowed to run -- the session
+# stub and any fake_docker -- is written under it. Set by the fixture below.
+SUITE_TMP = None
+
+
+def spawn(argv, env, **kw):
+    """The one place this suite starts a subprocess with a PATH of its own.
+
+    Asked as a positive property: which docker would this env find, and is it
+    one the suite created? That subsumes every way of reaching the real binary
+    -- a PATH built from scratch, one that merely puts /usr/bin ahead of the
+    shadow, a second docker somewhere else entirely -- without naming any of
+    them, and without assuming where the operator's docker lives.
+
+    The check lives here rather than in the `run` fixture because the one
+    violation this suite actually had was not a `run` call: it shelled
+    lib/reload-if-running directly, which is the script whose reload restarted
+    production. A seam only the fixture passes through would not have seen it.
+    """
+    found = shutil.which("docker", path=env.get("PATH", ""))
+    assert found and pathlib.Path(found).is_relative_to(SUITE_TMP), (
+        f"this env resolves docker to {found}, which the suite did not create; "
+        "build PATH as f\"{mybin}:{os.environ['PATH']}\" so the stub still wins")
+    return subprocess.run(argv, capture_output=True, text=True, env=env, **kw)
 
 # The default `docker` every test gets: answers the two READ calls agent-mgr
 # makes, and refuses everything else.
@@ -67,6 +93,7 @@ def _no_real_docker_on_path(tmp_path_factory):
     below prepended a fake -- and that shape is how the live restarts survived
     the first attempt at this fix.
     """
+    global SUITE_TMP
     b = tmp_path_factory.mktemp("poison-bin")
     (b / "docker").write_text(SAFE_DOCKER)
     (b / "docker").chmod(0o755)
@@ -75,6 +102,7 @@ def _no_real_docker_on_path(tmp_path_factory):
     # removes the suite. Shadowing is enough -- a test building
     # f"{mybin}:{os.environ['PATH']}" still puts this ahead of /usr/bin.
     os.environ["PATH"] = os.pathsep.join([str(b), REAL_PATH])
+    SUITE_TMP = tmp_path_factory.getbasetemp()
     yield
 
 
@@ -118,20 +146,7 @@ def run(registry, tmp_path):
         e["PATH"] = f"{b}:{e['PATH']}"
         if env:
             e.update(env)
-        # Asserted on RESOLUTION, not membership: a PATH built from scratch
-        # drops the shadow, and one that merely puts /usr/bin first keeps it in
-        # the list while still resolving to the real binary. Both end the same
-        # way -- a green suite restarting a live gateway -- so the check is
-        # simply "which docker would this env find?". Here, where every `run`
-        # override lands, so the next one is red when it is written.
-        found = shutil.which("docker", path=e["PATH"])
-        assert found != REAL_DOCKER, (
-            f"this env= override resolves docker to {found}, the operator's "
-            "real one; build PATH as f\"{mybin}:{os.environ['PATH']}\"")
-        return subprocess.run(
-            [str(ROOT / "agent-mgr"), *args],
-            capture_output=True, text=True, env=e, check=check,
-        )
+        return spawn([str(ROOT / "agent-mgr"), *args], e, check=check)
 
     return _run
 
