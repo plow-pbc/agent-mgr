@@ -68,24 +68,9 @@ invisible to a host-side probe. There is deliberately no host fallback.
 
 ## Three layers: where does my code go?
 
+The contract, the worked example and the per-layer repo shapes live in
+[README § Three layers](../README.md#three-layers-and-what-belongs-in-each).
 Ask: **if this agent's product vanished tomorrow, would this code still exist?**
-
-| | repo | example |
-|---|---|---|
-| **mechanism** | `agent-mgr` | `up`, `activate`, `check-latch` |
-| **instance** | `<agent>-hermes-agent` | `agent.env`, `config.yaml`, `skills.tsv` |
-| **domain** | e.g. `plow-pbc/property-hunt` | the skill, its scripts, its recipes |
-
-Worked example — publishing a property map from the Mac. All three pieces live
-in `property-hunt`, none in `agent-mgr` and none in the instance repo:
-
-- the instruction *"to publish the map, run `just serve-map` on the Mac through Latch"* → its `SKILL.md`, delivered to the **container**
-- the recipe `serve-map:` → its `justfile`, delivered to the **Mac**
-- the launchd plist that keeps it up → its `scripts/`, delivered to the **Mac**
-
-The rule is about duplication, not size: a thin instance repo is still an
-instance repo. And it is dynamic — something one agent uses today graduates to
-`agent-mgr` when a second agent wants it.
 
 ## Adding a domain skill
 
@@ -105,34 +90,16 @@ a skill misbehaves, compare the two versions before debugging the code.
 
 ## What an instance repo contains
 
-```
-rowans-life-hermes-agent/
-  agent.env               overrides only; every key is optional
-  config.yaml             model, plugins, mcp_servers
-  skills.tsv              pinned domain skills, if any
-  compose.override.yml    only if it needs a derived image or extra mounts
-```
-
-`agent.env` can be empty. `AGENT_HOME` defaults to `~/.hermes-<name>`,
-`AGENT_CONTAINER` and `AGENT_PROJECT` to `hermes-<name>`, and the image to the
-fleet-wide digest in `runtime/image.ref`.
-
-Relative paths do **not** work in `compose.override.yml`: Compose resolves them
-against `agent-mgr`'s directory, not the instance's. Name paths through a
-variable set in `agent.env`.
+See [README § What an instance repo contains](../README.md#what-an-instance-repo-contains).
+`agent-mgr new` writes the whole shape for you; every key in `agent.env` is an
+override, and the file may be empty.
 
 ## Why `agent` uses `exec`
 
-The Hermes image's s6 entrypoint starts a gateway *whatever command you pass
-it*. `docker compose run ... chat -q` therefore brings up a **second** gateway
-against the same `/opt/data`. It connects to the chat, answers every message
-alongside the real one, and on exit posts a shutdown notice into the owners'
-channel.
-
-Measured on this host over two days before the fix: **25 gateway starts**
-against a 1–6/day baseline, **21 shutdown notices** into an owners' channel in a
-single day, and 6 sqlite errors from two gateways racing one session database.
-`tests/test_no_second_gateway.py` keeps it from coming back.
+Because the image's s6 entrypoint starts a gateway whatever command you pass it,
+so `docker compose run` boots a **second** one against the same `/opt/data`.
+Measured cost and the guarding test:
+[README § Why `agent` uses `exec`](../README.md#why-agent-uses-exec).
 
 ## When something is wrong
 
