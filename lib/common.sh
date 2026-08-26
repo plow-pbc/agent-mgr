@@ -43,11 +43,13 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # fail while the other keeps working. That is what reaches the refusals PAST
 # load_agent -- with no python3 at all, load_agent's own refusal fires first
 # and the guards are never entered. That buys require_own_home's refusal, not
-# require_running_container_is_ours': BOTH helpers are already called on
-# AGENT_HOME on the way in -- abspath in load_agent, realpath at the guard's own
-# `self=` and again in require_own_home -- so a stub aimed at either refusal
-# inside that guard has to key on the mounted path as well, whichever helper it
-# fails, or it stops one or two functions early.
+# require_running_container_is_ours': both helpers are already called on
+# AGENT_HOME before that guard is ever entered -- abspath in load_agent, then
+# realpath in require_own_home, which lib/resolve-guard runs as a SUBPROCESS on
+# every route in (agent-mgr's transitions, the compose passthrough,
+# reload-if-running). So a stub failing either helper outright stops there,
+# whichever command was run; one aimed at a refusal inside that guard has to key
+# on the mounted path as well.
 # A second caller of either call, in any file -- lib/resolve-guard and
 # agent-mgr run python3 too -- silently moves which invocation that test kills.
 #
@@ -464,6 +466,12 @@ require_running_container_is_ours() {
     # and `lib/reload-if-running` calls this whole path exactly that way -- so
     # the assignment would quietly leave "" there too. `|| die` holds in any
     # caller context; the exit status is the only thing that does.
+    # Shadowed, and left in deliberately: require_own_home resolves this same
+    # path with this same helper on every route into this function, so this
+    # refusal can only fire when the SECOND call fails where the first
+    # succeeded -- a fork the host would not give, an interpreter that crashed.
+    # That is why no keyed stub reaches it and it has no test: a stub matching
+    # this path fires require_own_home's refusal instead, one process earlier.
     self="$(canonical_path "$AGENT_HOME")" \
         || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve $AGENT_HOME. Anything already written is written; re-run once that is fixed."
     for cid in $cids; do
