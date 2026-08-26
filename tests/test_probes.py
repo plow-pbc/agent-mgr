@@ -183,7 +183,7 @@ def test_the_howto_still_reaches_the_readmes_instance_repo_contract():
             body.append(line)
     slugs = {re.sub(r"[^a-z0-9 _-]", "", h.lower()).replace(" ", "-")
              for h in re.findall(r"^#+ (.+)$", "\n".join(body), re.M)}
-    targets = re.findall(r"\]\(\.\./README\.md#([a-z0-9-]+)\)",
+    targets = re.findall(r"\]\(\.\./README\.md#([a-z0-9_-]+)\)",
                          (root / "docs" / "HOWTO.md").read_text())
     assert targets, "the HOWTO should still defer the file list to the README"
     for t in targets:
