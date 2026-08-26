@@ -50,10 +50,15 @@ print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
 
 # The image Compose will actually use, not the descriptor variable. Checking
 # AGENT_IMAGE in the loader was wrong in both directions: it refused the
-# supported `build:` shape -- an agent with a derived image never pulls, so a
-# tag there names a local artifact this host built -- while an override
-# replacing `hermes.image` sailed past it and could run a mutable pulled tag
-# against the mounted credential home.
+# supported `build:` shape outright, while an override replacing `hermes.image`
+# never passed through that variable at all and sailed past, free to run a
+# mutable pulled tag against the mounted credential home.
+#
+# `build:` is exempt because the tag names what this host built, not what a
+# registry serves. Precisely: `agent-mgr compose <name> pull` would still ASK
+# for that tag -- but a locally-built name has no registry behind it, so the
+# pull fails rather than substituting anything. The exemption rests on the
+# reference being unresolvable remotely, not on the command being unreachable.
 case "$got_build:$got_image" in
     build:*) ;;
     *@sha256:[0-9a-f][0-9a-f]*) ;;

@@ -117,7 +117,11 @@ near-miss: keep it for this agent's own recipes and tests, never to restate
 
 **Pin upstream, never vendor it.** Every artifact from another repo arrives at
 an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image
-by `sha256:` digest — never a tag or a branch. A moving ref re-points a running
+by `sha256:` digest — never a tag or a branch. (One exception: an agent that
+**builds** its own image. A `build:` service's tag names what this host
+produced, with no registry behind it to substitute something else, and
+`resolve-guard` enforces the rule against what Compose *resolves* — so an
+override cannot slip a pulled tag past it either way.) A moving ref re-points a running
 agent on the next upstream push, and these carry the chat token and drive a
 filesystem. Copying the artifact in instead makes the agent's repo a fork of it
 — which is what

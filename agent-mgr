@@ -63,6 +63,11 @@ case "$cmd" in
     restore)
         load_agent "${1:-}"
         require_own_home
+        # Before the write, not only via reload-if-running on the last line:
+        # resolve-guard owns the image rule, and a deploy that installs config,
+        # the plugin and every pinned skill before refusing has already done the
+        # thing the refusal exists to prevent.
+        "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         require_transition_allowed
         # Preflight everything this command depends on BEFORE it writes
         # anything. A hook validated only at the end meant a missing one left

@@ -77,9 +77,16 @@ def test_an_override_cannot_re_project_the_stack_at_all(run, instance):
 
 
 def _retargeting(instance, run, name, tmp_path, config=None):
-    """Registered, and with a docker that resolves someone else's home."""
+    """Registered and restored, then handed a docker that resolves someone
+    else's home.
+
+    The restore runs against an AGREEING docker first: `restore` now consults
+    resolve-guard before it writes, so a retargeting fake would refuse the setup
+    rather than the command under test."""
     repo = instance(name) if config is None else instance(name, config=config)
     run("register", name, str(repo))
+    ok = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name)
+    run("restore", name, env={"PATH": f"{ok}:{os.environ['PATH']}"})
     b = fake_docker(tmp_path, home=tmp_path / ".hermes-SOMEONE-ELSE", name=name)
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
@@ -88,7 +95,6 @@ def test_sign_in_will_not_write_a_credential_through_a_retargeting_override(run,
     """sign-in mutates a running stack. Reaching Compose without the guard let a
     credential write land against a sibling agent's mounted home."""
     env = _retargeting(instance, run, "rowan", tmp_path)
-    run("restore", "rowan")
     r = run("sign-in", "rowan", env=env)
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
@@ -100,7 +106,6 @@ def test_check_latch_will_not_probe_through_a_retargeting_override(run, instance
     env = _retargeting(instance, run, "property", tmp_path,
                        config="model:\n  provider: openai-codex\nmcp_servers:\n  latch:\n"
                               "    url: https://api.plow.co/v1/relay/devices/x/mcp\n")
-    run("restore", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_1\nDOMO_MCP_TOKEN=tok_1\n")
     r = run("check-latch", "property", env=env)
@@ -226,9 +231,10 @@ def test_an_unresolvable_sibling_does_not_open_the_legacy_home(run, instance, tm
 
 def test_the_refusal_carries_the_real_reason_and_the_right_remedy(run, instance, tmp_path):
     """load_agent refuses a present, healthy, RUNNING agent whose descriptor
-    fails validation just as readily as one whose repo is gone -- a tag-pinned
-    AGENT_IMAGE being the likeliest. Telling that operator to unregister a live
-    agent is worse than saying nothing, so the reason has to reach them."""
+    fails validation just as readily as one whose repo is gone -- an unreadable
+    agent.env in a repo that is still there. Telling that operator to unregister
+    a live agent is worse than saying nothing, so the reason has to reach
+    them."""
     # Present repo, unreadable descriptor: load_agent refuses it, but the agent
     # is still there, so 'unregister' would be the wrong thing to tell anyone.
     bad = instance("bad")
@@ -310,3 +316,18 @@ def test_the_image_rule_reads_what_compose_resolved(run, instance, tmp_path, kw,
         assert "is not a digest" in r.stderr
     else:
         assert r.returncode == 0, f"refused a legitimate image ({why}): {r.stderr}"
+
+
+def test_restore_refuses_a_bad_image_before_it_writes_anything(run, instance, tmp_path):
+    """The image rule lives on resolve-guard, which `restore` used to reach only
+    through reload-if-running on its LAST line -- so a deploy would install
+    config, the plugin and every pinned skill and refuse afterwards, having
+    already done the thing the refusal exists to prevent."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    image="nousresearch/hermes-agent:latest")
+    r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "is not a digest" in r.stderr
+    assert not (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists(), (
+        "the deploy wrote before refusing")
