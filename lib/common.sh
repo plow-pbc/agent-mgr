@@ -249,7 +249,11 @@ parse_env_file() {
                 # the literal AGENT_TZ, which is a valid identifier, so this arm
                 # is unreachable for that role. A role branch here would be dead
                 # dispatch pretending to be a policy.
-                die "$file: malformed key: $key" ;;
+                # Locator, never content: for a line like `sk-abc=x` the parsed
+                # "key" IS the secret. Unreachable for the dotenv today -- the
+                # filter above admits only AGENT_TZ -- but the line number
+                # already locates it, so the coupling need not be load bearing.
+                die "$file: line $_lineno: malformed key" ;;
         esac
 
         # The value grammar, ported from compose-go in one pass rather than a
@@ -882,7 +886,7 @@ require_own_home() {
     # whose job is to fail closed. The cost is availability on a stale row, paid
     # down by the reason and the remedy in the message rather than by guessing.
     [ "$skipped" -eq 0 ] \
-        || die "refusing to write to $AGENT_HOME -- ${skipped_named} could not be resolved (reason above), so this tool cannot prove no one else claims that home. Fix that descriptor if the agent is still there; 'agent-mgr unregister ${skipped_named}' only if it is gone."
+        || die "refusing to write to $AGENT_HOME -- ${skipped_named} could not be resolved (reason above), so this tool cannot prove no one else claims that home. Fix the file named above if the agent is still there; 'agent-mgr unregister ${skipped_named}' only if it is gone."
 
     case "$AGENT_HOME" in
         *"/.hermes-$AGENT_NAME") return 0 ;;

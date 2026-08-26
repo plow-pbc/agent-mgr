@@ -245,7 +245,12 @@ def test_the_refusal_carries_the_real_reason_and_the_right_remedy(run, instance,
     fails validation just as readily as one whose repo is gone -- an unreadable
     agent.env in a repo that is still there. Telling that operator to unregister
     a live agent is worse than saying nothing, so the reason has to reach
-    them."""
+    them.
+
+    "the file named above", not "that descriptor": since the dotenv also fails
+    loudly, the file that stopped the resolve is not always the descriptor, and
+    naming the wrong one sends the operator to a healthy agent.env during a
+    fleet-wide outage of every direct-write command."""
     # Present repo, unreadable descriptor: load_agent refuses it, but the agent
     # is still there, so 'unregister' would be the wrong thing to tell anyone.
     bad = instance("bad")
@@ -256,7 +261,7 @@ def test_the_refusal_carries_the_real_reason_and_the_right_remedy(run, instance,
     r = run("restore", "str")
     assert r.returncode != 0
     assert "could not resolve bad" in r.stderr, "the skipped sibling was not named"
-    assert "Fix that descriptor if the agent is still there" in r.stderr, (
+    assert "Fix the file named above if the agent is still there" in r.stderr, (
         "an operator whose sibling is alive was told to unregister it")
 
 def test_two_conventional_homes_aliasing_one_directory_collide(run, instance, tmp_path):

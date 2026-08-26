@@ -436,30 +436,45 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
     assert "America/Los_Angeles" not in saw
 
 
-def test_a_broken_dotenv_does_not_take_down_other_agents(run, instance, tmp_path):
-    """A line agent-mgr does not consume costs nobody anything.
+@pytest.mark.parametrize(
+    "dotenv, rowan_resolves, reaches_siblings",
+    [
+        ("AGENT_T[oops]=1\n", True, False),
+        ('AGENT_TZ="unterminated\n', False, True),
+    ],
+    ids=["a-key-agent-mgr-skips", "the-one-key-it-consumes"],
+)
+def test_which_dotenv_lines_reach_another_agent(
+    run, instance, tmp_path, dotenv, rowan_resolves, reaches_siblings
+):
+    """Which lines in somebody's credential file can cost somebody ELSE a command.
 
-    Malformed VALUES on AGENT_TZ are fatal in both files -- see
-    test_a_malformed_AGENT_TZ_value_is_fatal. What is asymmetric is which lines
-    get read at all: a descriptor is parsed whole, because Compose reads that
-    same file, while a dotenv yields exactly AGENT_TZ. Everything else here is
-    somebody's credential, skipped before validation and never commented on.
+    A dotenv yields exactly AGENT_TZ, so anything else is skipped before
+    validation and costs nobody anything -- not this instance, and not, through
+    require_own_home's fail-closed arm, any other registered agent.
 
-    So this pins the filter, not a soft-failure protocol: a stray key costs this
-    instance nothing, and through require_own_home's fail-closed arm it must not
-    reach another agent's direct-write commands either.
+    A malformed value on the one key it DOES consume is fatal, and that fatal
+    propagates: load_agent dies inside require_own_home's sibling subshell, and
+    a resolver that cannot run stops every direct-write command for every agent
+    rather than guessing who claims which home. That is the deliberate cost of
+    making the dotenv fail loudly, so it is pinned here rather than asserted in
+    a docstring -- wrapping the dotenv parse in `|| true` would flip this
+    fleet-wide property with the rest of the suite green.
     """
     run("register", "rowan", str(instance("rowan")))
     run("register", "other", str(instance("other")))
-    _home_env(tmp_path, "rowan", "AGENT_T[oops]=1\n")
+    _home_env(tmp_path, "rowan", dotenv)
+
     r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    assert (r.returncode == 0) is rowan_resolves, r.stderr
+    if rowan_resolves:
+        assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+
     # restore, not resolve: require_own_home runs on direct-write commands only,
-    # so `resolve` cannot observe the amplification this test exists to deny.
+    # so `resolve` cannot observe the amplification either way.
     other = run("restore", "other")
-    assert other.returncode == 0, other.stderr
-    assert "could not resolve rowan" not in other.stderr
+    assert (other.returncode != 0) is reaches_siblings, other.stderr
+    assert ("could not resolve rowan" in other.stderr) is reaches_siblings
 
 
 def test_the_dotenv_follows_a_declared_home(run, instance, tmp_path):
