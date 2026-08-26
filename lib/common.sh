@@ -485,28 +485,23 @@ require_running_container_is_ours() {
         "$cid")" \
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
     # Resolved before comparing, or this is a comparison between two spellings
-    # again -- one of them from a source we do not control. Both sides end at
-    # realpath, though AGENT_HOME reaches it already abspath'd by load_agent.
+    # again -- one of them from a source we do not control.
     if [ -n "$mounted" ]; then
-        # Straight to canonical_path, which resolves the whole path itself. Not
-        # because the two compose to the same answer -- they do not, and the
-        # order matters: abspath collapses `..` lexically, realpath applies it
-        # after following symlinks, so `/a/link/..` yields `/a` one way and the
-        # link's parent the other. They differ only for a `..` FOLLOWING a
-        # symlink, though, which is not a shape any path this comparison has
-        # seen: the abspath bought a second interpreter and a second refusal
-        # branch for an answer that did not change. Nothing here launders the
-        # value first -- it is whatever `docker inspect` recorded, on a
-        # container this guard exists to suspect -- so the narrow claim is the
-        # only one available, and it is why the asymmetry with the abspath'd
-        # AGENT_HOME above costs a false refusal at worst, never a missed
-        # foreign container.
+        # Both sides end at realpath, so a match IS the same directory. Only
+        # AGENT_HOME also gets an abspath first, from load_agent, and the two
+        # orders diverge for a `..` following a symlink (`/a/link/..` is `/a`
+        # collapsed lexically, the link's parent resolved physically) -- so that
+        # one-sided asymmetry can cost a false refusal, never a missed foreign
+        # container. Matching it here bought a second interpreter and a second
+        # refusal branch for an answer no path this comparison has seen would
+        # change, and nothing launders `mounted` first: it is whatever
+        # `docker inspect` recorded, on a container this guard exists to
+        # suspect.
         #
         # `mounted` itself is never assigned from the substitution -- the
         # never-assign rule beside normalized_path -- which is what keeps
-        # docker's raw .Source for this refusal and for the
-        # mismatch die below, where an operator matches it against
-        # `docker inspect`.
+        # docker's raw .Source for this refusal and for the mismatch die below,
+        # where an operator matches it against `docker inspect`.
         m="$(canonical_path "$mounted")" \
             || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
         [ "$m" = "$self" ] && continue
