@@ -92,6 +92,11 @@ def test_a_hand_edited_row_can_still_be_dropped(run, instance, tmp_path, registr
     # The backslash row is the one that proves ENVIRON over -v: awk's -v
     # processes escapes in the value, so `a\tb` would arrive as a tab and match
     # no row -- undroppable, by the very command that exists to drop it.
+    # The LOOKUP path too, and the two messages differ in a way only ENVIRON can
+    # produce: it resolves the row and dies on the missing dir, while -v never
+    # finds the row at all and says it is not registered.
+    assert "no longer exists" in run("resolve", row).stderr
+
     assert run("unregister", row).returncode == 0, f"{row!r} could not be dropped"
     assert row not in run("ls").stdout
     assert "rowan" in run("ls").stdout
