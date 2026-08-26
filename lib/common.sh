@@ -188,7 +188,7 @@ load_agent() {
     # sibling. `realpath -m --` rather than collapsing slashes by hand, which
     # left `$HOME/foo/../.hermes` intact and evading the check -- `-m` because a
     # home need not exist yet, `--` because a path may begin with a dash.
-    AGENT_HOME="$(realpath -m -- "$AGENT_HOME")"
+    AGENT_HOME="$(realpath -m -s -- "$AGENT_HOME")"
     : "${AGENT_CONTAINER:=hermes-$name}"
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"
@@ -311,20 +311,26 @@ require_running_container_is_ours() {
     # project name, and `up` is exactly the command that would adopt it. Reading
     # only running ones let a stopped sibling pass as absent, which is the
     # second-gateway case through a door the running check never saw.
-    if ! cid="$(compose ps -a --quiet hermes)"; then
+    if ! cids="$(compose ps -a --quiet hermes)"; then
         die "refusing to touch the container under $AGENT_PROJECT -- docker could not say whether one exists"
     fi
     # Empty output is the ordinary first bring-up: nothing to misidentify.
-    [ -n "$cid" ] || return 0
-    cid="$(printf '%s' "$cid" | head -1)"
+    [ -n "$cids" ] || return 0
+    # EVERY container under the project, not the first. `-a` includes the
+    # one-off containers `compose run` leaves behind -- which this tool
+    # deliberately supports -- so picking one and trusting it identified an
+    # arbitrary member of the set and ignored the rest. Any foreign mount
+    # refuses; this agent's own one-offs mount its own home and pass.
+    local cid
+    for cid in $cids; do
     mounted="$(docker inspect --format \
         '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
         "$cid")" \
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
     # Same canonicalisation as AGENT_HOME, or the comparison is between two
     # spellings again -- one of them from a source we do not control.
-    [ -z "$mounted" ] || mounted="$(realpath -m -- "$mounted")"
-    [ -n "$mounted" ] && [ "$mounted" = "$AGENT_HOME" ] && return 0
+    [ -z "$mounted" ] || mounted="$(realpath -m -s -- "$mounted")"
+    if [ -n "$mounted" ] && [ "$mounted" = "$AGENT_HOME" ]; then continue; fi
     # No removal command here, deliberately, and no branch that could produce
     # one. The obvious discriminator -- does the foreign home exist? -- is
     # evaluated as the invoking user on THIS host, while the mount is a path on
@@ -337,6 +343,7 @@ require_running_container_is_ours() {
     # sort out, while being wrong destroys a running business. So the message
     # ends at the question, not at an answer it cannot actually have.
     die "refusing to touch the container running as $AGENT_PROJECT -- it mounts ${mounted:-<nothing>} at /opt/data, not ${AGENT_NAME}'s home ($AGENT_HOME). The compose project comes from the agent NAME, so a name that collides with a live agent reaches it however isolated this descriptor is -- which usually means this descriptor wants a name of its own, or 'agent-mgr unregister $AGENT_NAME'. If you think that container is a leftover, check whose it is first: docker inspect $cid"
+    done
 }
 
 # Every route to a container transition goes through here, so the instance's

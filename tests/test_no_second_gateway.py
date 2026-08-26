@@ -440,3 +440,34 @@ def test_a_home_that_traverses_to_a_siblings_is_caught(run, instance, tmp_path):
     r = run("restore", "copycat")
     assert r.returncode != 0, "a traversing home reached a sibling's directory"
     assert "str is already registered there" in r.stderr
+
+
+def test_a_foreign_container_is_caught_even_beside_our_own(run, instance, tmp_path):
+    """`-a` includes the one-off containers `compose run` leaves behind, which
+    this tool deliberately supports -- so identifying the FIRST one and trusting
+    it checked an arbitrary member of the set. Our own one-off mounts our home
+    and passes; a sibling's does not, and ordering must not decide which is
+    seen."""
+    run("register", "rowan", str(instance("rowan")))
+    ours = str(tmp_path / "home" / ".hermes-rowan")
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    all_cids=("ourown", "theirs"),
+                    mounts={"ourown": ours, "theirs": "/home/other/.hermes-rowan"})
+    r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, "a foreign container was missed because ours came first"
+    assert "/home/other/.hermes-rowan" in r.stderr
+
+
+def test_a_home_symlinked_onto_another_disk_still_works(run, instance, tmp_path):
+    """Putting agent state on the big disk is ordinary. Resolving symlinks while
+    normalising `..` would rewrite AGENT_HOME to the target, which matches
+    neither shape require_own_home accepts -- so every direct write would be
+    refused for a perfectly conventional setup."""
+    target = tmp_path / "srv" / "rowan"
+    target.mkdir(parents=True)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / ".hermes-rowan").symlink_to(target)
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, f"a symlinked home was refused: {r.stderr}"

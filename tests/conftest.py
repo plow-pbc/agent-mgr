@@ -197,7 +197,7 @@ def instance(tmp_path):
 
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
-                exists=None):
+                exists=None, all_cids=(), mounts=None):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -241,9 +241,11 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # `ps -a` answers about EXISTENCE, `--status running` about running.
         # They differ for a stopped container, which is the case the identity
         # seam was blind to, so a test can now set them independently.
-        f'  *"ps -a --quiet"*) {"echo deadbeef" if (running if exists is None else exists) else ":"} ;;',
+        f'  *"ps -a --quiet"*) {"printf '%s\\n' " + " ".join(all_cids) if all_cids else ("echo deadbeef" if (running if exists is None else exists) else ":")} ;;',
         f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',
-        f'  *inspect*) echo {home} ;;',
+        (f'  *inspect*) case "$*" in ' + " ".join(
+            f'*{c}*) echo {m} ;;' for c, m in (mounts or {}).items())
+         + f' *) echo {home} ;; esac ;;') if mounts else f'  *inspect*) echo {home} ;;',
     ]
     if exec_output is not None:
         parts.append(f'  *exec*) echo {exec_output} ;;')
