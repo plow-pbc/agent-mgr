@@ -289,7 +289,7 @@ compose() {
     # not -- they disagreed on wording and the passthrough's was redundant for
     # anything reaching compose_transition.
     compose_fetch_is_safe "$@" \
-        || die "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: 'pull' needs --ignore-buildable, and '--pull' takes only 'never' or 'build', because the flag overrides whatever the file says -- editing pull_policy will not clear this one. (resolve-guard enforces the same pair on the file, which is the other door.) If that --pull belongs to a command you are running INSIDE the container, this scan cannot tell -- pass it through a script instead of on this argv."
+        || die "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: 'pull' needs --ignore-buildable, and '--pull' takes only 'never' or 'build', because the flag overrides whatever the file says -- editing pull_policy will not clear this one. (resolve-guard enforces the same pair on the file, which is the other door.) If that --pull belongs to a command you are running INSIDE the container, this scan cannot tell -- wrap it so the flag is not a word on this argv, e.g. exec ... sh -c 'docker build --pull ...'."
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"

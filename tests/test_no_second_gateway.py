@@ -578,6 +578,18 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     assert run("compose", "rowan", "exec", "hermes", "git", "pull",
                env=env).returncode == 0, "a container's `git pull` tripped the fetch guard"
 
+    # The accepted false positive, and the escape the message names. A
+    # container's own --pull is a bare word on this argv and indistinguishable
+    # from ours; wrapped in sh -c it is one word and passes.
+    r = run("compose", "rowan", "exec", "hermes", "docker", "build", "--pull",
+            "-t", "x", ".", env=env)
+    assert r.returncode != 0, "the whole-argv scan is supposed to catch this"
+    assert "INSIDE the container" in r.stderr, "no remedy for the one it cannot type"
+    assert "sh -c" in r.stderr, "the named escape must be the one that works"
+    assert run("compose", "rowan", "exec", "hermes", "sh", "-c",
+               "docker build --pull -t x .", env=env).returncode == 0, (
+        "the escape the message names does not actually work")
+
     # A leading global option would shift the subcommand out from under every
     # check that reads it as $1 -- including the fetch guard.
     r = run("compose", "rowan", "--project-name", "x", "pull", env=env)
