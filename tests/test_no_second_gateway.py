@@ -184,6 +184,21 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
         assert r.returncode == 0, f"{why}: {r.stderr}"
 
 
+def test_an_override_that_drops_the_stub_docker_is_refused(run):
+    """The companion to the fence below: it proves the stub refuses an unstubbed
+    call, this proves a test cannot lose the stub in the first place.
+
+    The session fixture shadows the real docker by prepending to os.environ, so
+    it survives the usual override -- f"{mybin}:{os.environ['PATH']}" -- and not
+    a PATH built from scratch, which re-admits /usr/bin/docker. `reload-if-running`
+    was already being invoked that way; harmless only because that call leaves
+    AGENT_MGR_ROOT unset and bails before compose. Left as a convention the next
+    one is silent, and silent here means a green suite restarting a live gateway.
+    """
+    with pytest.raises(AssertionError, match="drops the stub docker"):
+        run("restore", "rowan", env={"PATH": "/usr/bin:/bin"})
+
+
 def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_path):
     """The harness fence, and it belongs in this file: restarting a live gateway
     is this repo's own failure class, and for a day the SUITE was the actor --

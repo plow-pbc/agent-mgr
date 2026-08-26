@@ -10,6 +10,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # tests/test_compose.py uses it -- see the fixture below.
 REAL_PATH = os.environ.get("PATH", "")
 
+# The directory the session fixture puts the stub `docker` in, published so the
+# `run` fixture can prove an override did not drop it.
+STUB_BIN = None
+
 # The default `docker` every test gets: answers the two READ calls agent-mgr
 # makes, and refuses everything else.
 #
@@ -62,6 +66,7 @@ def _no_real_docker_on_path(tmp_path_factory):
     below prepended a fake -- and that shape is how the live restarts survived
     the first attempt at this fix.
     """
+    global STUB_BIN
     b = tmp_path_factory.mktemp("poison-bin")
     (b / "docker").write_text(SAFE_DOCKER)
     (b / "docker").chmod(0o755)
@@ -70,6 +75,7 @@ def _no_real_docker_on_path(tmp_path_factory):
     # removes the suite. Shadowing is enough -- a test building
     # f"{mybin}:{os.environ['PATH']}" still puts this ahead of /usr/bin.
     os.environ["PATH"] = os.pathsep.join([str(b), REAL_PATH])
+    STUB_BIN = str(b)
     yield
 
 
@@ -113,6 +119,14 @@ def run(registry, tmp_path):
         e["PATH"] = f"{b}:{e['PATH']}"
         if env:
             e.update(env)
+        # The shadow above only survives an override that carries os.environ's
+        # PATH forward. A PATH built from scratch re-admits /usr/bin/docker,
+        # and the failure mode is silent: a green suite that restarts a live
+        # gateway. Assert it here, where every override lands, so the next one
+        # that drops it is red when it is written rather than in production.
+        assert STUB_BIN in e["PATH"].split(os.pathsep), (
+            "this env= override drops the stub docker and re-admits the real "
+            "one; build PATH as f\"{mybin}:{os.environ['PATH']}\"")
         return subprocess.run(
             [str(ROOT / "agent-mgr"), *args],
             capture_output=True, text=True, env=e, check=check,
