@@ -6,9 +6,20 @@ those agents have in common; each agent owns only what makes it itself.
 
 ## Install
 
-See [the README's install block](../README.md#agent-mgr) — one clone, two
-symlinks. Kept there rather than copied here: this block and the README's had
-already drifted apart on `mkdir -p` and `ln -sf`.
+Clone and symlink: [the README's install block](../README.md#agent-mgr) — one
+clone, two symlinks. Kept there rather than copied here, because this block and
+the README's had already drifted apart on `mkdir -p` and `ln -sf`. Then:
+
+```sh
+agent-mgr ls
+```
+
+Needs **`gh`, authenticated** (`gh auth status`). `restore` installs the Plow
+Chat plugin through the same `gh api` snapshot that installs a skill, so every
+agent needs it, not only one that ships a `skills.tsv`.
+
+The registry lives at `~/.config/agent-mgr/agents` and maps a name to an
+agent repo, so every command works from any directory.
 
 ## Stand up a new agent
 
@@ -94,13 +105,14 @@ reported as a success.
 ```sh
 agent-mgr down rowan
 home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
-real=$(readlink -f "$home")          # the actual directory, symlink or not
-mkdir -p ~/agent-restores
-mv "$real" ~/agent-restores/"$(basename "$real").before-restore"
-mkdir -p "$real"
-tar -C "$real" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz
-agent-mgr restore rowan              # repo-owned config, plugin and skills win
-agent-mgr up rowan
+real=$(readlink -f "$home")            # the actual directory, symlink or not
+b=$(basename "$real")
+aside="$(dirname "$real")/restoring-${b#.}-$(date -u +%Y%m%d%H%M%S)"
+mv "$real" "$aside" \
+  && mkdir -p "$real" \
+  && tar -C "$real" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz \
+  && agent-mgr restore rowan \
+  && agent-mgr up rowan
 ```
 
 Three things that recipe is doing on purpose:
@@ -110,10 +122,20 @@ Three things that recipe is doing on purpose:
   the next `mkdir -p` would then make a plain directory on the root disk, the
   restore would land on the wrong volume, and the real data would be orphaned at
   the old target. Resolving first makes the symlinked and plain cases identical.
-- **`~/agent-restores`**, not `$home.before-restore`. The backup job globs
-  `~/.hermes*`, so a set-aside home left in that namespace gets archived nightly
-  as though it were a live agent — a second credential-bearing copy per agent,
-  indefinitely. Delete it once the restore is verified.
+- **Chained with `&&`, and the set-aside is a sibling of `$real`.** Unchained, a
+  failed `mv` leaves the live home in place, `mkdir -p` succeeds trivially, and
+  `tar` overlays the archive onto it — the very mixture this recipe exists to
+  prevent. A sibling because `dirname "$real"` is the same filesystem, so the
+  move is a rename; parking it under `$HOME` instead would make it a
+  cross-device *copy* of the whole home onto the root disk, which is exactly the
+  disk that was too small in the symlinked case.
+- **`restoring-${b#.}-<stamp>`.** The dot is stripped so a plain `ls` shows it —
+  `backup-homes` made the same call for the same reason, and a hidden
+  credential-bearing copy is one nobody remembers to delete. The prefix keeps it
+  out of the `~/.hermes*` glob, so the nightly does not start archiving a dead
+  home as though it were live. The timestamp means a second restore attempt
+  cannot move the new home *inside* the first set-aside. Delete it once the
+  restore is verified.
 - The archive is **contents-rooted** (`./` entries), which is why it needs a
   named target and cannot splat into `$HOME`. `logs/`, `cache/` and
   `lazy-packages/` are excluded from it and are not recreated; the agent
