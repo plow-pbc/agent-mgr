@@ -184,19 +184,32 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
         assert r.returncode == 0, f"{why}: {r.stderr}"
 
 
-def test_an_override_that_drops_the_stub_docker_is_refused(run):
+@pytest.mark.parametrize("path, why", [
+    ("/usr/bin:/bin", "built from scratch, dropping the shadow entirely"),
+    ("/usr/bin:{inherited}", "inherits the shadow but resolves ahead of it"),
+])
+def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
     """The companion to the fence below: it proves the stub refuses an unstubbed
-    call, this proves a test cannot lose the stub in the first place.
+    call, this proves an override cannot resolve docker back to the real one.
 
     The session fixture shadows the real docker by prepending to os.environ, so
     it survives the usual override -- f"{mybin}:{os.environ['PATH']}" -- and not
-    a PATH built from scratch, which re-admits /usr/bin/docker. `reload-if-running`
-    was already being invoked that way; harmless only because that call leaves
-    AGENT_MGR_ROOT unset and bails before compose. Left as a convention the next
-    one is silent, and silent here means a green suite restarting a live gateway.
+    the two shapes below. `reload-if-running` was already being invoked with the
+    first; harmless only because that call leaves AGENT_MGR_ROOT unset and bails
+    before compose. Left as a convention the next one is silent, and silent here
+    means a green suite restarting a live gateway.
+
+    The second row is why the check asks which docker the env RESOLVES, not
+    whether the shadow is present: that PATH keeps the shadow in the list and
+    still finds /usr/bin/docker.
     """
-    with pytest.raises(AssertionError, match="drops the stub docker"):
-        run("restore", "rowan", env={"PATH": "/usr/bin:/bin"})
+    with pytest.raises(AssertionError, match="real one"):
+        # `ls`, not `restore`: if this fence ever regresses it must run
+        # something that cannot reach a transition. `restore` ends in
+        # reload-if-running -- `compose restart` against -p hermes-rowan --
+        # and "inert only because it dies earlier" is the accident this
+        # whole change exists to stop relying on.
+        run("ls", env={"PATH": path.format(inherited=os.environ["PATH"])})
 
 
 def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_path):
