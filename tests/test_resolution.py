@@ -48,10 +48,12 @@ def test_an_unregistered_agent_is_refused_by_name(run):
     assert "ghost" in r.stderr and "not registered" in r.stderr
 
 
-def test_an_instance_repo_with_no_descriptor_is_refused(run, tmp_path):
-    repo = tmp_path / "bare"
-    repo.mkdir()
+def test_a_descriptor_that_disappears_after_registration_is_refused(run, instance, tmp_path):
+    """register now refuses a directory that is not an instance repo, so this
+    covers the other half: a descriptor removed after the row was created."""
+    repo = instance("bare")
     run("register", "bare", str(repo))
+    (repo / "agent.env").unlink()
     r = run("resolve", "bare")
     assert r.returncode != 0
     assert "agent.env" in r.stderr

@@ -19,6 +19,10 @@ registry_add() {
         ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: $name" ;;
     esac
     [ -d "$dir" ] || die "no such directory: $dir"
+    # An instance repo, not just a directory. require_own_home iterates the
+    # whole registry and refuses on a row it cannot resolve, so one typo'd or
+    # half-scaffolded row would otherwise hard-fail every agent's write paths.
+    [ -f "$dir/agent.env" ] || die "$dir is not an instance repo (no agent.env) -- 'agent-mgr new <name> $dir' scaffolds one"
     dir="$(cd "$dir" && pwd)"
     mkdir -p "$(dirname "$AGENT_MGR_REGISTRY")"
     touch "$AGENT_MGR_REGISTRY"
@@ -50,6 +54,8 @@ usage: agent-mgr <command> [args]
 
   ls                          registered agents and where they live
   register <name> <dir>       point a name at an instance repo
+  unregister <name>           forget it -- the way out when a checkout has moved
+                              or been deleted and its row blocks the fleet
   new <name> [dir]            scaffold a new instance repo and register it
   resolve <name>              print the descriptor as agent-mgr resolves it
 
@@ -311,7 +317,7 @@ require_own_home() {
         # descriptor made this skip the row, and skipping is fail-open in the
         # one check that closes the legacy exception.
         ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" \
-            || die "could not resolve ${other}'s home while checking for a collision -- fix or unregister it"
+            || die "could not resolve ${other}'s home while checking for a collision -- restore that checkout, or 'agent-mgr unregister $other'"
         ocanon="$(canonical_path "$ohome")" \
             || die "could not resolve ${other}'s home ($ohome) while checking for a collision"
         [ "$ocanon" = "$canon" ] \
@@ -353,4 +359,12 @@ require_transition_allowed() {
         || die "$AGENT_NAME declares a pre-transition guard at $AGENT_PRE_TRANSITION, which is missing or not executable"
     ( cd "$AGENT_DIR" && env "${AGENT_HOOK_ENV[@]}" "$AGENT_PRE_TRANSITION" ) \
         || die "${AGENT_NAME}'s pre-transition guard refused -- not transitioning the container"
+}
+
+registry_remove() {
+    local name="$1"
+    [ -f "$AGENT_MGR_REGISTRY" ] || return 0
+    local tmp; tmp="$(mktemp)"
+    grep -v "^$name	" "$AGENT_MGR_REGISTRY" > "$tmp" || true
+    mv "$tmp" "$AGENT_MGR_REGISTRY"
 }

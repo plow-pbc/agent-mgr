@@ -351,6 +351,15 @@ EOF
             *)          compose "$@" ;;
         esac
         ;;
+    unregister)
+        # The inverse of register, and the documented exit from a row that can
+        # no longer be resolved -- require_own_home refuses on one, which
+        # without this would block every agent with no supported recovery.
+        [ $# -eq 1 ] || die "usage: agent-mgr unregister <name>"
+        registry_lookup "$1" >/dev/null 2>&1 || die "$1 is not registered"
+        registry_remove "$1"
+        echo "unregistered $1"
+        ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
 esac

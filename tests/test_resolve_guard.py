@@ -272,3 +272,21 @@ def test_a_broken_sibling_refuses_rather_than_skipping(run, instance, tmp_path):
     r = run("restore", "rowan")
     assert r.returncode != 0
     assert "ghost" in r.stderr
+
+
+def test_a_symlink_to_a_home_that_does_not_exist_yet_is_still_a_collision(run, instance, tmp_path):
+    """The first-restore case, and the one input where the old hand-rolled
+    resolver silently returned the symlink's own path instead of its target:
+    nothing has been created yet, so there is no existing ancestor to walk to.
+    A future swap back to a resolver that requires existence -- realpath without
+    -m, a cd -P walk, Path.resolve(strict=True) -- reopens it, and this is what
+    fails when it does."""
+    home = tmp_path / "home"
+    home.mkdir(exist_ok=True)
+    (home / ".hermes-copycat").symlink_to(home / ".hermes-rowan")  # target unmade
+    assert not (home / ".hermes-rowan").exists()
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "copycat", str(instance("copycat")))
+    r = run("restore", "copycat")
+    assert r.returncode != 0
+    assert "rowan is already registered there" in r.stderr
