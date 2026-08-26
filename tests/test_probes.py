@@ -254,12 +254,24 @@ def test_the_readme_still_states_which_pin_may_move():
     # pressure is to loosen the claim back to a bare substring -- reopening the
     # hole this narrowing closed.
     prose = " ".join(body.split())
-    # Phrases that appear ONLY in the normative sentences. A bare "must not be"
-    # also matched the adjacent do-not-collapse rule, so losing the freeze rule
-    # -- the one an operator bumping a pin actually trips -- read as green.
+    # Two kinds of claim, and the second is the one only this test can carry.
+    #
+    # The RULE sentences duplicate what the SHA equality in test_install.py
+    # already enforces behaviourally -- kept because a bare "must not be" once
+    # matched the adjacent do-not-collapse rule, so losing the freeze rule read
+    # as green.
+    #
+    # The RATIONALE is unenforceable any other way: a red SHA assertion says the
+    # ref moved, and test_install.py's message sends whoever tripped it HERE to
+    # find out why moving it 404s activate. Without these two, the section can
+    # lose the entire why -- the strip that deleted the path, the cost of
+    # getting it wrong -- while keeping the bolded rules, and the pointer would
+    # aim at the half nothing pins.
     for claim in ("frozen at a pre-strip commit",
                   "must not be bumped forward at all",
-                  "Only `runtime/plow-chat-plugin.ref` may be bumped"):
+                  "Only `runtime/plow-chat-plugin.ref` may be bumped",
+                  "Strip the SEED ceremony",
+                  "one-time irreversible spend"):
         assert claim in prose, (
             f"the builds-on prose no longer states {claim!r} -- it is where an "
-            "operator bumping a pin learns which of the two may move")
+            "operator bumping a pin learns which of the two may move, and why")
