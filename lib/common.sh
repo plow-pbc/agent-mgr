@@ -175,7 +175,7 @@ load_agent() {
     # $HOME is the one expansion, because it is the one the template documents.
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
-    local line key value _k _ok
+    local line key value
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
     # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
     # this empty, and bash treats an empty array as unset under `set -u` until
@@ -187,37 +187,28 @@ load_agent() {
         key="${line%%=*}"
         value="${line#*=}"
 
-        # One rejection path, so every near-miss of a key this tool owns is
-        # reported rather than only the spellings that happen to reach here.
+        # Two different things, deliberately not collapsed into one refusal.
         #
-        # A declaration is `IDENTIFIER=`, unindented, no `export`. Compose reads
-        # this same file through --env-file with a parser that rejects all three
-        # deviations too, so tolerating any of them would make agent-mgr and
-        # Compose disagree about one file -- a worse failure than refusing it.
+        # A line with no `=` is not a declaration at all. It is skipped and
+        # parsing continues, which is this parser's existing contract -- the
+        # test above pins it, and its concern is that such a line is never
+        # EXECUTED, not that it is fatal.
         #
-        # Silence is right for a key this tool does not own and wrong for one it
-        # does: `AGENT_TZ = x`, `  AGENT_TZ=x` and `export AGENT_TZ=x` would all
-        # vanish, and the value would fall back to its default, which looks
-        # exactly like a line never written.
-        _ok=1
-        case "$line" in [A-Za-z_]*=*) ;; *) _ok=0 ;; esac
-        case "$key" in *[!A-Za-z0-9_]*) _ok=0 ;; esac
-        if [ "$_ok" = 0 ]; then
-            # Strip on ANY following whitespace, before the collapse: `#export `
-            # matches one literal space, so `export<TAB>AGENT_TZ` would survive
-            # as `exportAGENT_TZ` and never match -- the silent drop this exists
-            # to stop, in the one spelling nobody thinks to write by hand.
-            _k="${key#"${key%%[![:space:]]*}"}"
-            case "$_k" in export[[:space:]]*) _k="${_k#export}" ;; esac
-            _k="${_k//[[:space:]]/}"
-            # A blank or whitespace-only line collapses to "", and an empty
-            # fixed pattern matches every line -- reporting a malformed key that
-            # was never written.
-            if [ -n "$_k" ] && printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
-                echo "agent-mgr: $descriptor: ignoring malformed '$key' -- write it as $_k=<value>: unindented, no 'export', no spaces around the =" >&2
-            fi
-            continue
-        fi
+        # A line that DOES claim to be a declaration must carry a real
+        # identifier. That is where the execution hole was: a malformed key
+        # matched the allowlist as a pattern and reached `printf -v`, where an
+        # array subscript is evaluated arithmetically. Refused rather than
+        # classified -- Compose rejects the same lines through --env-file, so
+        # tolerating one would only let the two disagree about a single file,
+        # and dying is the one behaviour that cannot go wrong quietly.
+        case "$line" in
+            *=*) ;;
+            *) continue ;;
+        esac
+        case "$key" in
+            ''|*[!A-Za-z0-9_]*) die "$descriptor: malformed key: $key" ;;
+        esac
+
         # One layer of surrounding quotes, the way a dotenv file is usually written.
         case "$value" in
             \"*\") value="${value#\"}"; value="${value%\"}" ;;

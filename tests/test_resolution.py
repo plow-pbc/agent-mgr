@@ -213,64 +213,32 @@ def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_mark
     assert not injection_marker.exists(), (
         "a descriptor key executed host code -- the parser is a shell again"
     )
-    assert r.returncode == 0, r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    # Refused rather than skipped: the key is malformed, and a malformed
+    # declaration is a repository error.
+    assert r.returncode != 0
+    assert "malformed" in r.stderr
 
 
-def test_only_a_declared_key_reaches_the_assignment(run, instance):
-    """`grep -w` matches a word-bounded SUBSTRING of the space-joined allowlist,
-    so a multi-token key is an exact match: `AGENT_TZ AGENT_IMAGE` is inside
-    AGENT_KEYS. It reached `printf -v`, which rejects the name, and under set -e
-    that killed load_agent -- every subcommand for the agent died on a raw bash
-    error instead of the documented path.
-    """
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ AGENT_IMAGE=x\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, f"the CLI died on a malformed key: {r.stderr}"
-    assert "not a valid identifier" not in r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
-    assert "AGENT_IMAGE=nousresearch/hermes-agent@sha256:" in r.stdout
-
-
-def test_a_malformed_spelling_of_an_owned_key_is_reported(run, instance):
-    """`AGENT_TZ = x` is the common hand-written form and is not valid dotenv.
-
-    Refusing it is right -- Compose reads the same file through --env-file with
-    a parser that rejects it too. Refusing it *silently* is not: the value falls
-    back to the default and looks exactly like a line never written.
-    """
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ = America/Chicago\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "malformed" in r.stderr and "AGENT_TZ" in r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
-
-
-def test_an_unowned_malformed_key_stays_quiet(run, instance):
-    """This tool does not own STR_VAULT, so it has no standing to comment on
-    how that repo spells it."""
-    run("register", "rowan", str(instance("rowan", descriptor="STR VAULT=x\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert r.stderr.strip() == ""
-
-
-@pytest.mark.parametrize("spelling", [
-    "AGENT_TZ = America/Chicago",   # spaces around =
-    "  AGENT_TZ=America/Chicago",   # indented
-    "export AGENT_TZ=America/Chicago",  # shell-style export
-    "export\tAGENT_TZ=America/Chicago",  # export + tab, not one space
+@pytest.mark.parametrize("line", [
+    "AGENT_TZ = America/Chicago",        # spaces around =
+    "  AGENT_TZ=America/Chicago",        # indented
     "\tAGENT_TZ=America/Chicago",        # tab-indented
+    "export AGENT_TZ=America/Chicago",   # shell-style export
+    "export\tAGENT_TZ=America/Chicago",  # export + tab
+    "STR VAULT=x",                       # a key this tool does not own
+    "AGENT_TZ AGENT_IMAGE=x",            # multi-token: matched the allowlist as a substring
 ])
-def test_every_near_miss_of_an_owned_key_is_reported(run, instance, spelling):
-    """Three ways to almost-declare a key this tool owns, all invalid dotenv.
+def test_a_malformed_declaration_is_refused(run, instance, line):
+    """Refused, not classified.
 
-    Compose's --env-file rejects all three too, so accepting any would make the
-    two disagree about one file. Dropping them silently is the failure: the
-    value falls back to its default and looks like a line never written.
+    Every one of these is invalid dotenv, and Compose rejects the same lines
+    through --env-file -- so tolerating any would let agent-mgr and Compose
+    disagree about one file. Dying is also the only behaviour that cannot go
+    wrong quietly; the alternative was a second partial grammar here, sorting
+    near-misses of an owned key from malformed unowned lines, to write a better
+    message for a line nobody should have written.
     """
-    run("register", "rowan", str(instance("rowan", descriptor=f"{spelling}\n")))
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
     r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "malformed" in r.stderr and "AGENT_TZ" in r.stderr
-    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    assert r.returncode != 0, f"accepted a malformed declaration: {line!r}"
+    assert "malformed key" in r.stderr
