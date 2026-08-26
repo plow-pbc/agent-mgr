@@ -192,8 +192,10 @@ printf 'AGENT_TZ=America/Chicago\n' > ~/.config/agent-mgr/rowan.env
 ```
 
 It sets `AGENT_TZ` and nothing else — one key, because one is the demonstrated
-need. Widening the surface later is one string in `AGENT_OVERLAY_KEYS`; a second
-descriptor dialect documented and tested before anything asks for it is not.
+need. Widening the surface later really is one string — `AGENT_OVERLAY_KEYS` in
+`lib/common.sh`, which the refusal message interpolates rather than restates, so
+nothing else has to change with it. A second descriptor dialect documented and
+tested before anything asks for it is what that buys you out of.
 
 Anything else in the file falls into one of two cases, and they behave
 differently on purpose:

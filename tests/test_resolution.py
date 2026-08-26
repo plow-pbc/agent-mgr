@@ -301,7 +301,13 @@ def test_the_overlay_zone_reaches_compose_through_the_export(run, instance, regi
         "#!/usr/bin/env bash",
         f'#!/usr/bin/env bash\nprintf "%s\\n" "${{AGENT_TZ-<unset>}}" >> {seen}', 1))
 
-    run("compose", "rowan", "config", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("compose", "rowan", "config", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    # Bind and check: resolve-guard runs its own `compose config` in a separate
+    # process BEFORE the passthrough, and it exports through the same
+    # load_agent -- so every assertion below is already satisfied by the guard's
+    # call. Without this, a dead guard or a broken passthrough leaves the test
+    # green while the subcommand its docstring names never ran.
+    assert r.returncode == 0, r.stderr
     assert seen.exists(), "the stub docker never ran -- the chain was not exercised"
     saw = seen.read_text()
     assert "America/Chicago" in saw, (

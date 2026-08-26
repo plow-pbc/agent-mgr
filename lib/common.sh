@@ -186,10 +186,16 @@ parse_env_file() {
             # they get different sentences. An identity key is nobody's to
             # declare; anything else is simply outside the overlay's surface and
             # belongs in the repo's own agent.env.
+            #
+            # Both interpolate their list rather than naming keys inline. Four
+            # rounds of review found the same defect in different spellings -- a
+            # message, a comment, a README line each restating a set the code
+            # declares -- so the rule here is that no operator-facing sentence
+            # spells a member of either list.
             if printf '%s' "$AGENT_IDENTITY_KEYS" | grep -qw "$key"; then
-                echo "agent-mgr: $file may not set $key -- ignoring it (identity comes from the registry name)" >&2
+                echo "agent-mgr: $file may not set $key -- ignoring it (identity comes from the registry name: $AGENT_IDENTITY_KEYS)" >&2
             else
-                echo "agent-mgr: $file may not set $key -- ignoring it (an overlay sets AGENT_TZ only; put this in the agent's agent.env)" >&2
+                echo "agent-mgr: $file may not set $key -- ignoring it (this file may set only: $allow; put this in the agent's agent.env)" >&2
             fi
         elif [ "$collect" = "hooks" ]; then
             # An instance's own variables -- STR_VAULT and friends -- which its
