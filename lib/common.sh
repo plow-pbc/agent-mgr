@@ -471,9 +471,12 @@ load_agent() {
     HERMES_UID="$(id -u)"
     HERMES_GID="$(id -g)"
 
-    export AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT \
-           AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION \
-           AGENT_DESCRIPTOR HERMES_UID HERMES_GID
+    # Word-split deliberately, like the scrub above: a hardcoded copy of these
+    # ten names is a fourth place a new key has to be added, and the one place
+    # where forgetting is silent -- the value resolves and prints, and only the
+    # container comes up without it.
+    # shellcheck disable=SC2086
+    export $AGENT_KEYS AGENT_DESCRIPTOR HERMES_UID HERMES_GID
 }
 
 # No fetch through this tool may replace what the host built. This is one of the
