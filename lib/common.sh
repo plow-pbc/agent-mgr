@@ -702,6 +702,27 @@ require_own_home() {
 # tests pin; `backup` passes its own, because a message telling an operator a
 # nightly refused "to write to" a home the command never writes into sends them
 # at a code path this command does not have.
+#
+# WHAT THIS CHECKS, AND WHAT IT DOES NOT -- true of BOTH arms below, not just
+# the legacy one. It compares the DECLARED name, because load_agent normalises
+# rather than canonicalises: a home symlinked onto a bigger disk is ordinary and
+# supported, and a canonical comparison here would refuse every one of them.
+# So a `.hermes-<name>` that is a symlink into a sibling's tree passes, exactly
+# as a second descriptor declaring one legacy `.hermes` does.
+#
+# Catching that aliasing is what require_own_home's RESOLVED comparison is for,
+# and `backup` deliberately does not take it. Not an oversight and not free:
+#
+#   - Taking the whole guard made one unresolvable sibling row abort every
+#     healthy agent's nightly, which is the miss this command exists to end.
+#   - Taking a trimmed copy means a flag or a branch inside the guard every
+#     direct-write command depends on, to let one read-only caller skip a loop.
+#
+# The cost of not taking it is bounded and different in kind: two agents whose
+# declared homes alias each archive it under their own name, into one
+# operator-owned directory at umask 077. A duplicate archive whose name
+# over-claims -- not a miss, not an account boundary crossed. That is the trade,
+# and it is written here rather than argued in a commit message.
 require_home_shape() {
     local verb="${1:-write to}"
     case "$AGENT_HOME" in
@@ -709,17 +730,9 @@ require_home_shape() {
         */.hermes)
             # The legacy shape, allowed only when the descriptor says so -- the
             # convention can never produce a bare `.hermes`, so this is always a
-            # deliberate declaration.
-            #
-            # What stops a SECOND agent declaring the same bare `.hermes` is the
-            # collision loop in require_own_home, and only require_own_home's
-            # callers get it. `backup` deliberately does not: two agents whose
-            # descriptors both declare one legacy home will each archive it,
-            # under their own name. That is a duplicate, not a miss, and both
-            # land in one operator-owned directory at umask 077 -- so the cost is
-            # an archive whose name over-claims, against the cost of one stale
-            # registry row aborting the whole fleet's nightly. Recorded because
-            # the trade is real, not because it is free.
+            # deliberate declaration. What stops a SECOND agent declaring the
+            # same one is require_own_home's collision loop; see the note above
+            # this function for which callers take it and what the others pay.
             grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
             die "refusing to $verb $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
