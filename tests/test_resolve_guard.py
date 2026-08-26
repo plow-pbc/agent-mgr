@@ -202,20 +202,6 @@ def test_a_siblings_single_quoted_home_still_collides(run, instance, tmp_path):
     assert "str is already registered there" in r.stderr
 
 
-def test_one_stale_registry_row_does_not_break_every_other_agent(run, instance, tmp_path):
-    """The collision check resolves each sibling through load_agent, which dies
-    on a row whose repo is gone. Under set -e a bare assignment carries that
-    status out of the loop, so one stale row aborted restore for every healthy
-    agent -- with both streams redirected, silently and with no output."""
-    import shutil
-    gone = instance("gone")
-    run("register", "gone", str(gone))
-    shutil.rmtree(gone)
-    run("register", "rowan", str(instance("rowan")))
-    r = run("restore", "rowan")
-    assert r.returncode == 0, f"a stale sibling row broke a healthy agent: {r.stderr}"
-    assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
-
 
 def test_an_unresolvable_sibling_does_not_open_the_legacy_home(run, instance, tmp_path):
     """The one arm that rests on the collision check having been complete. `str`
@@ -233,19 +219,6 @@ def test_an_unresolvable_sibling_does_not_open_the_legacy_home(run, instance, tm
     assert "could not be resolved" in r.stderr
     assert "could not resolve str" in r.stderr, "the skipped row was not named"
 
-
-def test_the_conventional_home_is_unaffected_by_an_unresolvable_sibling(run, instance, tmp_path):
-    """Only the bare home rests on the loop being complete -- a conventional home
-    carries the agent's own name and cannot collide, so a skipped row must not
-    cost it anything beyond the warning."""
-    import shutil
-    gone = instance("gone", descriptor="AGENT_HOME=$HOME/.hermes\n")
-    run("register", "gone", str(gone))
-    shutil.rmtree(gone)
-    run("register", "rowan", str(instance("rowan")))
-    r = run("restore", "rowan")
-    assert r.returncode == 0, f"a stale row blocked a conventional home: {r.stderr}"
-    assert "could not resolve gone" in r.stderr, "the skip should still be audible"
 
 
 def test_the_legacy_owner_is_refused_by_a_stale_row_and_unregister_clears_it(
@@ -268,3 +241,48 @@ def test_the_legacy_owner_is_refused_by_a_stale_row_and_unregister_clears_it(
     assert run("unregister", "dead").returncode == 0
     r = run("restore", "str")
     assert r.returncode == 0, f"unregister did not clear the refusal: {r.stderr}"
+
+
+def test_an_unresolvable_sibling_refuses_every_shape_of_home(run, instance, tmp_path):
+    """This replaces two tests that asserted a conventional home was unaffected
+    by a stale row. That was true while the conventional name was self-proving,
+    and stopped being true when the shape rule went lexical so a home symlinked
+    onto a bigger disk keeps its declared name: `~/.hermes-rowan` and
+    `~/.hermes-copycat` can now be two links to one directory and both pass the
+    name test. An unresolvable sibling means the collision set is incomplete, so
+    it can no longer be trusted for either shape.
+
+    The cost is real -- one dead row refuses writes for every agent -- which is
+    why the refusal names `unregister`, and why that command takes any row
+    visible in `ls`.
+    """
+    import shutil
+    dead = instance("dead")
+    run("register", "dead", str(dead))
+    shutil.rmtree(dead)
+    run("register", "rowan", str(instance("rowan")))
+
+    r = run("restore", "rowan")
+    assert r.returncode != 0, "an incomplete collision set was trusted"
+    assert "cannot prove no one else claims that home" in r.stderr
+    assert "could not resolve dead" in r.stderr, "the skipped row was not named"
+    assert "unregister" in r.stderr, "no escape named"
+
+    assert run("unregister", "dead").returncode == 0
+    assert run("restore", "rowan").returncode == 0, "unregister did not clear it"
+
+
+def test_two_conventional_homes_aliasing_one_directory_collide(run, instance, tmp_path):
+    """The case that invalidated the old invariant, on the shape where the
+    collision loop is load-bearing: both names conventional, both symlinked to
+    one directory, so the name test cannot tell them apart."""
+    target = tmp_path / "srv" / "shared"
+    target.mkdir(parents=True)
+    home = tmp_path / "home"; home.mkdir(exist_ok=True)
+    (home / ".hermes-rowan").symlink_to(target)
+    (home / ".hermes-copycat").symlink_to(target)
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "copycat", str(instance("copycat")))
+    r = run("restore", "copycat")
+    assert r.returncode != 0, "two conventional names reached one directory undetected"
+    assert "rowan is already registered there" in r.stderr

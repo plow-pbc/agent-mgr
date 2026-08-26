@@ -497,6 +497,14 @@ require_own_home() {
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
+    # Above the shape case, not inside its legacy arm. That scoping was right
+    # while a conventional name was self-proving -- but the shape rule now reads
+    # the path AS DECLARED, so `~/.hermes-copycat` and `~/.hermes-rowan` can be
+    # symlinks to one directory and both pass the name test. An incomplete
+    # collision set can no longer be trusted for either shape.
+    [ "$skipped" -eq 0 ] \
+        || die "refusing to write to $AGENT_HOME -- a registered agent could not be resolved, so this tool cannot prove no one else claims that home. Restore that repo, or drop the row with 'agent-mgr unregister <name>' if the agent is gone."
+
     case "$AGENT_HOME" in
         *"/.hermes-$AGENT_NAME") return 0 ;;
         */.hermes)
@@ -504,13 +512,6 @@ require_own_home() {
             # convention can never produce a bare `.hermes`, so this is always a
             # deliberate declaration, and the collision check above is what
             # stops a second agent from making the same one.
-            #
-            # Which is why an incomplete check refuses this arm. Only the bare
-            # home rests on the collision loop having seen every sibling; the
-            # conventional one carries the agent's own name and cannot collide.
-            # So a skipped row costs a refusal here and nothing anywhere else.
-            [ "$skipped" -eq 0 ] \
-                || die "refusing to write to $AGENT_HOME -- a registered agent could not be resolved, so this tool cannot prove no one else claims that home. Restore that repo, or drop the row with 'agent-mgr unregister <name>' if the agent is gone."
             grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
             die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
