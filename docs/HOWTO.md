@@ -125,8 +125,24 @@ the link **and its target directory** first, and let the `mkdir -p` below be the
 no-op it should be:
 
 ```sh
-mkdir -p /big/disk/rowan && ln -s /big/disk/rowan ~/.hermes-rowan
+# Nothing may already be at the link path. If you have already run the block
+# below once, `mkdir -p` will have created a plain directory there — move it
+# aside and check whether a restore was extracted into it before going on.
+[ -e ~/.hermes-rowan ] && { echo "something is already at ~/.hermes-rowan — move it aside first"; }
+
+mkdir -p /big/disk/rowan
+ln -sT /big/disk/rowan ~/.hermes-rowan
 ```
+
+`ln -sT`, not a bare `ln -s`. Onto a path that is already a plain directory a
+bare `ln -s` treats it as a *destination directory*: it creates
+`~/.hermes-rowan/rowan -> /big/disk/rowan`, exits 0, and leaves the plain
+directory in place — so the following `mkdir -p`, `tar -C` and `up` all still
+land on the wrong volume, silently. That is the state an operator who already
+ran the block once is in, which is exactly who reads this. `-T` refuses it with
+`File exists`. (`-n` does **not** — measured; it only helps when the path is a
+symlink to a directory, not when it is a real one. `-T` is GNU; on macOS remove
+the offending path first and use a plain `ln -s`.)
 
 Both halves, because in the total-loss variant — the big disk replaced or
 reformatted, so link *and* target are gone — recreating only the link leaves a
