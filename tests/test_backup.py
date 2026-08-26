@@ -6,6 +6,7 @@ and every home's own backups/ directory existed and was empty. This is the
 command that fills them.
 """
 import os
+import shutil
 import tarfile
 
 import pytest
@@ -325,3 +326,32 @@ def test_an_unknown_option_is_refused_rather_than_read_as_a_target(
             env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
     assert r.returncode != 0
     assert "unknown option" in r.stderr
+
+
+def test_a_failed_sweep_cannot_cost_a_successful_backup_its_report(
+        run, instance, tmp_path, backup_dir):
+    """The sweep runs AFTER the promote, so under `set -e` an unguarded failure
+    kills the script between a good archive landing and the path being printed
+    — and lands a successful backup in `--all`'s failed list. `find` exits
+    non-zero on two errors reachable in ordinary operation: a concurrent
+    same-agent run mv'ing its stage away between readdir and the `-mtime` stat,
+    and an orphan this invocation cannot unlink.
+
+    Every other invariant on this branch is mutation-checked; without this the
+    `|| true` could be deleted with the suite green."""
+    _, home = registered(run, instance, "rowan")
+    (home / ".env").write_text("x\n")
+
+    real_find = shutil.which("find")
+    shim = tmp_path / "findbin"
+    shim.mkdir()
+    (shim / "find").write_text(f'#!/usr/bin/env bash\n"{real_find}" "$@"\nexit 1\n')
+    (shim / "find").chmod(0o755)
+
+    r = run("backup", "rowan",
+            env={"AGENT_MGR_BACKUP_DIR": str(backup_dir),
+                 "PATH": f"{shim}:{os.environ['PATH']}"})
+
+    assert r.returncode == 0, f"a sweep failure aborted a successful backup: {r.stderr}"
+    archive = next(iter(backup_dir.glob("rowan-*.tar.gz")))
+    assert str(archive) in r.stdout, "the archive landed but its path was never printed"
