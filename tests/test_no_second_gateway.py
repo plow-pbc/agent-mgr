@@ -428,10 +428,6 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
 
 @pytest.mark.parametrize("sub", [
     ["config"], ["version"], ["ls"], ["images"], ["build"], ["push"], ["ps"],
-    # `pull` still needs no live daemon -- it needs the flag that keeps it from
-    # replacing a built image, which is a different property and was tested by
-    # dropping this row rather than adapting it.
-    ["pull", "--ignore-buildable"],
 ])
 def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, tmp_path, sub):
     """The identification costs a `compose ps`, which needs a live daemon. Gating
@@ -533,7 +529,9 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
 
     r = run("compose", "rowan", "pull", env=env)
     assert r.returncode != 0, "a pull could have replaced a built image"
-    assert "--ignore-buildable" in r.stderr
+    # The remedy has to be a door that is actually open. Naming the flag that
+    # used to be the exemption would send an operator to a form now refused.
+    assert "no accepted form" in r.stderr
     # The tail too: it points at the OTHER door, and a message claiming this
     # refusal is the whole guarantee is the framing this branch retracted.
     assert "the other door" in r.stderr
@@ -550,13 +548,16 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
                  ("up", "-d", "--pull=missing"),
                  ("create", "hermes", "--pull=always"),
                  ("run", "--entrypoint", "bash", "--rm", "--pull", "always", "hermes"),
-                 # --ignore-buildable is an ordinary boolean, so a later
-                 # occurrence overrides an earlier one -- measured, both
-                 # orders. Scanning for the flag's PRESENCE read this as safe.
+                 # `pull` has no admitted form. Each of these was accepted by
+                 # a version of the exemption that recognised one spelling of
+                 # --ignore-buildable, and each fetches: a later occurrence
+                 # overrides an earlier one, a word past `--` is a service
+                 # name, and --policy swallows the next word as its value so
+                 # Compose never sees the flag. Measured, all three.
+                 ("pull", "--ignore-buildable"),
                  ("pull", "--ignore-buildable", "--ignore-buildable=false"),
-                 # Past `--` the word is a service name, not the flag: the
-                 # same false accept in a second spelling.
-                 ("pull", "--ignore-buildable=false", "--", "--ignore-buildable")):
+                 ("pull", "--ignore-buildable=false", "--", "--ignore-buildable"),
+                 ("pull", "--policy", "--ignore-buildable")):
         r = run("compose", "rowan", *args, env=env)
         assert r.returncode != 0, f"{args} fetched past the guard"
         assert "could replace a built image" in r.stderr
@@ -570,13 +571,6 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
         # is different and otherwise untypeable.
         assert "INSIDE the container" in r.stderr
 
-    for safe_pull in (("pull", "--ignore-buildable"),
-                      ("pull", "--ignore-buildable=true"),
-                      # the override runs the other way too, and refusing it
-                      # would be a guard reading its own rule only one way
-                      ("pull", "--ignore-buildable=false", "--ignore-buildable")):
-        assert run("compose", "rowan", *safe_pull,
-                   env=env).returncode == 0, f"{safe_pull} was refused too"
     for safe in (("up", "-d", "--pull", "never"), ("up", "-d", "--pull=build"),
                  # boolean flag: re-pulls the FROM image and rebuilds, so the
                  # output is still what this host built

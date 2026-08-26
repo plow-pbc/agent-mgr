@@ -144,6 +144,7 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 | `refusing to act: compose resolved ...` | the descriptor or override disagrees with the agent you named — this is the guard working |
 | `HERMES_UID ... must be set` | you ran `docker compose` directly; go through `agent-mgr` |
 | `... builds its image but its pull_policy is ...` | a service that builds must set `pull_policy: never` (or `build`). The default and `missing` both **pull** when the local tag is absent, replacing what this host built |
+| `refusing a fetch that could replace a built image` | `pull` has no accepted form — use `up`, which fetches under the file's `pull_policy` that `resolve-guard` checks. A `--pull` on any subcommand takes only `never` or `build` |
 | `refusing 'compose run'...` | `--entrypoint` must be the **first** argument after `run` and carry a non-empty value — see § Running a one-off container |
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |
