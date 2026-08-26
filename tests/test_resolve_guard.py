@@ -243,34 +243,43 @@ def test_the_legacy_owner_is_refused_by_a_stale_row_and_unregister_clears_it(
     assert r.returncode == 0, f"unregister did not clear the refusal: {r.stderr}"
 
 
-def test_an_unresolvable_sibling_refuses_every_shape_of_home(run, instance, tmp_path):
-    """This replaces two tests that asserted a conventional home was unaffected
-    by a stale row. That was true while the conventional name was self-proving,
-    and stopped being true when the shape rule went lexical so a home symlinked
-    onto a bigger disk keeps its declared name: `~/.hermes-rowan` and
-    `~/.hermes-copycat` can now be two links to one directory and both pass the
-    name test. An unresolvable sibling means the collision set is incomplete, so
-    it can no longer be trusted for either shape.
-
-    The cost is real -- one dead row refuses writes for every agent -- which is
-    why the refusal names `unregister`, and why that command takes any row
-    visible in `ls`.
-    """
+def test_an_incomplete_set_refuses_only_a_home_that_could_alias(run, instance, tmp_path):
+    """The invariant broke only because a DECLARED home can resolve elsewhere.
+    A self-canonical conventional home cannot alias anything, so an unresolvable
+    sibling costs it nothing -- refusing it would trade fleet-wide availability
+    for a hazard that provably is not there. A symlinked one can alias, and the
+    loop is its only defence, so it refuses."""
     import shutil
     dead = instance("dead")
     run("register", "dead", str(dead))
     shutil.rmtree(dead)
-    run("register", "rowan", str(instance("rowan")))
 
-    r = run("restore", "rowan")
-    assert r.returncode != 0, "an incomplete collision set was trusted"
+    run("register", "plain", str(instance("plain")))
+    r = run("restore", "plain")
+    assert r.returncode == 0, f"a home that cannot alias was refused: {r.stderr}"
+    assert "could not resolve dead" in r.stderr, "the skip should still be audible"
+
+    (tmp_path / "srv").mkdir(exist_ok=True)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / ".hermes-linked").symlink_to(tmp_path / "srv")
+    run("register", "linked", str(instance("linked")))
+    r = run("restore", "linked")
+    assert r.returncode != 0, "a home that could alias was trusted"
     assert "cannot prove no one else claims that home" in r.stderr
-    assert "could not resolve dead" in r.stderr, "the skipped row was not named"
-    assert "unregister" in r.stderr, "no escape named"
 
-    assert run("unregister", "dead").returncode == 0
-    assert run("restore", "rowan").returncode == 0, "unregister did not clear it"
 
+def test_the_refusal_carries_the_real_reason_and_the_right_remedy(run, instance, tmp_path):
+    """load_agent refuses a present, healthy, RUNNING agent whose descriptor
+    fails validation just as readily as one whose repo is gone -- a tag-pinned
+    AGENT_IMAGE being the likeliest. Telling that operator to unregister a live
+    agent is worse than saying nothing, so the reason has to reach them."""
+    run("register", "bad", str(instance(
+        "bad", descriptor="AGENT_IMAGE=nousresearch/hermes-agent:latest\n")))
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    r = run("restore", "str")
+    assert r.returncode != 0
+    assert "must pin a digest" in r.stderr, "the operator was not told WHY bad failed"
+    assert "Fix that descriptor if the agent is still there" in r.stderr
 
 def test_two_conventional_homes_aliasing_one_directory_collide(run, instance, tmp_path):
     """The case that invalidated the old invariant, on the shape where the

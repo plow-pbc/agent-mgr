@@ -472,7 +472,7 @@ require_own_home() {
     # the rentals agent's repo would stop `str` resolving, and a copycat
     # declaring the same bare `.hermes` would then pass and write config and
     # credentials into a live agent's mounted home.
-    local other odir ohome skipped=0
+    local other odir ohome skipped=0 skipped_named= incomplete_refuses=0
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
         # `|| true` is load-bearing under set -e: a bare assignment carries the
@@ -481,10 +481,18 @@ require_own_home() {
         # was moved, a repo with no agent.env -- would abort the caller. With
         # both streams already redirected the operator would get exit 1 and no
         # output, from one unrelated stale row, on every direct-write command.
+        local why
+        why="$( load_agent "$other" 2>&1 >/dev/null )" || true
         ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" || true
         if [ -z "$ohome" ]; then
             skipped=1
-            echo "agent-mgr: could not resolve $other -- the collision check skipped that row" >&2
+            # The REASON, not just the name. load_agent refuses a present,
+            # healthy, running agent whose descriptor fails validation just as
+            # readily as one whose repo is gone -- a tag-pinned AGENT_IMAGE is
+            # the likeliest -- and telling that operator to unregister a live
+            # agent is worse than saying nothing.
+            echo "agent-mgr: could not resolve $other -- ${why#agent-mgr: }" >&2
+            skipped_named="$other"
             continue
         fi
         # Compared RESOLVED, unlike the shape check above. Two questions, two
@@ -497,13 +505,19 @@ require_own_home() {
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
-    # Above the shape case, not inside its legacy arm. That scoping was right
-    # while a conventional name was self-proving -- but the shape rule now reads
-    # the path AS DECLARED, so `~/.hermes-copycat` and `~/.hermes-rowan` can be
-    # symlinks to one directory and both pass the name test. An incomplete
-    # collision set can no longer be trusted for either shape.
-    [ "$skipped" -eq 0 ] \
-        || die "refusing to write to $AGENT_HOME -- a registered agent could not be resolved, so this tool cannot prove no one else claims that home. Restore that repo, or drop the row with 'agent-mgr unregister <name>' if the agent is gone."
+    # A bare `.hermes` carries no name, so it always rests on the loop being
+    # complete. A conventional home rests on it only when the declared path can
+    # resolve somewhere else -- two links to one directory is what falsified
+    # "cannot collide". A self-canonical conventional home cannot alias, so an
+    # incomplete set costs it nothing.
+    if [ "$skipped" -ne 0 ]; then
+        case "$AGENT_HOME" in
+            */.hermes) incomplete_refuses=1 ;;
+            *) [ "$(realpath -m -- "$AGENT_HOME")" = "$AGENT_HOME" ] \
+                   && incomplete_refuses=0 || incomplete_refuses=1 ;;
+        esac
+        [ "$incomplete_refuses" -eq 0 ] || die "refusing to write to $AGENT_HOME -- ${skipped_named} could not be resolved (reason above), so this tool cannot prove no one else claims that home. Fix that descriptor if the agent is still there; 'agent-mgr unregister ${skipped_named}' only if it is gone."
+    fi
 
     case "$AGENT_HOME" in
         *"/.hermes-$AGENT_NAME") return 0 ;;
