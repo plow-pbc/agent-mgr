@@ -167,7 +167,7 @@ def test_the_scaffold_and_the_docs_agree_on_what_declares_latch(run, tmp_path):
 
 def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     """AGENT_PRE_TRANSITION reached AGENT_KEYS one commit before the README
-    table learned about it. That table is the single owner of the instance-repo
+    table learned about it. That table is the single owner of the agent-repo
     contract, so the next hook must not be able to land without a row."""
     import pathlib
     import re

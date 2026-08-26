@@ -88,6 +88,15 @@ The pin is recorded in the agent repo's `skills.tsv`, so what an agent runs is
 reviewable beside its config. Refs are always 40-char SHAs — a branch would
 silently re-point a running agent on the next upstream push.
 
+**One route, now.** A skill used to be able to reach an agent two ways: this
+one, pinned into the container by SHA, and ClawHub installing the whole bundle
+onto the Mac by semver. Only the first was ever pinned here, so the two could
+skew — the container reading instructions the Mac's code did not implement.
+ClawHub is no longer a delivery path (`property-hunt`'s listing is published
+and unsupported), so that skew class is gone and there is nothing to compare.
+What can still go stale is the pin itself, against fixes upstream has landed
+since.
+
 ## What an agent's repo contains
 
 The file list, and why each one is or is not there, is the *What belongs in an

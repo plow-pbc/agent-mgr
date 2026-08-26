@@ -76,7 +76,7 @@ a different person — as containers on a single Linux host (`wakeup`).
 
 **Distribution model:** A git clone in `~/services/agent-mgr` with the
 `agent-mgr` script symlinked onto `PATH`. No release, no package, no versioning.
-The registry at `~/.config/agent-mgr/agents` maps a name to an instance repo.
+The registry at `~/.config/agent-mgr/agents` maps a name to an agent repo.
 
 **What this repo is:** the **common** half of a two-layer fleet.
 

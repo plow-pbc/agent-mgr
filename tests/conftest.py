@@ -38,7 +38,7 @@ def run(registry, tmp_path):
 
 @pytest.fixture
 def instance(tmp_path):
-    """Create an instance repo on disk and return its path."""
+    """Create an agent repo on disk and return its path."""
 
     def _instance(name, descriptor="", config="model:\n  provider: openai-codex\n"):
         repo = tmp_path / f"{name}-repo"

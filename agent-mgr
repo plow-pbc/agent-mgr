@@ -58,7 +58,7 @@ case "$cmd" in
         # anything. A hook validated only at the end meant a missing one left
         # the plugin and config installed under a message saying the deploy did
         # not land -- a report the state contradicts.
-        [ -f "$AGENT_CONFIG" ] || die "no config at $AGENT_CONFIG -- an instance repo needs one, or set AGENT_CONFIG in its agent.env"
+        [ -f "$AGENT_CONFIG" ] || die "no config at $AGENT_CONFIG -- an agent repo needs one, or set AGENT_CONFIG in its agent.env"
         if [ -n "$AGENT_RESTORE_HOOK" ]; then
             [ -x "$AGENT_RESTORE_HOOK" ] || die "$AGENT_NAME declares a restore hook at $AGENT_RESTORE_HOOK, which is missing or not executable -- nothing was installed"
         fi
@@ -165,7 +165,7 @@ case "$cmd" in
         installed="$AGENT_HOME/config.yaml"
         [ -f "$installed" ] || die "no $installed -- run 'agent-mgr restore $AGENT_NAME' first"
         require_running
-        # Read out of the config the GATEWAY loads, not the instance repo's copy:
+        # Read out of the config the GATEWAY loads, not the agent repo's copy:
         # the gateway resolved model.provider from the installed one at boot, so
         # reading the repo copy would mint a credential for a provider it is not
         # using the moment the two differ.

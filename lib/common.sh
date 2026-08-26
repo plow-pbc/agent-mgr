@@ -51,8 +51,8 @@ usage() {
 usage: agent-mgr <command> [args]
 
   ls                          registered agents and where they live
-  register <name> <dir>       point a name at an instance repo
-  new <name> [dir]            scaffold a new instance repo and register it
+  register <name> <dir>       point a name at an agent repo
+  new <name> [dir]            scaffold a new agent repo and register it
   resolve <name>              print the descriptor as agent-mgr resolves it
 
   restore <name>              install config.yaml + .env skeleton into its home
@@ -93,7 +93,7 @@ load_agent() {
     [ -d "$dir" ] || die "$name points at $dir, which no longer exists"
 
     local descriptor="$dir/agent.env"
-    [ -f "$descriptor" ] || die "$dir has no agent.env -- an instance repo needs one"
+    [ -f "$descriptor" ] || die "$dir has no agent.env -- an agent repo needs one"
 
     # shellcheck disable=SC2086
     unset $AGENT_KEYS $COMPOSE_KEYS
@@ -155,7 +155,7 @@ load_agent() {
     : "${AGENT_TZ:=America/Los_Angeles}"
     : "${AGENT_IMAGE:=nousresearch/hermes-agent@$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/image.ref")}"
     # Where this agent's declarative config lives. Relative resolves against the
-    # instance repo, so an agent whose config sits under runtime/ (the rentals
+    # agent repo, so an agent whose config sits under runtime/ (the rentals
     # agent does, beside the vault seed and SOUL it ships with) says so in one
     # line instead of keeping a second installer that hardcodes the path.
     : "${AGENT_CONFIG:=config.yaml}"
