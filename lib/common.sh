@@ -293,16 +293,23 @@ compose_fetch_is_safe() {
     return 0
 }
 
+# Called at the dispatch as well as here, the way the `run` entrypoint rule is
+# pre-checked: `pull` has no accepted form, so an operator who types one must be
+# told THAT, not sent through an identification whose remedies -- rename the
+# descriptor, unregister the agent -- are doors that do not open for it.
+require_fetch_is_safe() {
+    compose_fetch_is_safe "$@" || die "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: 'pull' has no accepted form -- use 'up', which fetches under the file's pull_policy that resolve-guard has already checked -- and '--pull' takes only 'never' or 'build', because the flag overrides whatever the file says -- editing pull_policy will not clear this one. (resolve-guard enforces the same pair on the file, which is the other door.) If that --pull belongs to a command you are running INSIDE the container, this scan cannot tell -- wrap it so the flag is not a word on this argv, e.g. exec ... sh -c 'docker build --pull ...'."
+}
+
 # Every Compose invocation goes through here so the file list, the override
-# convention and the descriptor's env-file have exactly one definition -- which
-# is also why the fetch refusal lives here rather than at the call sites.
+# convention and the descriptor's env-file have exactly one definition.
 compose() {
-    # One site and one message: every Compose invocation in
-    # this tool goes through this function, which the two call-site copies did
-    # not -- they disagreed on wording and the passthrough's was redundant for
-    # anything reaching compose_transition.
-    compose_fetch_is_safe "$@" \
-        || die "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: 'pull' has no accepted form -- use 'up', which fetches under the file's pull_policy that resolve-guard has already checked -- and '--pull' takes only 'never' or 'build', because the flag overrides whatever the file says -- editing pull_policy will not clear this one. (resolve-guard enforces the same pair on the file, which is the other door.) If that --pull belongs to a command you are running INSIDE the container, this scan cannot tell -- wrap it so the flag is not a word on this argv, e.g. exec ... sh -c 'docker build --pull ...'."
+    # The fetch refusal is checked at the dispatch too, for the message. It is
+    # ALSO here because every Compose invocation in this tool goes through this
+    # function -- so the invariant travels with the code that depends on it,
+    # rather than with the one entry point that happens to state it first.
+    require_fetch_is_safe "$@"
+
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
@@ -348,19 +355,15 @@ COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec
 # never re-enters this dispatch, so gating `ps` later is possible if a reason
 # appears.
 #
-# `pull` is deliberately NOT named here, and the order is worth stating because
-# it is not the order the previous comment claimed: classification runs FIRST,
-# in the dispatch, so dropping the exemption means a `pull` pays the ownership
-# check -- and a `pull` on a host with no daemon reports that before it is told
-# `pull` is refused at all. Accepted, because the command is refused either way
-# and the alternative is worse: an exemption entry is the half that takes effect
-# SILENTLY if any `pull` form is ever re-admitted, skipping the ownership check
-# by inheritance rather than by decision, which is the by-omission failure this
-# list exists to prevent. Whoever re-admits it decides.
+# `pull` is deliberately NOT named here, and the removal is inert: the dispatch
+# refuses it before it classifies anything. The entry is the half that would
+# take effect SILENTLY if any `pull` form were ever re-admitted, skipping the
+# ownership check by inheritance rather than by decision -- the by-omission
+# failure this list exists to prevent. Whoever re-admits it decides.
 #
-# It stays in COMPOSE_LEAVES_IT_RUNNING for the opposite reason: routing it to
-# compose_transition would run the veto, so an operator would be asked to
-# confirm a transition on the live agent before being told `pull` is refused.
+# It stays in COMPOSE_LEAVES_IT_RUNNING so that if it ever is re-admitted it
+# does not also acquire the veto, which would ask an operator to confirm a
+# transition on the live agent for a command that fetches.
 #
 # Anything not named here is gated, heard of or not. Missing an entry costs a
 # needless `compose ps`; missing one from a gate-these list skipped the check.

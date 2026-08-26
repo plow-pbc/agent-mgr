@@ -368,6 +368,10 @@ EOF
         case "$1" in
             -*) die "refusing 'compose $1': the subcommand must come first. agent-mgr supplies the global options (-p, --env-file, -f) itself, and every guard here reads the subcommand as the first word." ;;
         esac
+        # Ahead of resolve-guard and classification, like the `run` rule below:
+        # a refused subcommand must be told it is refused, not sent through an
+        # identification whose remedies are doors that do not open for it.
+        require_fetch_is_safe "$@"
         if [ "$1" = "run" ]; then
             # Status captured, not tested bare: under `set -e` a non-zero
             # return from a simple command kills the script before the case.

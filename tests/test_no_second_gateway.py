@@ -399,14 +399,6 @@ def test_no_state_of_the_foreign_mount_produces_a_removal_command(run, instance,
     ("compose", "rowan", "top"),
     ("compose", "rowan", "events"),
     ("compose", "rowan", "port", "hermes", "8080"),
-    # `pull` never reaches a container -- `compose` refuses it outright. It is
-    # here because dropping it from COMPOSE_NEEDS_NO_IDENTIFICATION was a
-    # decision, and nothing else pins it: re-adding the exemption would make
-    # this row report the fetch refusal instead, which is the by-inheritance
-    # skip the list exists to prevent. It also records the other half of that
-    # decision's cost -- against a foreign container the operator is told about
-    # the container, not about `pull`.
-    ("compose", "rowan", "pull"),
 ])
 def test_every_command_that_reaches_an_existing_container_identifies_it(
         run, instance, tmp_path, args):
@@ -540,6 +532,19 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     # The remedy has to be a door that is actually open. Naming the flag that
     # used to be the exemption would send an operator to a form now refused.
     assert "no accepted form" in r.stderr
+
+    # Same message when a FOREIGN container holds the project. The refusal is
+    # hoisted ahead of classification for exactly this case: the ownership
+    # check's remedies -- rename the descriptor, unregister the agent -- are
+    # doors that do not open for a subcommand with no accepted form, so an
+    # operator would be told to touch a live agent over a typo.
+    (tmp_path / "foreign").mkdir()
+    foreign = fake_docker(tmp_path / "foreign", home=tmp_path / "home" / ".hermes-rowan",
+                          name="rowan", mount="/home/someone-else/.hermes-rowan")
+    r = run("compose", "rowan", "pull", env={"PATH": f"{foreign}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "no accepted form" in r.stderr, (
+        "sent through identification first, whose remedy does not open for pull")
     # The tail too: it points at the OTHER door, and a message claiming this
     # refusal is the whole guarantee is the framing this branch retracted.
     assert "the other door" in r.stderr
