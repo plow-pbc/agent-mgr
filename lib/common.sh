@@ -203,8 +203,17 @@ load_agent() {
         case "$line" in [A-Za-z_]*=*) ;; *) _ok=0 ;; esac
         case "$key" in *[!A-Za-z0-9_]*) _ok=0 ;; esac
         if [ "$_ok" = 0 ]; then
-            _k="${key#"${key%%[![:space:]]*}"}"; _k="${_k#export }"; _k="${_k//[[:space:]]/}"
-            if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
+            # Strip on ANY following whitespace, before the collapse: `#export `
+            # matches one literal space, so `export<TAB>AGENT_TZ` would survive
+            # as `exportAGENT_TZ` and never match -- the silent drop this exists
+            # to stop, in the one spelling nobody thinks to write by hand.
+            _k="${key#"${key%%[![:space:]]*}"}"
+            case "$_k" in export[[:space:]]*) _k="${_k#export}" ;; esac
+            _k="${_k//[[:space:]]/}"
+            # A blank or whitespace-only line collapses to "", and an empty
+            # fixed pattern matches every line -- reporting a malformed key that
+            # was never written.
+            if [ -n "$_k" ] && printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
                 echo "agent-mgr: $descriptor: ignoring malformed '$key' -- write it as $_k=<value>: unindented, no 'export', no spaces around the =" >&2
             fi
             continue

@@ -259,6 +259,8 @@ def test_an_unowned_malformed_key_stays_quiet(run, instance):
     "AGENT_TZ = America/Chicago",   # spaces around =
     "  AGENT_TZ=America/Chicago",   # indented
     "export AGENT_TZ=America/Chicago",  # shell-style export
+    "export\tAGENT_TZ=America/Chicago",  # export + tab, not one space
+    "\tAGENT_TZ=America/Chicago",        # tab-indented
 ])
 def test_every_near_miss_of_an_owned_key_is_reported(run, instance, spelling):
     """Three ways to almost-declare a key this tool owns, all invalid dotenv.
