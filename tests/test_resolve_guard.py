@@ -235,3 +235,25 @@ def test_the_conventional_home_is_unaffected_by_an_unresolvable_sibling(run, ins
     r = run("restore", "rowan")
     assert r.returncode == 0, f"a stale row blocked a conventional home: {r.stderr}"
     assert "could not resolve gone" in r.stderr, "the skip should still be audible"
+
+
+def test_the_legacy_owner_is_refused_by_a_stale_row_and_unregister_clears_it(
+        run, instance, tmp_path):
+    """The direction that reaches a deployed agent. `str` legitimately owns the
+    bare `.hermes`; an unrelated dead row makes the collision check incomplete,
+    so its own writes are refused -- and the way out has to actually work.
+    `register` cannot serve: it refuses a directory that no longer exists, which
+    is precisely the state the stale row is in."""
+    import shutil
+    dead = instance("dead")
+    run("register", "dead", str(dead))
+    shutil.rmtree(dead)
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+
+    r = run("restore", "str")
+    assert r.returncode != 0, "the incomplete check did not refuse"
+    assert "unregister" in r.stderr, "the refusal did not name a remedy that works"
+
+    assert run("unregister", "dead").returncode == 0
+    r = run("restore", "str")
+    assert r.returncode == 0, f"unregister did not clear the refusal: {r.stderr}"

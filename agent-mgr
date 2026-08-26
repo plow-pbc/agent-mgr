@@ -30,6 +30,14 @@ case "$cmd" in
         registry_add "$1" "$2"
         echo "registered $1 -> $(registry_lookup "$1")"
         ;;
+    unregister)
+        # The way out of the fail-closed arm in require_own_home. `register`
+        # cannot serve as one: it refuses a directory that no longer exists,
+        # which is exactly the state an unresolvable row is in.
+        [ $# -eq 1 ] || die "usage: agent-mgr unregister <name>"
+        registry_remove "$1"
+        echo "unregistered $1"
+        ;;
     resolve)
         load_agent "${1:-}"
         for k in $AGENT_KEYS AGENT_DESCRIPTOR; do

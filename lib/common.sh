@@ -33,6 +33,18 @@ registry_add() {
     mv "$tmp" "$AGENT_MGR_REGISTRY"
 }
 
+# Drop a row. The remedy for an agent that is GONE: register cannot do it (it
+# refuses a directory that no longer exists), so without this the only way out
+# of an unresolvable row is hand-editing the registry file.
+registry_remove() {
+    local name="$1"
+    [ -f "$AGENT_MGR_REGISTRY" ] || die "no registry at $AGENT_MGR_REGISTRY"
+    grep -q "^$name	" "$AGENT_MGR_REGISTRY" || die "$name is not registered"
+    local tmp; tmp="$(mktemp)"
+    grep -v "^$name	" "$AGENT_MGR_REGISTRY" > "$tmp" || true
+    mv "$tmp" "$AGENT_MGR_REGISTRY"
+}
+
 registry_lookup() {
     local name="$1"
     [ -f "$AGENT_MGR_REGISTRY" ] || return 1
@@ -52,6 +64,7 @@ usage: agent-mgr <command> [args]
 
   ls                          registered agents and where they live
   register <name> <dir>       point a name at an agent repo
+  unregister <name>           drop a row -- for an agent whose repo is gone
   new <name> [dir]            scaffold a new agent repo and register it
   resolve <name>              print the descriptor as agent-mgr resolves it
 
@@ -368,7 +381,7 @@ require_own_home() {
             # conventional one carries the agent's own name and cannot collide.
             # So a skipped row costs a refusal here and nothing anywhere else.
             [ "$skipped" -eq 0 ] \
-                || die "refusing to write to $AGENT_HOME -- a registered agent could not be resolved, so this tool cannot prove no one else claims that home. Fix or re-register the row named above."
+                || die "refusing to write to $AGENT_HOME -- a registered agent could not be resolved, so this tool cannot prove no one else claims that home. Restore that repo, or drop the row with 'agent-mgr unregister <name>' if the agent is gone."
             grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
             die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
