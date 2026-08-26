@@ -301,8 +301,9 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     ({"build": True, "image": "nousresearch/hermes-agent:latest",
       "pull_policy": "never"}, False,
      "a built service is exempt whatever it is NAMED -- two attempts to derive "
-     "safety from the reference string were both wrong, so the passthrough "
-     "forces --ignore-buildable on pull and makes the exemption true instead", ""),
+     "safety from the reference string were both wrong. It is exempt here "
+     "because of the pull_policy on THIS row, not because of the passthrough: "
+     "that closes the other door, and neither is sufficient alone", ""),
     ({}, False, "the fleet-wide digest", ""),
     ({"build": True, "pull_policy": "missing"}, True,
      "`missing` PULLS when the local tag is absent -- the earlier probe said "
