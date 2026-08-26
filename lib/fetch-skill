@@ -34,7 +34,18 @@ case "$src" in
 esac
 skill_name="${dest##*/}"
 
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+# Rollback-aware, and the single owner of publication. The previous trap
+# removed only $tmp, so a SIGTERM after the target moved to backup left the
+# agent with no installed skill at all -- the window the staged swap exists to
+# close, reopened by the cleanup.
+backup=""
+target=""
+cleanup() {
+    rm -rf "$tmp"
+    [ -n "$backup" ] && [ -e "$backup" ] && [ ! -e "$target" ] && mv "$backup" "$target"
+    rm -rf "$backup"
+}
+tmp="$(mktemp -d)"; trap cleanup EXIT
 
 # A whole-tree snapshot at the pinned ref, then one directory swap.
 #
@@ -74,16 +85,13 @@ find "$staging" -type f \( -name '*.py' -o -name '*.sh' \) -exec chmod 755 {} +
 # installed. The previous form removed the target and then moved the staging
 # tree in, so a SIGTERM or a failed mv between the two left the agent with no
 # skill at all, which is worse than the stale one it replaced.
-backup=""
 if [ -e "$target" ]; then
     backup="$target.previous.$$"
     mv "$target" "$backup"
 fi
 if ! mv "$staging" "$target"; then
-    [ -n "$backup" ] && mv "$backup" "$target"
     echo "could not publish $skill_name; the previous copy is unchanged" >&2
     exit 1
 fi
-[ -n "$backup" ] && rm -rf "$backup"
 printf 'installed %s at %s (%s file(s), from %s@%s)\n' \
     "$skill_name" "$target" "$(find "$target" -type f | wc -l | tr -d ' ')" "$repo" "${ref:0:7}"

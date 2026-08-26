@@ -147,3 +147,33 @@ def test_the_legacy_bare_home_is_still_allowed_when_declared(run, instance, tmp_
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
     r = run("restore", "str")
     assert r.returncode == 0, r.stderr
+
+
+def test_two_agents_may_not_share_a_home(run, instance, tmp_path):
+    """The check that actually closes the legacy exception. A descriptor copied
+    from the rentals agent declares its bare `.hermes` and satisfies any
+    name-shape test -- self-consistent and wrong. The registry sees it."""
+    legacy = tmp_path / "home" / ".hermes"
+    legacy.mkdir(parents=True, exist_ok=True)
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    run("register", "copycat", str(instance("copycat", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    r = run("restore", "copycat")
+    assert r.returncode != 0
+    assert "str is already registered there" in r.stderr
+
+
+def test_the_agent_that_declared_it_first_still_works(run, instance, tmp_path):
+    (tmp_path / "home" / ".hermes").mkdir(parents=True, exist_ok=True)
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    run("register", "rowan", str(instance("rowan")))
+    assert run("restore", "str").returncode == 0
+
+
+def test_sign_in_will_not_mint_into_a_siblings_home(run, instance, tmp_path):
+    """It writes a credential into the home exactly as activate does."""
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "property",
+        str(instance("property", descriptor=f"AGENT_HOME={tmp_path}/home/.hermes-rowan\n")))
+    r = run("sign-in", "property")
+    assert r.returncode != 0
+    assert "refusing to write" in r.stderr

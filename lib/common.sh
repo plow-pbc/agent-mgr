@@ -273,9 +273,30 @@ install_plow_plugin() {
 # the check that catches that, and restore, install-plugin and add-skill all
 # write into the home without going near Compose.
 require_own_home() {
+    # No two registered agents may resolve to the same home. This is what
+    # actually closes the legacy exception: a descriptor copied from the rentals
+    # agent declares its bare `.hermes` and satisfies any name-shape test, being
+    # self-consistent and wrong. Asking the registry catches it whatever the
+    # home is called, so the shape rule below no longer has to carry the weight.
+    local other odir ohome
+    while IFS=$'\t' read -r other odir; do
+        [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
+        [ -f "$odir/agent.env" ] || continue
+        ohome="$(sed -n 's/^[[:space:]]*AGENT_HOME=//p' "$odir/agent.env" | tail -1)"
+        ohome="${ohome%\"}"; ohome="${ohome#\"}"
+        ohome="${ohome//\$\{HOME\}/$HOME}"; ohome="${ohome//\$HOME/$HOME}"
+        [ -n "$ohome" ] || ohome="$HOME/.hermes-$other"
+        [ "$ohome" = "$AGENT_HOME" ] \
+            && die "refusing to write to $AGENT_HOME -- $other is already registered there"
+    done < <(registry_list)
+
     case "$AGENT_HOME" in
         *"/.hermes-$AGENT_NAME") return 0 ;;
         */.hermes)
+            # The legacy shape, allowed only when the descriptor says so -- the
+            # convention can never produce a bare `.hermes`, so this is always a
+            # deliberate declaration, and the collision check above is what
+            # stops a second agent from making the same one.
             grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
             die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
