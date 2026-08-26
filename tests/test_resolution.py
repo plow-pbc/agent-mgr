@@ -365,23 +365,37 @@ def test_the_dotenv_cannot_set_anything_but_the_zone(run, instance, tmp_path):
 
 
 def test_the_dotenv_is_read_never_executed(run, instance, tmp_path, injection_marker):
-    """Same parser, so the same contract -- a value cannot reach $(...)."""
+    """Read, never executed -- and now not even parsed.
+
+    agent-mgr wants one key from this file, so anything else is skipped before
+    key or value validation. The exploit key never reaches a pattern position or
+    `printf -v`, and nothing is said about it: a line agent-mgr does not consume
+    is not its business to comment on, least of all in a file full of secrets.
+    """
     run("register", "rowan", str(instance("rowan")))
     _home_env(tmp_path, "rowan", f"AGENT_T[$(touch {injection_marker})Z]=1\n")
     r = run("resolve", "rowan")
-    assert not injection_marker.exists()
-    # Warned and skipped, NOT fatal. Compose never reads this file, so there is
-    # no parity to keep -- and killing every command for every agent over a
-    # stray line in somebody's hand-maintained credential file is out of all
-    # proportion to it. The descriptor, which Compose DOES read, still refuses.
+    assert not injection_marker.exists(), "a dotenv key executed host code"
     assert r.returncode == 0, r.stderr
-    # names the line and the KIND of error, quotes nothing from a file that
-    # sits beside credentials
-    assert "line 1: malformed key" in r.stderr and "ignoring it" in r.stderr
-    assert "AGENT_T[" not in r.stderr
+    assert r.stderr.strip() == "", "agent-mgr commented on a line it does not own"
     assert "AGENT_TZ=America/Los_Angeles" in r.stdout
 
 
+def test_a_malformed_AGENT_TZ_value_is_warned_not_fatal(run, instance, tmp_path):
+    """The one key it DOES consume still gets a diagnostic.
+
+    Warned rather than fatal: Compose never reads this file, so there is no
+    parity to keep, and a stray line here must not cost the instance its
+    commands. The warning names file, line and kind -- never content, because
+    this file sits beside credentials.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan", 'PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n')
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "line 2: unterminated quote" in r.stderr
+    assert "sk-notreal" not in r.stderr and "America/Chicago" not in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
 def test_an_unterminated_final_line_is_still_read(run, instance, tmp_path):
     """The dotenv is maintained by hand and by the gateway, so a last line with
     no trailing newline is ordinary. `read` returns non-zero at EOF even having
@@ -452,33 +466,6 @@ def test_a_broken_dotenv_does_not_take_down_other_agents(run, instance, tmp_path
     other = run("restore", "other")
     assert other.returncode == 0, other.stderr
     assert "could not resolve rowan" not in other.stderr
-
-
-def test_the_dotenv_warning_points_at_the_right_line(run, instance, tmp_path):
-    """Pinned against a multi-line file, so an off-by-one cannot pass. A line
-    number is the whole diagnostic here -- the warning quotes nothing, because
-    this file sits beside credentials."""
-    run("register", "rowan", str(instance("rowan")))
-    _home_env(tmp_path, "rowan",
-              "AGENT_TZ=America/Chicago\n# a comment\n\nBAD KEY=x\n")
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "line 4: malformed key" in r.stderr
-    assert "AGENT_TZ=America/Chicago" in r.stdout
-    assert "BAD" not in r.stderr
-
-
-def test_an_unterminated_quote_in_a_dotenv_is_warned_not_fatal(run, instance, tmp_path):
-    """The arm likeliest to fire on a real credential file -- a token pasted
-    with one quote. Warned and skipped: Compose never reads this file, so there
-    is no parity to keep, and it must not cost the instance its commands."""
-    run("register", "rowan", str(instance("rowan")))
-    _home_env(tmp_path, "rowan", 'AGENT_TZ=America/Chicago\nPLOW_CHAT_TOKEN="sk-notreal\n')
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "line 2: unterminated quote" in r.stderr
-    assert "sk-notreal" not in r.stderr, "a warning must not quote a credential"
-    assert "AGENT_TZ=America/Chicago" in r.stdout
 
 
 def test_the_dotenv_follows_a_declared_home(run, instance, tmp_path):

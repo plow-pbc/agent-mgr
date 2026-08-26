@@ -233,6 +233,22 @@ parse_env_file() {
         key="${key%"${key##*[![:space:]]}"}"
         value="${value#"${value%%[![:space:]]*}"}"
 
+        # A dotenv is not this parser's to police. agent-mgr wants exactly one
+        # key out of it; every other line is a credential or a gateway setting
+        # it neither consumes nor owns, so validating those made it a partial
+        # linter for fields belonging to someone else -- and that is precisely
+        # where the leak risk lived, since a diagnostic about a malformed line
+        # in a credential file has to describe the line without quoting it.
+        #
+        # Skipping first deletes that whole role. It costs nothing an operator
+        # would notice: the near-misses that actually get typed -- spaces around
+        # the `=`, `export`, indentation -- are normalized ABOVE this point, so
+        # they still resolve. Only a genuine misspelling goes quiet, and its
+        # symptom is immediate and local: the zone did not change.
+        if [ "$role" = dotenv ] && [ "$key" != AGENT_TZ ]; then
+            continue
+        fi
+
         # What remains after normalization must be a real identifier. This is
         # where the execution hole was: a malformed key matched the allowlist as
         # a PATTERN and reached `printf -v`, where an array subscript is
