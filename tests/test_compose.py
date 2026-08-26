@@ -1,5 +1,6 @@
 import json
 import os
+import pytest
 import subprocess
 from pathlib import Path
 
@@ -49,24 +50,19 @@ def test_the_template_resolves_one_service_bound_to_the_agents_home(tmp_path):
     assert homes == [str(tmp_path / ".hermes-test-rowan")]
 
 
-def test_uid_and_gid_have_no_default_and_fail_closed(tmp_path):
-    """A wrong value re-owns an agent's live state in place, so absent must be fatal."""
+@pytest.mark.parametrize(("extra_env", "error"), [
+    ({"HERMES_UID": "", "HERMES_GID": ""}, "HERMES_UID"),
+    ({"AGENT_HOME": ""}, "AGENT_HOME"),
+    ({"AGENT_IMAGE": ""}, "AGENT_IMAGE"),
+])
+def test_required_compose_env_fails_closed(tmp_path, extra_env, error):
+    """No defaults for any of the three. A wrong HERMES_UID re-owns an agent's
+    live state in place, a defaulted home mounts the wrong directory, and a
+    fallback image tag re-resolves on the next pull."""
     r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan",
-                       extra_env={"HERMES_UID": "", "HERMES_GID": ""})
+                       extra_env=extra_env)
     assert r.returncode != 0
-    assert "HERMES_UID" in r.stderr
-
-
-def test_a_missing_home_is_fatal_rather_than_defaulted(tmp_path):
-    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", extra_env={"AGENT_HOME": ""})
-    assert r.returncode != 0
-    assert "AGENT_HOME" in r.stderr
-
-
-def test_a_missing_image_is_fatal_rather_than_falling_back_to_a_tag(tmp_path):
-    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", extra_env={"AGENT_IMAGE": ""})
-    assert r.returncode != 0
-    assert "AGENT_IMAGE" in r.stderr
+    assert error in r.stderr
 
 
 def test_no_port_is_published(tmp_path):

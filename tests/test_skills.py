@@ -216,3 +216,27 @@ def test_a_failed_publish_leaves_the_previous_skill_installed(run, instance, tmp
     finally:
         os.chmod(d.parent, 0o755)
     assert (d / "SKILL.md").read_text().endswith("the good copy\n"), "the previous copy was lost"
+
+
+def test_two_skills_from_one_monorepo_keep_both_pins(run, instance, tmp_path):
+    """The manifest was keyed on the REPO, so adding the second skill from one
+    monorepo deleted the first's pin and a clean restore silently omitted it."""
+    repo = instance("property")
+    run("register", "property", str(repo))
+    for dest, src in (("first", "ref/a"), ("second", "ref/b")):
+        run("add-skill", "property", "plow-pbc/mono", "--ref", "a" * 40,
+            "--dest", dest, "--src", src,
+            env=_fake_bin(tmp_path, skill_name=dest, src=src))
+    rows = (repo / "skills.tsv").read_text().splitlines()
+    assert len(rows) == 2, f"a pin was dropped: {rows}"
+    assert any("\tfirst\t" in r for r in rows) and any("\tsecond\t" in r for r in rows)
+
+
+def test_a_dotted_destination_does_not_accept_a_different_skill(run, instance, tmp_path):
+    """`foo.bar` reached an ERE, so `name: fooXbar` satisfied the check that
+    exists to prove the fetched tree is the skill this agent pinned."""
+    run("register", "property", str(instance("property")))
+    r = run("add-skill", "property", "plow-pbc/x", "--ref", "b" * 40, "--dest", "foo.bar",
+            env=_fake_bin(tmp_path, skill_name="fooXbar"))
+    assert r.returncode != 0, "installed a skill whose name only matched as a regex"
+    assert "is not the foo.bar skill" in r.stderr

@@ -183,15 +183,24 @@ load_agent() {
     AGENT_DIR="$dir"
     : "${AGENT_HOME:=$HOME/.hermes-$name}"
     # Canonicalised once, here, because two spellings of one directory defeat
-    # every check downstream: `$HOME//.hermes` and `$HOME/.hermes` address the
-    # same home and compare unequal, so the collision loop would clear a copycat
-    # and restore would overwrite the live sibling.
-    AGENT_HOME="$(printf '%s' "$AGENT_HOME" | tr -s /)"
-    AGENT_HOME="${AGENT_HOME%/}"
+    # every check downstream: they address the same home and compare unequal, so
+    # the collision loop clears a copycat and restore overwrites the live
+    # sibling. `realpath -m --` rather than collapsing slashes by hand, which
+    # left `$HOME/foo/../.hermes` intact and evading the check -- `-m` because a
+    # home need not exist yet, `--` because a path may begin with a dash.
+    AGENT_HOME="$(realpath -m -- "$AGENT_HOME")"
     : "${AGENT_CONTAINER:=hermes-$name}"
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"
     : "${AGENT_IMAGE:=nousresearch/hermes-agent@$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/image.ref")}"
+    # The default is a digest; an override must be one too. A tag re-resolves on
+    # the next pull, silently replacing the runtime that holds this agent's chat
+    # token and drives a filesystem -- which is the exact-ref rule the README
+    # states and nothing enforced on this path.
+    case "$AGENT_IMAGE" in
+        *@sha256:[0-9a-f][0-9a-f]*) ;;
+        *) die "AGENT_IMAGE must pin a digest (...@sha256:...), got: $AGENT_IMAGE" ;;
+    esac
     # Where this agent's declarative config lives. Relative resolves against the
     # agent repo, so an agent whose config sits under runtime/ (the rentals
     # agent does, beside the vault seed and SOUL it ships with) says so in one
@@ -298,16 +307,23 @@ require_running_container_is_ours() {
     # exactly what reload-if-running's own comment rejects, and it would silently
     # disable this check on, say, a Compose too old for `--status`. The
     # subsequent `restart` does not use --status, so it would proceed.
-    if ! cid="$(compose ps --status running --quiet hermes)"; then
-        die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whether one is running"
+    # `-a`, not --status running: a STOPPED sibling container still owns the
+    # project name, and `up` is exactly the command that would adopt it. Reading
+    # only running ones let a stopped sibling pass as absent, which is the
+    # second-gateway case through a door the running check never saw.
+    if ! cid="$(compose ps -a --quiet hermes)"; then
+        die "refusing to touch the container under $AGENT_PROJECT -- docker could not say whether one exists"
     fi
     # Empty output is the ordinary first bring-up: nothing to misidentify.
     [ -n "$cid" ] || return 0
+    cid="$(printf '%s' "$cid" | head -1)"
     mounted="$(docker inspect --format \
         '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
         "$cid")" \
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
-    mounted="$(printf '%s' "$mounted" | tr -s /)"; mounted="${mounted%/}"
+    # Same canonicalisation as AGENT_HOME, or the comparison is between two
+    # spellings again -- one of them from a source we do not control.
+    [ -z "$mounted" ] || mounted="$(realpath -m -- "$mounted")"
     [ -n "$mounted" ] && [ "$mounted" = "$AGENT_HOME" ] && return 0
     # No removal command here, deliberately, and no branch that could produce
     # one. The obvious discriminator -- does the foreign home exist? -- is

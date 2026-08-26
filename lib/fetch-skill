@@ -67,7 +67,11 @@ src="$tmp/tree${src:+/$src}"
 [ -s "$src/SKILL.md" ] || { echo "$repo@${ref:0:7}${5:+ ($5)} has no SKILL.md -- is that the right path?" >&2; exit 1; }
 # The name line, not just presence: a wrong path or a moved skill returns a
 # perfectly valid file that is not the one this agent pinned.
-grep -qE "^name: $skill_name\$" "$src/SKILL.md" \
+# Compared as a literal string, not an ERE: a destination like `foo.bar` reaches
+# the pattern as `foo.bar` and accepts `name: fooXbar`, so the check that exists
+# to prove this is the pinned skill would pass on a different one.
+want="$skill_name" awk -F': ' '$1 == "name" && ($2 "") == (ENVIRON["want"] "") {found=1}
+     END{exit !found}' "$src/SKILL.md" \
     || { echo "fetched a file that is not the $skill_name skill" >&2; exit 1; }
 
 target="$home/skills/$dest"

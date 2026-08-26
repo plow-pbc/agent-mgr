@@ -38,11 +38,8 @@ case "$*" in
    "volumes": [{"target": "/opt/data", "source": "${AGENT_HOME:-unset}"}]}}}
 JSON
     ;;
+  *"ps -a --quiet"*) ;;
   *"ps --status running --quiet"*) ;;
-  *inspect*)
-    # Self-consistent by default, like the config above: the container this
-    # agent would find is the one mounting this agent's home.
-    echo "${FAKE_MOUNT:-${AGENT_HOME:-unset}}" ;;
   *)
     echo "refusing a docker call a test did not stub: docker $*" >&2
     exit 97 ;;
@@ -199,7 +196,8 @@ def instance(tmp_path):
 
 
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
-                name="rowan", running=True, exec_output=None, log=None, mount=None):
+                name="rowan", running=True, exec_output=None, log=None, mount=None,
+                exists=None):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -240,6 +238,10 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         f'case "$*" in *"exec -T"*) [ -t 0 ] || cat >> {log}.stdin ;; esac' if log else "",
         'case "$*" in',
         f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;",
+        # `ps -a` answers about EXISTENCE, `--status running` about running.
+        # They differ for a stopped container, which is the case the identity
+        # seam was blind to, so a test can now set them independently.
+        f'  *"ps -a --quiet"*) {"echo deadbeef" if (running if exists is None else exists) else ":"} ;;',
         f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',
         f'  *inspect*) echo {home} ;;',
     ]

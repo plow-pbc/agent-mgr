@@ -414,3 +414,29 @@ def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, t
                     mount="/home/someone-else/.hermes-rowan")
     r = run("compose", "rowan", sub, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"{sub} was gated on a container it never touches: {r.stderr}"
+
+
+def test_a_stopped_siblings_container_is_not_treated_as_absent(run, instance, tmp_path):
+    """Five rounds gated more CALL SITES and none of them touched what the check
+    looks at. It asked `ps --status running`, so a stopped sibling read as
+    absent and `up` -- the one command that would adopt its project -- went
+    through. A stopped container still owns the name."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    running=False, exists=True, mount="/home/someone-else/.hermes-rowan")
+    r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, "adopted a stopped sibling's project"
+    assert "not rowan's home" in r.stderr
+
+
+def test_a_home_that_traverses_to_a_siblings_is_caught(run, instance, tmp_path):
+    """The collision check compared paths lexically, so `$HOME/foo/../.hermes`
+    and `$HOME/.hermes` -- one directory -- compared unequal and restore
+    overwrote the sibling's config and credentials. Canonicalised now, which is
+    what collapsing repeated slashes only looked like it was doing."""
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    run("register", "copycat",
+        str(instance("copycat", descriptor="AGENT_HOME=$HOME/foo/../.hermes\n")))
+    r = run("restore", "copycat")
+    assert r.returncode != 0, "a traversing home reached a sibling's directory"
+    assert "str is already registered there" in r.stderr

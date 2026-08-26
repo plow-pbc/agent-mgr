@@ -203,9 +203,14 @@ case "$cmd" in
         "$AGENT_MGR_ROOT/lib/fetch-skill" "$AGENT_HOME" "$skill_repo" "$skill_ref" "$skill_dest" "$skill_src"
         # Record the pin in the AGENT repo: it is that agent's declaration of
         # what it runs, and it belongs under review beside its config.
+        # Keyed on the DESTINATION, not the repo, and compared as a field.
+        # Repo-keyed meant two skills from one monorepo were "the same skill" --
+        # adding the second deleted the first's pin, and a clean restore then
+        # silently omitted it. And a repo name reaching a regex made `foo.bar`
+        # match `fooXbar`. Same ENVIRON-backed shape the registry uses.
         tsv="$AGENT_DIR/skills.tsv"; touch "$tsv"
         t="$(mktemp)"
-        grep -v "^$skill_repo	" "$tsv" > "$t" || true
+        dest="$skill_dest" awk -F'\t' '($3 "") != (ENVIRON["dest"] "")' "$tsv" > "$t"
         printf '%s\t%s\t%s\t%s\n' "$skill_repo" "$skill_ref" "$skill_dest" "$skill_src" >> "$t"
         sort -o "$t" "$t"; mv "$t" "$tsv"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the skill just installed"
