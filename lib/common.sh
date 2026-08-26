@@ -40,8 +40,9 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # `os.path.abspath(` and `os.path.realpath(` each appear exactly once in
 # anything this tool runs -- here. tests/test_resolve_guard.py shadows python3
 # and fails on one of those two strings to make exactly one of these helpers
-# fail while the other keeps working, which is the only way to reach either
-# refusal (removing python3 outright stops load_agent before any guard runs).
+# fail while the other keeps working. That is what reaches the refusals PAST
+# load_agent -- with no python3 at all, load_agent's own refusal fires first
+# and the guards are never entered.
 # A second caller of either call, in any file -- lib/resolve-guard and
 # agent-mgr run python3 too -- silently moves which invocation that test kills.
 normalized_path() {
@@ -464,13 +465,16 @@ require_running_container_is_ours() {
     # spellings again -- one of them from a source we do not control. Then the
     # same-directory question, resolved on both sides like the collision loop.
     if [ -n "$mounted" ]; then
-        # Through a temp for the same reason load_agent's is: assigning
-        # `mounted` direct stores the failed substitution's empty output before
-        # the `||` arm runs, and this refusal exists to print the raw .Source.
+        # `mounted` is never assigned from these substitutions -- `norm` carries
+        # the resolved value onward instead. That is what makes the refusals
+        # able to print the raw .Source: a failed substitution stores its empty
+        # output before the `||` arm runs, so a message naming the variable it
+        # just wrote names nothing. Not assigning is stronger than ordering
+        # around it, and it keeps docker's own value for the mismatch die below
+        # rather than the collapsed one.
         norm="$(normalized_path "$mounted")" \
-            || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
-        mounted="$norm"
-        m="$(canonical_path "$mounted")" \
+            || die "refusing to touch the container under $AGENT_PROJECT -- could not normalise the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
+        m="$(canonical_path "$norm")" \
             || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
         [ "$m" = "$self" ] && continue
     fi
