@@ -355,6 +355,10 @@ EOF
         # Leaves-it-running passes through; everything else is a transition and
         # asks the veto, whether or not this tool has heard of it.
         if compose_transitions_nothing "$1"; then
+            # Reads and execs address an EXISTING container, so they need the
+            # same identification -- `compose rowan cp ./x hermes:/opt/data/`
+            # writes into whatever is running under that project.
+            require_running_container_is_ours
             compose "$@"
         else
             compose_transition "$@"

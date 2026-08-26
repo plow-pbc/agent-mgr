@@ -275,8 +275,14 @@ COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec
 # container rather than constraining the name.
 require_running_container_is_ours() {
     local cid mounted
-    cid="$(compose ps --status running --quiet hermes)" || return 0
-    # No container is the ordinary first bring-up, and nothing to misidentify.
+    # A compose that REFUSED to run is not "no container" -- conflating them is
+    # exactly what reload-if-running's own comment rejects, and it would silently
+    # disable this check on, say, a Compose too old for `--status`. The
+    # subsequent `restart` does not use --status, so it would proceed.
+    if ! cid="$(compose ps --status running --quiet hermes)"; then
+        die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whether one is running"
+    fi
+    # Empty output is the ordinary first bring-up: nothing to misidentify.
     [ -n "$cid" ] || return 0
     mounted="$(docker inspect --format \
         '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
@@ -356,6 +362,11 @@ require_running() {
         die "could not ask docker whether ${AGENT_NAME}'s gateway is running"
     fi
     [ -n "$running" ] || die "${AGENT_NAME}'s gateway is not running -- start it first: agent-mgr up $AGENT_NAME"
+    # Running is not the same as OURS, and misidentification is not
+    # transition-specific: `agent-mgr agent rowan "<prompt>"` would otherwise
+    # exec a turn inside PRODUCTION's gateway and answer into the live owners'
+    # channel, which is worse than restarting it.
+    require_running_container_is_ours
 }
 
 # The pinned Plow Chat plugin, into this agent's home. A function rather than
