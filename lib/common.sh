@@ -228,7 +228,7 @@ load_agent() {
     # sibling. Resolved rather than collapsing slashes by hand, which left
     # `$HOME/foo/../.hermes` intact and evading the check. normalized_path, not
     # canonical_path: a home symlinked onto a bigger disk is ordinary, and the
-    # shape rule below reads this value and must still see the declared name.
+    # require_home_shape reads this value and must still see the declared name.
     #
     # Resolved into `home`, not into AGENT_HOME: the never-assign rule beside
     # normalized_path.
@@ -605,7 +605,7 @@ require_own_home() {
     # actually closes the legacy exception: a descriptor copied from the rentals
     # agent declares its bare `.hermes` and satisfies any name-shape test, being
     # self-consistent and wrong. Asking the registry catches it whatever the
-    # home is called, so the shape rule below no longer has to carry the weight.
+    # home is called, so require_home_shape no longer has to carry the weight.
     # Resolved by load_agent in a subshell, not by a second parser here. A peer
     # parser has to re-derive quote stripping, ${HOME} expansion and the
     # convention default, and the copy drifted immediately: this one stripped
@@ -654,7 +654,7 @@ require_own_home() {
             skipped_named="$other"
             continue
         fi
-        # Compared RESOLVED, unlike the shape check above. Two questions, two
+        # Compared RESOLVED, unlike require_home_shape. Two questions, two
         # normalisations: the shape rule needs the home as declared, because a
         # home symlinked onto a bigger disk is ordinary and following it would
         # match neither accepted shape. This one asks "is it the same
@@ -697,18 +697,33 @@ require_own_home() {
 # whole of require_own_home there instead made one stale registry row abort the
 # entire fleet's nightly backup, because the loop is deliberately fail-closed on
 # a sibling it cannot resolve -- inverting the very contract backup documents.
+# The verb is the caller's, because the refusal names what it was about to do.
+# Defaulted to the write callers, who are the majority and whose messages other
+# tests pin; `backup` passes its own, because a message telling an operator a
+# nightly refused "to write to" a home the command never writes into sends them
+# at a code path this command does not have.
 require_home_shape() {
+    local verb="${1:-write to}"
     case "$AGENT_HOME" in
         *"/.hermes-$AGENT_NAME") return 0 ;;
         */.hermes)
             # The legacy shape, allowed only when the descriptor says so -- the
             # convention can never produce a bare `.hermes`, so this is always a
-            # deliberate declaration, and the collision check above is what
-            # stops a second agent from making the same one.
+            # deliberate declaration.
+            #
+            # What stops a SECOND agent declaring the same bare `.hermes` is the
+            # collision loop in require_own_home, and only require_own_home's
+            # callers get it. `backup` deliberately does not: two agents whose
+            # descriptors both declare one legacy home will each archive it,
+            # under their own name. That is a duplicate, not a miss, and both
+            # land in one operator-owned directory at umask 077 -- so the cost is
+            # an archive whose name over-claims, against the cost of one stale
+            # registry row aborting the whole fleet's nightly. Recorded because
+            # the trade is real, not because it is free.
             grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
-            die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
+            die "refusing to $verb $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
-    die "refusing to write to $AGENT_HOME -- that is not ${AGENT_NAME}'s own home"
+    die "refusing to $verb $AGENT_HOME -- that is not ${AGENT_NAME}'s own home"
 }
 
 # An instance's own veto on stopping or replacing its container.

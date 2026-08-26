@@ -168,7 +168,7 @@ case "$cmd" in
                      # healthy agent's backup -- the exact outcome the contract
                      # two lines below exists to prevent.
                      registry_valid_name "$AGENT_NAME"
-                     require_home_shape
+                     require_home_shape archive
                      [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
                      "$AGENT_MGR_ROOT/lib/backup" "$AGENT_NAME" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep" ); then
                     backed_up=$((backed_up + 1))
@@ -189,7 +189,7 @@ EOF
         else
             load_agent "$target"
             registry_valid_name "$AGENT_NAME"
-            require_home_shape
+            require_home_shape archive
             [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
             "$AGENT_MGR_ROOT/lib/backup" "$AGENT_NAME" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep"
         fi
