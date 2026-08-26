@@ -155,6 +155,52 @@ of the *product*. The tell is proportion: when the README is longer than the
 thing it documents, it has stopped being a README and become a runbook that
 nothing verifies.
 
+## One repo, several people
+
+An agent repo is normally one person's. It does not have to be: `AGENT_HOME`,
+`AGENT_CONTAINER` and `AGENT_PROJECT` derive from the **registry name**, so two
+rows against the *same checkout* resolve to separate homes and containers.
+
+```sh
+agent-mgr register life  ~/services/life-assistant-hermes-agent
+agent-mgr register rowan ~/services/life-assistant-hermes-agent   # same directory
+```
+
+`require_own_home` already enforces what makes that safe: it accepts a home only
+when it ends in `.hermes-<name>`, so a repo that *declared* `AGENT_HOME` could
+not be shared at all — the second instance would resolve to the first's home and
+be refused. A shared repo stays silent on identity, and silence is the only
+thing that works.
+
+### Where a per-person value goes
+
+**The instance's own dotenv** — `~/.hermes-<name>/.env`, the file that already
+holds its Plow token and its Latch credential, mounted at `/opt/data`.
+
+Almost nothing needs `agent-mgr` involved at all: the gateway interpolates
+`${VAR}` in `config.yaml` from that same dotenv at runtime, which is how
+`mcp_servers.latch` already reaches a different Mac per instance. A per-person
+model, locale or endpoint is a line in that file and a `${VAR}` in the shared
+`config.yaml`. No fork, no second config, nothing here to change.
+
+**`AGENT_TZ` is the one exception**, and only for a mechanical reason: Compose
+sets `TZ` into the container at *render* time, so the gateway never sees it and
+cannot resolve it from the dotenv the way it resolves everything else. So
+`load_agent` reads that one key from the same file:
+
+```sh
+printf 'AGENT_TZ=America/Chicago\n' >> ~/.hermes-rowan/.env
+```
+
+Precedence is **dotenv > the repo's `agent.env` > convention**, and the dotenv is
+read after the home is known, so it cannot move its own home.
+
+`AGENT_TZ` alone, deliberately — that file holds credentials. One non-secret
+value is taken into `agent-mgr`'s process; `TZ` still reaches the container
+through `environment:`, so nothing from the dotenv goes to Compose and the
+fleet's no-credential-through-compose contract is untouched. Any other key there
+is ignored, including one `agent-mgr` owns.
+
 ## What this builds on
 
 ```

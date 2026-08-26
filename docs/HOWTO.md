@@ -74,6 +74,12 @@ the section after it, *What belongs in an agent's repo*. Ask: **would a
 second agent want this?** No means it belongs in this agent's own repo,
 whatever it is — identity, config, its skill, its scripts.
 
+One case splits further. When several instances are registered against one
+checkout, a value belonging to a *person* rather than to the agent cannot live
+in `agent.env` either, because every instance reads it. That goes in the
+instance's own `~/.hermes-<name>/.env` — see *One repo, several people* in the
+[README](../README.md).
+
 ## Adding a shared skill
 
 For a skill **another agent also wants**. One agent's own skill is just its

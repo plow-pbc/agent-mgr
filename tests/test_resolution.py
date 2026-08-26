@@ -1,6 +1,9 @@
 import os
 import pathlib
 import pytest
+
+from conftest import fake_docker
+
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
@@ -274,3 +277,106 @@ def test_every_near_miss_of_an_owned_key_is_reported(run, instance, spelling):
     assert r.returncode == 0, r.stderr
     assert "malformed" in r.stderr and "AGENT_TZ" in r.stderr
     assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+
+
+# --- per-instance timezone, from the instance's own dotenv ------------------
+
+
+def _home_env(tmp_path, name, text):
+    """The dotenv the operator already keeps per person, mounted at /opt/data."""
+    h = tmp_path / "home" / f".hermes-{name}"
+    h.mkdir(parents=True, exist_ok=True)
+    (h / ".env").write_text(text)
+    return h / ".env"
+
+
+def test_no_dotenv_changes_nothing(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    before = run("resolve", "rowan").stdout
+    _home_env(tmp_path, "someone-else", "AGENT_TZ=America/Chicago\n")
+    assert run("resolve", "rowan").stdout == before
+
+
+def test_the_dotenv_sets_this_instances_zone(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
+    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
+
+
+def test_the_dotenv_beats_the_shared_descriptor(run, instance, tmp_path):
+    """The whole point: one repo, several people, different clocks."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ=America/Los_Angeles\n")))
+    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
+    out = run("resolve", "rowan").stdout
+    assert "AGENT_TZ=America/Chicago" in out
+    assert "America/Los_Angeles" not in out
+
+
+def test_two_instances_of_one_repo_take_their_own_zones(run, instance, tmp_path):
+    """One checkout, two registry rows, two dotenvs -- the shape this exists for."""
+    repo = str(instance("life"))
+    run("register", "life", repo)
+    run("register", "rowan", repo)
+    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
+    life, rowan = run("resolve", "life").stdout, run("resolve", "rowan").stdout
+    assert "AGENT_TZ=America/Los_Angeles" in life and "/.hermes-life" in life
+    assert "AGENT_TZ=America/Chicago" in rowan and "/.hermes-rowan" in rowan
+
+
+def test_the_dotenv_cannot_set_anything_but_the_zone(run, instance, tmp_path):
+    """It holds credentials. Exactly one non-secret value is taken from it, and
+    identity is already derived before it is read, so it cannot move its home."""
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan",
+              "AGENT_TZ=America/Chicago\nAGENT_HOME=/opt/hijack\n"
+              "AGENT_IMAGE=pinned:by-hand\nPLOW_CHAT_TOKEN=sk-secret\n")
+    r = run("resolve", "rowan")
+    assert "AGENT_TZ=America/Chicago" in r.stdout
+    assert "/opt/hijack" not in r.stdout
+    assert "pinned:by-hand" not in r.stdout
+    assert "sk-secret" not in r.stdout
+    assert f"AGENT_HOME={tmp_path / 'home'}/.hermes-rowan" in r.stdout
+
+
+def test_the_dotenv_is_read_never_executed(run, instance, tmp_path, injection_marker):
+    """Same parser, so the same contract -- a value cannot reach $(...)."""
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan", f"AGENT_T[$(touch {injection_marker})Z]=1\n")
+    r = run("resolve", "rowan")
+    assert not injection_marker.exists()
+    assert r.returncode == 0, r.stderr
+
+
+def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
+    """The whole chain, end to end -- the only test that proves the feature.
+
+    Three hops, and any two green while the third is broken says nothing:
+    load_agent must READ the dotenv, EXPORT the resolved AGENT_TZ, and Compose
+    must prefer that export over the --env-file it is handed (which is the
+    SHARED descriptor, carrying somebody else's zone). `resolve` reads ${!k} and
+    never needs the export; a rendering test that injects AGENT_TZ by hand never
+    runs the read.
+
+    So this runs the real CLI against a stub docker that reports the AGENT_TZ it
+    was handed. Deleting AGENT_TZ from the export list, or the dotenv read,
+    fails here and nowhere else.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ=America/Los_Angeles\n")))
+    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
+
+    seen = tmp_path / "seen-tz"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    stub = b / "docker"
+    stub.write_text(stub.read_text().replace(
+        "#!/usr/bin/env bash",
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "${{AGENT_TZ-<unset>}}" >> {seen}', 1))
+
+    r = run("compose", "rowan", "config", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    assert seen.exists(), "the stub docker never ran -- the chain was not exercised"
+    saw = seen.read_text()
+    assert "America/Chicago" in saw, (
+        f"compose was handed {saw.strip()!r}; the dotenv's zone did not reach it, "
+        f"so the container would run on the shared descriptor's clock"
+    )
+    assert "America/Los_Angeles" not in saw
