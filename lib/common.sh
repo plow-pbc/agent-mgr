@@ -236,31 +236,29 @@ load_agent() {
 # rule: scanning the whole argv made `compose rowan exec hermes git pull` die
 # about --ignore-buildable.
 compose_fetch_is_safe() {
-    local sub="${1:-}" a
+    local sub="${1:-}"
     case "$sub" in
         pull)
             case " $* " in *" --ignore-buildable "*) return 0 ;; esac
             return 1 ;;
     esac
-    shift || true
-    # Only `run` and `exec` hand later words to the CONTAINER, so only they stop
-    # at the service; `up hermes --pull always` is a real fetch with the flag
-    # after it, and breaking there would have missed it.
-    local stop_at_service=0
-    case "$sub" in run|exec) stop_at_service=1 ;; esac
+    # Scanned to the end, with no service boundary and no list of value-taking
+    # flags. Locating the boundary needed that list to be COMPLETE, and an
+    # entry missing from it truncated the scan and let a real fetch through --
+    # a silent failure, on the one subcommand (`run`) that both stops and
+    # fetches. Scanning everything cannot miss one.
+    #
+    # The cost is a container command containing literally `--pull always`
+    # being refused. That is loud rather than silent, and far rarer than a flag
+    # this list had not heard of: the `git pull` false positive that prompted
+    # the boundary came from matching the SUBCOMMAND anywhere in the argv,
+    # which is keyed on $1 above and stays fixed.
     while [ $# -gt 0 ]; do
-        a="$1"; shift
-        case "$a" in
+        case "$1" in
             --pull=always) return 1 ;;
-            --pull) [ "${1:-}" = always ] && return 1; shift || true ;;
-            # Value-taking flags, so a value is not mistaken for the service.
-            # Only consulted when stopping at one; otherwise the scan runs to
-            # the end and an unlisted flag cannot truncate it.
-            --entrypoint|-e|--env|-l|--label|-p|--publish|-u|--user|-v|--volume|-w|--workdir|--name)
-                [ "$stop_at_service" -eq 1 ] && { shift || true; } ;;
-            -*) ;;
-            *) [ "$stop_at_service" -eq 1 ] && break ;;
+            --pull) [ "${2:-}" = always ] && return 1 ;;
         esac
+        shift
     done
     return 0
 }
