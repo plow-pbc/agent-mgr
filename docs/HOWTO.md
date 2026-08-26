@@ -116,51 +116,31 @@ writers to one session database.
 **If the home was a symlink, recreate the link before you do anything else.**
 `agent-mgr resolve` reports `AGENT_HOME` as it was *declared* — `load_agent`
 normalises rather than canonicalises, so you get the link path, never its
-target. The dangerous case is the link gone and its target intact on the big
-disk: `mkdir -p` on that path exits 0, creates a plain directory where the link
-was, and the whole restore lands on the wrong volume with no error at all — the
-agent then comes up on a home it was never configured with. (A *dangling*
-symlink is safe; `mkdir -p` refuses it loudly with `File exists`.) So recreate
-the link **and its target directory** first, and let the `mkdir -p` below be the
-no-op it should be:
+target.
 
-```sh
-# Nothing may already be at the link path. -L as well as -e: -e DEREFERENCES,
-# so a symlink whose target is gone tests false — and a half-done first pass
-# through this block is the most likely way to be holding exactly that.
-if [ -e ~/.hermes-rowan ] || [ -L ~/.hermes-rowan ]; then
-  echo "something is already at ~/.hermes-rowan." >&2
-  echo "If it is the live symlink, this step is already done — skip to the block below." >&2
-  echo "Otherwise move it aside and check what is in it before going on." >&2
-  exit 1    # stop here; do not run the mkdir/ln below
-fi
+Four states, and only one of them means "carry on":
 
-mkdir -p /big/disk/rowan
-ln -sT /big/disk/rowan ~/.hermes-rowan
-```
+| what is at the link path | what it means | what to do |
+|---|---|---|
+| a live symlink | the link survived | nothing — go to the block below |
+| nothing at all | link and target both gone | recreate the target directory, then the link |
+| a plain directory | a previous pass ran `mkdir -p` on the vanished link | move it aside, look inside it, then recreate |
+| a dangling symlink | the link survived, its target did not | recreate the target directory |
 
-`ln -sT`, not a bare `ln -s`. Onto a path that is already a plain directory a
-bare `ln -s` treats it as a *destination directory*: it creates
-`~/.hermes-rowan/rowan -> /big/disk/rowan`, exits 0, and leaves the plain
-directory in place — so the following `mkdir -p`, `tar -C` and `up` all still
-land on the wrong volume, silently. That is the state an operator who already
-ran the block once is in, which is exactly who reads this. `-T` refuses it with
-`File exists`. (`-n` does **not** — measured; it only helps when the path is a
-symlink to a directory, not when it is a real one.)
+`ln -s` and `mv` both **absorb** an existing directory rather than refusing it —
+`ln -s /big/disk/rowan ~/.hermes-rowan` onto a plain directory silently creates
+`~/.hermes-rowan/rowan` and exits 0, and `mv ~/.hermes-rowan ~/.hermes-rowan.bak`
+onto an existing `.bak` silently nests it as `.bak/.hermes-rowan`. Both report
+success and leave the restore pointed at the wrong place. On GNU, `ln -sT`
+refuses the first (`-n` does **not** — measured; it only helps when the
+destination is a symlink to a directory). There is no such flag on macOS and
+none for `mv` anywhere, which is why the table above is a decision *you* make
+before typing either command rather than a guard this document pretends to
+enforce.
 
-`-T` is GNU. **On macOS, move the path aside — do not remove it:**
-`mv ~/.hermes-rowan ~/.hermes-rowan.bak`, confirm the path is gone, and only
-then `ln -s`. Move rather than delete because what is sitting there is not
-reliably a discardable half-restore: it is equally a home that was never a
-symlink at all, in which case that directory *is* the live agent — auth,
-memories, session database — and the tarball would be the only remaining copy,
-if one was ever taken. Whether its contents matter is the same human decision
-the guard above refuses to let a flag make.
-
-Both halves, because in the total-loss variant — the big disk replaced or
-reformatted, so link *and* target are gone — recreating only the link leaves a
-dangling one, and then `mkdir -p` refuses it with `File exists` and `tar -C`
-fails too. The procedure would dead-end with the home still missing.
+Do not delete what is at that path. It is equally the shape of a home that was
+never a symlink at all — in which case that directory *is* the live agent, and
+the tarball is the only remaining copy, if one was ever taken.
 
 ```sh
 agent-mgr down rowan
