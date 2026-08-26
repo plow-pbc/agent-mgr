@@ -153,7 +153,17 @@ parse_env_file() {
     while IFS= read -r line; do
         case "$line" in
             \#*|'') continue ;;
-            [A-Za-z_]*=*) ;;
+            # A key is an identifier or the line is not a declaration. Checked
+            # once here rather than at each membership test, so every downstream
+            # site receives an identifier by construction -- the sinks cannot
+            # individually be trusted to notice. Without it a multi-token key is
+            # an exact word-bounded substring of the space-joined allowlist, so
+            # `AGENT_TZ AGENT_IMAGE=x` matched, reached `printf -v`, and took the
+            # whole process down under set -e with a raw bash error instead of
+            # the refusal this parser is documented to give.
+            [A-Za-z_]*=*)
+                case "${line%%=*}" in *[!A-Za-z0-9_]*) continue ;; esac
+                ;;
             *) continue ;;
         esac
         key="${line%%=*}"
@@ -183,7 +193,9 @@ parse_env_file() {
         # could run host commands with the operator's credentials on any
         # `agent-mgr resolve`, defeating the read-never-execute property this
         # parser exists for. With -F only an exact allowlisted identifier reaches
-        # the sink. `--` because a key may begin with a dash.
+        # the sink. -F stays as defence in depth now that the shape is checked
+        # at the source; `--` for uniformity with the other guarded greps, not
+        # because a key could start with a dash -- the filter above forbids it.
         if printf '%s' "$allow" | grep -Fqw -- "$key"; then
             printf -v "$key" '%s' "$value"
         elif [ "$collect" != "hooks" ] && printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$key"; then

@@ -363,6 +363,27 @@ def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_mark
     assert "AGENT_TZ=America/Los_Angeles" in r.stdout
 
 
+def test_only_a_declared_key_reaches_the_assignment(run, instance):
+    """The property, not one spelling of the exploit.
+
+    `grep -w` matches a word-bounded SUBSTRING of the space-joined allowlist, so
+    a multi-token key is an exact match: `AGENT_TZ AGENT_IMAGE` is inside
+    AGENT_KEYS. -F does not close that -- it reached `printf -v`, which rejects
+    the name, and under set -e that killed load_agent, so every subcommand for
+    the agent died on a raw bash error instead of the refusal path.
+
+    Asserting the shape rather than the input keeps this honest: it also fails a
+    future fix that drops -F for a bracket denylist.
+    """
+    repo = instance("rowan", descriptor="AGENT_TZ AGENT_IMAGE=x\n")
+    run("register", "rowan", str(repo))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, f"the CLI died on a malformed key: {r.stderr}"
+    assert "not a valid identifier" not in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    assert "AGENT_IMAGE=nousresearch/hermes-agent@sha256:" in r.stdout
+
+
 def test_an_overlay_key_cannot_execute_host_code(run, instance, registry, injection_marker):
     """Same sink, second file -- the overlay goes through the same parser."""
     run("register", "rowan", str(instance("rowan")))
