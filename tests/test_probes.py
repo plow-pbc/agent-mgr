@@ -172,8 +172,17 @@ def test_the_howto_still_reaches_the_readmes_instance_repo_contract():
     import pathlib
     import re
     root = pathlib.Path(__file__).resolve().parent.parent
-    slugs = {re.sub(r"[^a-z0-9 -]", "", h.lower()).replace(" ", "-")
-             for h in re.findall(r"^#+ (.+)$", (root / "README.md").read_text(), re.M)}
+    # GitHub's slugger keeps underscores, and a `# comment` line inside a fenced
+    # block is not a heading -- a slug set that disagrees on either blesses a
+    # dangling anchor or reddens a working one, which is worse than no guard.
+    body, fenced = [], False
+    for line in (root / "README.md").read_text().splitlines():
+        if line.startswith("```"):
+            fenced = not fenced
+        elif not fenced:
+            body.append(line)
+    slugs = {re.sub(r"[^a-z0-9 _-]", "", h.lower()).replace(" ", "-")
+             for h in re.findall(r"^#+ (.+)$", "\n".join(body), re.M)}
     targets = re.findall(r"\]\(\.\./README\.md#([a-z0-9-]+)\)",
                          (root / "docs" / "HOWTO.md").read_text())
     assert targets, "the HOWTO should still defer the file list to the README"

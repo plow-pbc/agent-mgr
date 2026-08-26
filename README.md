@@ -46,7 +46,7 @@ thin instance repo is the target, not a stage on the way to a thick one.
 | Path | Required | What |
 |---|---|---|
 | `agent.env` | yes | The descriptor. Overrides only; it may be entirely comments |
-| `config.yaml` | yes | The declarative half of the agent's home — model, plugins, `mcp_servers`. `AGENT_CONFIG` may name another path; all four existing agents keep it in `runtime/` |
+| `config.yaml` | yes | The declarative half of the agent's home — model, plugins, `mcp_servers`. `AGENT_CONFIG` may name another relative path — the rentals agent keeps its config under `runtime/`, beside the vault seed it ships with |
 | `README.md` | yes, hand-written | What this agent is, what it can and cannot reach, and how to bring it up |
 | `.env.example` | if it has extra keys | The dotenv contract, with no values. `restore` prefers it over the fleet template |
 | `tests/` | if it has siblings | What this agent must **not** reach, asserted. Run with `pytest tests/` |
