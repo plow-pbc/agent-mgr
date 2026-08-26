@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Prove the Compose config that will actually be used names the agent we were
+# asked for.
+#
+# load_agent unsets the descriptor keys before reading the file, which prevents
+# a stale shell variable from winning. This proves it: it reads back what
+# Compose resolved rather than trusting that the prevention held. Cheap, and it
+# is the only check that survives someone adding a key to a descriptor and
+# forgetting to add it to AGENT_KEYS.
+set -euo pipefail
+[ -n "${AGENT_MGR_ROOT:-}" ] || { echo "resolve-guard: run me through agent-mgr" >&2; exit 1; }
+# shellcheck source=common.sh
+. "$AGENT_MGR_ROOT/lib/common.sh"
+load_agent "${1:?usage: resolve-guard <name>}"
+# Compose agreeing with the descriptor is not the descriptor being RIGHT: a
+# copycat naming a sibling's home is self-consistent and satisfies every
+# comparison below. Every route through here either starts a gateway or writes,
+# so ownership belongs here rather than at each call site -- `up` on a copycat
+# would otherwise boot a SECOND gateway against a live home, which is the one
+# failure this tool exists to prevent.
+require_own_home
+
+resolved="$(compose config --format json)" || die "compose could not resolve a config for $AGENT_NAME"
+
+read -r got_project got_container got_home got_image got_build got_pull <<<"$(printf '%s' "$resolved" | python3 -c '
+import json, sys
+try:
+    cfg = json.load(sys.stdin)
+except json.JSONDecodeError:
+    # Compose printed something that is not a config. Fail as a refusal with the
+    # agent named, not as a traceback -- the operator needs to know the guard
+    # stopped them, not how it is implemented.
+    sys.exit(1)
+svc = cfg["services"]["hermes"]
+home = ""
+for v in svc.get("volumes", []):
+    if v.get("target") == "/opt/data":
+        home = v.get("source", "")
+        break
+print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
+      svc.get("image", "-"), "build" if svc.get("build") else "-",
+      svc.get("pull_policy", "-"))
+' 2>/dev/null)" || die "refusing to act: could not read a Compose config for $AGENT_NAME"
+
+[ "$got_project" = "$AGENT_PROJECT" ] \
+    || die "refusing to act: compose resolved project '$got_project' but $AGENT_NAME expects '$AGENT_PROJECT'"
+[ "$got_container" = "$AGENT_CONTAINER" ] \
+    || die "refusing to act: compose resolved container '$got_container' but $AGENT_NAME expects '$AGENT_CONTAINER'"
+[ "$got_home" = "$AGENT_HOME" ] \
+    || die "refusing to act: compose resolved home '$got_home' but $AGENT_NAME expects '$AGENT_HOME'"
+
+# The image Compose will actually use, not the descriptor variable. Checking
+# AGENT_IMAGE in the loader was wrong in both directions: it refused the
+# supported `build:` shape outright, while an override replacing `hermes.image`
+# never passed through that variable at all and sailed past, free to run a
+# mutable pulled tag against the mounted credential home.
+#
+# A pulled image must be a digest. A BUILT one is exempt -- and the exemption is
+# made true rather than assumed, because two attempts to derive it from the
+# reference string were both wrong: "a derived image never pulls" ignored that
+# `compose pull` takes buildable services by default, and "a bare name has no
+# registry" ignored that Docker resolves an unqualified name against Hub's
+# implicit library/ namespace, which is why `docker pull ubuntu:22.04` works.
+#
+# No property of the string can settle it, so this stops asking the string. The
+# passthrough refuses `pull` outright (lib/common.sh): which spellings of
+# --ignore-buildable Compose honours is a fact about its flag parser, and three
+# separate misses each failed OPEN. That closes the fetch this tool could
+# issue; the build arm below closes the one Compose issues on its own.
+case "$got_build:$got_image" in
+    *@sha256:[0-9a-f][0-9a-f]*) ;;
+    # A build service fetches unless it says otherwise, and I got this wrong
+    # twice before measuring it properly. Marker test -- Dockerfile touches
+    # /BUILT_HERE, `image:` names a real registry tag, then check which one the
+    # container came from:
+    #
+    #   default      PULLED      never   BUILT
+    #   missing      PULLED      build   BUILT
+    #   always       PULLED
+    #
+    # So only `never` and `build` are safe. An earlier probe used an
+    # UNRESOLVABLE registry and showed "Built" for `missing` -- but a failed
+    # pull falls back to the build, which looks identical to never pulling, and
+    # that false negative is what talked me into removing this arm once.
+    #
+    # `if_not_present` is absent because `compose config` normalises it to
+    # `missing` before this guard sees it -- measured, not assumed.
+    build:*)
+        # The helper prints "-" for an absent policy, so name that case rather
+        # than describing the operator's file as containing a dash.
+        case "$got_pull" in
+            -) pull_desc="unset (the default, which pulls)" ;;
+            *) pull_desc="'$got_pull'" ;;
+        esac
+        case "$got_pull" in
+            never|build) ;;
+            *) die "refusing to act: ${AGENT_NAME}'s service builds its image but its pull_policy is ${pull_desc}, and only 'never' or 'build' keep Compose from fetching '$got_image' over the top of what this host built -- the default and 'missing' both pull when the local tag is absent, and the result runs with this agent's credentials. Add 'pull_policy: never' beside the build." ;;
+        esac ;;
+    *) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which is neither a digest nor built here. A pulled tag re-resolves on the next pull and this container holds the agent's credentials -- pin it as ...@sha256:..., or give the service a build." ;;
+esac
+

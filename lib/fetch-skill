@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Install one pinned skill into an agent's home.
+#
+# One installer for what were two: rowan's install-connectors and property's
+# install-skill did the same thing -- read a pinned SHA, fetch, verify the file
+# is the skill it claims to be, install, reload -- and differed only in `gh api`
+# versus `curl raw` and in file count. `gh api` serves public and private repos
+# alike, so it is the single code path.
+#
+# The whole tree at the pinned ref, staged and swapped -- see the tarball
+# comment below for why a per-file listing could not honour its own pin.
+set -euo pipefail
+home="${1:?usage: fetch-skill <home> <repo> <ref> <dest> [srcpath]}"
+repo="${2:?}"; ref="${3:?}"; dest="${4:?}"; src="${5:-}"
+
+[[ "$ref" =~ ^[0-9a-f]{40}$ ]] || { echo "the skill ref must be a 40-char SHA, got: $ref" >&2; exit 1; }
+
+# The destination is joined onto the agent's home and the result is rm -rf'd
+# during the swap below, so a traversing dest is a delete primitive: `--dest
+# ../../.ssh` normalises to $HOME/.ssh. Rejected by component, not by pattern --
+# a substring check on ".." also rejects a legitimate "..foo".
+case "$dest" in
+    /*) echo "the skill destination must be relative, got: $dest" >&2; exit 1 ;;
+esac
+IFS='/' read -ra _parts <<< "$dest"
+for _p in "${_parts[@]}"; do
+    case "$_p" in
+        .|..) echo "the skill destination may not traverse, got: $dest" >&2; exit 1 ;;
+    esac
+done
+case "$src" in
+    /*) echo "the skill source path must be relative, got: $src" >&2; exit 1 ;;
+    *../*|*/..) echo "the skill source path may not traverse, got: $src" >&2; exit 1 ;;
+esac
+skill_name="${dest##*/}"
+
+# Rollback-aware, and the single owner of publication. The previous trap
+# removed only $tmp, so a SIGTERM after the target moved to backup left the
+# agent with no installed skill at all -- the window the staged swap exists to
+# close, reopened by the cleanup.
+backup=""
+target=""
+cleanup() {
+    rm -rf "$tmp"
+    [ -n "$backup" ] && [ -e "$backup" ] && [ ! -e "$target" ] && mv "$backup" "$target"
+    rm -rf "$backup"
+}
+tmp="$(mktemp -d)"; trap cleanup EXIT
+
+# A whole-tree snapshot at the pinned ref, then one directory swap.
+#
+# The previous version listed the directory and installed the files in it, which
+# meant three ways to record a SHA while installing something else: nested
+# directories were silently dropped (property-hunt keeps references/ and
+# scripts/ that way), the copy overlaid rather than replaced so a file deleted
+# upstream survived forever, and a mid-loop failure left a half-written skill.
+# A tarball is one request, carries the tree, and lets the install be a rename.
+gh api "repos/$repo/tarball/$ref" > "$tmp/src.tgz" \
+    || { echo "could not fetch $repo@${ref:0:7}" >&2; exit 1; }
+mkdir -p "$tmp/tree"
+# --strip-components=1: GitHub wraps the tree in an <owner>-<repo>-<sha>/ dir.
+tar -xzf "$tmp/src.tgz" -C "$tmp/tree" --strip-components=1 \
+    || { echo "$repo@${ref:0:7} did not unpack as a tarball" >&2; exit 1; }
+
+src="$tmp/tree${src:+/$src}"
+[ -d "$src" ] || { echo "$repo@${ref:0:7} has no ${5:-repository root} to install" >&2; exit 1; }
+[ -s "$src/SKILL.md" ] || { echo "$repo@${ref:0:7}${5:+ ($5)} has no SKILL.md -- is that the right path?" >&2; exit 1; }
+# The name line, not just presence: a wrong path or a moved skill returns a
+# perfectly valid file that is not the one this agent pinned.
+# Compared as a literal string, not an ERE: a destination like `foo.bar` reaches
+# the pattern as `foo.bar` and accepts `name: fooXbar`, so the check that exists
+# to prove this is the pinned skill would pass on a different one.
+want="$skill_name" awk -F': ' '$1 == "name" && ($2 "") == (ENVIRON["want"] "") {found=1}
+     END{exit !found}' "$src/SKILL.md" \
+    || { echo "fetched a file that is not the $skill_name skill" >&2; exit 1; }
+
+target="$home/skills/$dest"
+# Staged beside the destination, then swapped. Installing in place would leave a
+# running agent reading a half-written skill for the duration of the copy, and
+# a failure partway through would leave it there permanently.
+staging="$target.incoming.$$"
+rm -rf "$staging"
+mkdir -p "$(dirname "$target")"
+cp -a "$src" "$staging"
+# Scripts are invoked directly by the agent; an unreadable 644 fails from inside
+# the container as "no such file", the least informative failure available.
+find "$staging" -type f \( -name '*.py' -o -name '*.sh' \) -exec chmod 755 {} +
+# Backup, publish, then drop the backup -- never a window with nothing
+# installed. The previous form removed the target and then moved the staging
+# tree in, so a SIGTERM or a failed mv between the two left the agent with no
+# skill at all, which is worse than the stale one it replaced.
+if [ -e "$target" ]; then
+    backup="$target.previous.$$"
+    mv "$target" "$backup"
+fi
+if ! mv "$staging" "$target"; then
+    echo "could not publish $skill_name; the previous copy is unchanged" >&2
+    exit 1
+fi
+printf 'installed %s at %s (%s file(s), from %s@%s)\n' \
+    "$skill_name" "$target" "$(find "$target" -type f | wc -l | tr -d ' ')" "$repo" "${ref:0:7}"

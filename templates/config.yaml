@@ -1,0 +1,38 @@
+# The declarative half of this agent's home -- everything that is a deliberate
+# choice for this deployment. Keys equal to the image's own defaults are
+# deliberately absent, so the pinned image supplies its current defaults rather
+# than a frozen snapshot of them.
+model:
+  default: gpt-5.5
+  provider: openai-codex
+mcp_servers:
+  # Plow Latch, reached over the Plow relay: the browser and filesystem this
+  # agent works on are the operator's Mac, not this container. The relay
+  # authorises the connection and tells the Mac who is asking; the Mac
+  # authorises each action. Both values come from the agent's own dotenv, so
+  # the credential never appears in this file or in a URL in git.
+  #
+  # THIS BLOCK IS THE DECLARATION. An agent that drives no Mac deletes it --
+  # leaving it in place with blank DOMO_* values is a configured latch with no
+  # credential, which is a broken agent rather than an unconfigured one, and
+  # `agent-mgr check-latch` says so.
+  #
+  # Baseline rather than optional because most agents want it: a new one is
+  # wired for Latch and you remove this if it drives nothing.
+  latch:
+    url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp
+    headers:
+      Authorization: Bearer ${DOMO_MCP_TOKEN}
+    enabled: true
+plugins:
+  enabled:
+  - plow-chat-platform
+  entries:
+    plow-chat-platform:
+      # The plugin registers one platform and no tools. Denying overrides keeps
+      # a future plugin change from silently shadowing an image tool of the
+      # same name, which would be invisible from this file.
+      allow_tool_override: false
+platforms:
+  plow_chat:
+    enabled: true
