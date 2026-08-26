@@ -183,33 +183,40 @@ load_agent() {
     # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
     AGENT_HOOK_ENV=()
     while IFS= read -r line; do
-        # Comment and blank tests see the line without its indentation. A
-        # comment indented inside a block is ordinary, Compose skips it, and
-        # this parser is documented to skip it -- but it often contains an `=`
-        # (commented-out settings usually do), so without the strip it would
-        # reach the identifier check below and be refused as a malformed key.
-        case "${line#"${line%%[![:space:]]*}"}" in \#*|'') continue ;; esac
-        key="${line%%=*}"
-        value="${line#*=}"
+        # Normalized the way compose-go's dotenv parser normalizes, because
+        # Compose reads this SAME file through --env-file (see compose()) and
+        # the two disagreeing about one file is the failure to avoid. Measured
+        # against a real `docker compose --env-file`: leading whitespace, an
+        # `export ` prefix, and space around the `=` are all accepted there and
+        # read as the bare key. Refusing them here would make agent-mgr fail on
+        # a descriptor Compose reads without complaint -- and via
+        # require_own_home's fail-closed arm, fail every OTHER agent's
+        # direct-write commands too.
+        line="${line#"${line%%[![:space:]]*}"}"
+        case "$line" in \#*|'') continue ;; esac
+        case "$line" in
+            export[[:space:]]*)
+                line="${line#export}"
+                line="${line#"${line%%[![:space:]]*}"}" ;;
+        esac
 
-        # Two different things, deliberately not collapsed into one refusal.
-        #
-        # A line with no `=` is not a declaration at all. It is skipped and
-        # parsing continues, which is this parser's existing contract -- the
-        # test above pins it, and its concern is that such a line is never
-        # EXECUTED, not that it is fatal.
-        #
-        # A line that DOES claim to be a declaration must carry a real
-        # identifier. That is where the execution hole was: a malformed key
-        # matched the allowlist as a pattern and reached `printf -v`, where an
-        # array subscript is evaluated arithmetically. Refused rather than
-        # classified -- Compose rejects the same lines through --env-file, so
-        # tolerating one would only let the two disagree about a single file,
-        # and dying is the one behaviour that cannot go wrong quietly.
         case "$line" in
             *=*) ;;
+            # Not a declaration at all. Skipped, and parsing continues -- this
+            # parser's existing contract, whose concern is that such a line is
+            # never EXECUTED rather than that it is fatal.
             *) continue ;;
         esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+
+        # What remains after normalization must be a real identifier. This is
+        # where the execution hole was: a malformed key matched the allowlist as
+        # a PATTERN and reached `printf -v`, where an array subscript is
+        # evaluated arithmetically and arithmetic performs command substitution.
+        # Compose errors on these too, so refusing is the agreeing behaviour.
         case "$key" in
             ''|*[!A-Za-z0-9_]*) die "$descriptor: malformed key: $key" ;;
         esac

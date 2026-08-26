@@ -220,13 +220,8 @@ def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_mark
 
 
 @pytest.mark.parametrize("line", [
-    "AGENT_TZ = America/Chicago",        # spaces around =
-    "  AGENT_TZ=America/Chicago",        # indented
-    "\tAGENT_TZ=America/Chicago",        # tab-indented
-    "export AGENT_TZ=America/Chicago",   # shell-style export
-    "export\tAGENT_TZ=America/Chicago",  # export + tab
-    "STR VAULT=x",                       # a key this tool does not own
-    "AGENT_TZ AGENT_IMAGE=x",            # multi-token: matched the allowlist as a substring
+    "STR VAULT=x",             # a key this tool does not own, with a space in it
+    "AGENT_TZ AGENT_IMAGE=x",  # multi-token: matched the allowlist as a substring
 ])
 def test_a_malformed_declaration_is_refused(run, instance, line):
     """Refused, not classified.
@@ -277,9 +272,32 @@ def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instanc
     is what makes it survivable.
     """
     run("register", "rowan", str(instance("rowan")))
-    run("register", "broken", str(instance("broken", descriptor="AGENT_TZ = x\n")))
+    run("register", "broken", str(instance("broken", descriptor="AGENT_TZ AGENT_IMAGE=x\n")))
     r = run("restore", "rowan")
     assert r.returncode != 0
     assert "could not resolve broken" in r.stderr
     assert "malformed key" in r.stderr
     assert "unregister broken" in r.stderr, "the refusal must name the way out"
+
+
+@pytest.mark.parametrize("line", [
+    "AGENT_TZ = America/Chicago",        # spaces around =
+    "  AGENT_TZ=America/Chicago",        # indented
+    "\tAGENT_TZ=America/Chicago",        # tab-indented
+    "export AGENT_TZ=America/Chicago",   # shell-style export
+    "export\tAGENT_TZ=America/Chicago",  # export + tab
+])
+def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line):
+    """Parity with compose-go, measured rather than assumed.
+
+    Compose reads this same file through --env-file, and a real
+    `docker compose --env-file` accepts all five of these and reads them as the
+    bare key. Refusing them here would make agent-mgr fail on a descriptor
+    Compose reads without complaint -- and through require_own_home's
+    fail-closed arm, fail every OTHER registered agent's direct-write commands
+    over one repo's indentation.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_TZ=America/Chicago" in r.stdout
