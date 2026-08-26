@@ -509,6 +509,10 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     # `pull` is not the only door: up/run/create all take --pull always, which
     # is the same substitution by a different route.
     for args in (("up", "-d", "--pull", "always"), ("up", "-d", "--pull=always"),
+                 # The flag AFTER the service: only run and exec hand later
+                 # words to the container, so only they may stop scanning there.
+                 ("up", "hermes", "--pull", "always"),
+                 ("create", "hermes", "--pull=always"),
                  ("run", "--rm", "--entrypoint", "bash", "--pull", "always", "hermes")):
         r = run("compose", "rowan", *args, env=env)
         assert r.returncode != 0, f"{args} fetched past the guard"

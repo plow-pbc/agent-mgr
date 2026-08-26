@@ -243,19 +243,23 @@ compose_fetch_is_safe() {
             return 1 ;;
     esac
     shift || true
-    # Flags only, stopping at the service: past it the words belong to the
-    # container's own command line.
+    # Only `run` and `exec` hand later words to the CONTAINER, so only they stop
+    # at the service; `up hermes --pull always` is a real fetch with the flag
+    # after it, and breaking there would have missed it.
+    local stop_at_service=0
+    case "$sub" in run|exec) stop_at_service=1 ;; esac
     while [ $# -gt 0 ]; do
         a="$1"; shift
         case "$a" in
             --pull=always) return 1 ;;
             --pull) [ "${1:-}" = always ] && return 1; shift || true ;;
-            # Flags that take a value, so their VALUE is not mistaken for the
-            # service and does not end the scan early.
+            # Value-taking flags, so a value is not mistaken for the service.
+            # Only consulted when stopping at one; otherwise the scan runs to
+            # the end and an unlisted flag cannot truncate it.
             --entrypoint|-e|--env|-l|--label|-p|--publish|-u|--user|-v|--volume|-w|--workdir|--name)
-                shift || true ;;
+                [ "$stop_at_service" -eq 1 ] && { shift || true; } ;;
             -*) ;;
-            *) break ;;
+            *) [ "$stop_at_service" -eq 1 ] && break ;;
         esac
     done
     return 0
