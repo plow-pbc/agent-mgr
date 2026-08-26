@@ -56,11 +56,11 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # refusal names the value it just erased -- "cannot resolve rowan's home ()".
 # Resolve into a second variable and name the original.
 normalized_path() {
-    python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
+    python3 -I -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
 }
 
 canonical_path() {
-    python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
+    python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
 }
 
 registry_valid_name() {
@@ -435,7 +435,7 @@ COMPOSE_NEEDS_NO_IDENTIFICATION="config version ls images build push run ps"
 # which is how one repo serves two people -- so the fix identifies the
 # container rather than constraining the name.
 require_running_container_is_ours() {
-    local cid cids mounted norm self m
+    local cid cids mounted self m
     # A compose that REFUSED to run is not "no container" -- conflating them is
     # exactly what reload-if-running's own comment rejects, and it would silently
     # disable this check on, say, a Compose too old for `--status`. The
@@ -479,13 +479,14 @@ require_running_container_is_ours() {
     # spellings again -- one of them from a source we do not control. Then the
     # same-directory question, resolved on both sides like the collision loop.
     if [ -n "$mounted" ]; then
-        # `norm` carries the resolved value onward and `mounted` is never
-        # assigned from either substitution -- the never-assign rule beside
-        # normalized_path. It also keeps docker's raw .Source for the mismatch
-        # die below, which an operator matches against `docker inspect`.
-        norm="$(normalized_path "$mounted")" \
-            || die "refusing to touch the container under $AGENT_PROJECT -- could not normalise the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
-        m="$(canonical_path "$norm")" \
+        # Straight to canonical_path: realpath collapses `..` on its way to
+        # resolving symlinks, so normalising first asked a second interpreter
+        # the same question. `mounted` itself is never assigned from the
+        # substitution -- the never-assign rule beside normalized_path -- which
+        # is what keeps docker's raw .Source for this refusal and for the
+        # mismatch die below, where an operator matches it against
+        # `docker inspect`.
+        m="$(canonical_path "$mounted")" \
             || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
         [ "$m" = "$self" ] && continue
     fi

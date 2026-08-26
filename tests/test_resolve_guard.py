@@ -455,22 +455,12 @@ def test_the_mismatch_names_the_path_docker_reported(run, instance, tmp_path):
     assert f"it mounts {foreign} at /opt/data" in r.stderr
 
 
-@pytest.mark.parametrize("call, refusal", [
-    ("os.path.abspath(", "could not normalise the home it mounts ({p})"),
-    ("os.path.realpath(", "could not resolve the home it mounts ({p})"),
-])
-def test_a_resolver_failing_on_the_mounted_home_says_which_and_names_it(
-        run, instance, tmp_path, call, refusal):
-    """Both refusals in the container guard, which were byte-identical while
-    holding different values -- one raw, one normalised. That is what let a path
-    go missing from one of them unnoticed, so "normalise" versus "resolve" is
-    now the only thing telling an operator which resolver failed, and both
-    halves of that distinction are pinned here.
+def test_a_resolver_failing_on_the_mounted_home_names_it(run, instance, tmp_path):
+    """The container guard's refusal names the path docker reported, not the
+    value the failed resolution left behind.
 
     Keyed on the path as well as the call: the guard is two functions past
-    load_agent, and failing every abspath stops there instead. `foreign` has no
-    `..`, so the normalised path equals the raw one and the realpath arm reaches
-    the second refusal with the same arrange."""
+    load_agent, and failing every realpath stops in require_own_home instead."""
     foreign = "/home/other/.hermes-rowan"
     d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     all_cids=("theirs",), mounts={"theirs": foreign})
@@ -478,7 +468,7 @@ def test_a_resolver_failing_on_the_mounted_home_says_which_and_names_it(
     b.mkdir()
     (b / "python3").write_text(
         "#!/bin/sh\n"
-        f'case "$*" in *"{call}"*)\n'
+        'case "$*" in *"os.path.realpath("*)\n'
         f'  case "$*" in *"{foreign}"*) exit 1 ;; esac ;;\n'
         "esac\n"
         f'exec {sys.executable} "$@"\n'
@@ -488,4 +478,4 @@ def test_a_resolver_failing_on_the_mounted_home_says_which_and_names_it(
     run("register", "rowan", str(instance("rowan")))
     r = run("restart", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
     assert r.returncode != 0
-    assert refusal.format(p=foreign) in r.stderr
+    assert f"could not resolve the home it mounts ({foreign})" in r.stderr
