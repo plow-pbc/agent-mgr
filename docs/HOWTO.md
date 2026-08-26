@@ -113,18 +113,26 @@ would only hide the message; the status stays 1.)
 To restore one, stop the agent first — unpacking under a live gateway gives two
 writers to one session database.
 
+Bind the home once, before anything else, and use it for every step below. It is
+read from the descriptor rather than typed because the home may not be at
+`~/.hermes-<name>` at all:
+
+```sh
+home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p'); echo "$home"
+```
+
+**If that printed nothing, stop** — `resolve` failed, and every check below
+would then run against an empty path and report the same thing whatever the
+truth is. Fix the registry row or the descriptor first.
+
 **If the home was a symlink, recreate the link before you do anything else.**
 `agent-mgr resolve` reports `AGENT_HOME` as it was *declared* — `load_agent`
 normalises rather than canonicalises, so you get the link path, never its
-target.
+target. (Not a symlink? Skip to the restore block; `$home` is already bound.)
 
-Four states at the link path. Only one means "carry on":
-
-Bind the path once, here, and use it for everything below — the home may not be
-at `~/.hermes-<name>` at all, which is the other reason not to type it:
+Four states at the link path, and only one means "carry on":
 
 ```sh
-home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
 ls -ld "$home"                     # the link and its target, without following it
 [ -e "$home" ] && echo "resolves"  || echo "does not resolve"
 ```
@@ -156,8 +164,9 @@ configured with.
 Recreating link and target, once you know you need to (GNU):
 
 ```sh
-mkdir -p /big/disk/rowan
-ln -sT /big/disk/rowan "$home"
+target=/big/disk/rowan   # wherever this agent's state actually lives
+mkdir -p "$target"
+ln -sT "$target" "$home"
 ```
 
 `ln -sT`, not a bare `ln -s`: onto a path that is already a plain directory a
