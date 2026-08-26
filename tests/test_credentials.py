@@ -165,12 +165,16 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, 
 @pytest.mark.parametrize(
     "plant,expected",
     [
-        # Which layer speaks differs, so the message does too -- but each must
-        # say something the operator can act on. A symlink passes the `-f` gate
-        # and is stopped by O_NOFOLLOW; a FIFO is not a regular file, so `-f`
-        # turns it away first.
+        # Which layer speaks differs, so the message does too. A symlink passes
+        # the `-f` gate and is stopped on the write path, which owes the
+        # did-not-half-happen line. A FIFO is not a regular file, so `-f` turns
+        # it away first and owes only its own diagnosis.
         ("symlink-out", ["cannot read", "Nothing was written"]),
-        ("fifo", ["run 'agent-mgr restore"]),
+        # Named with the .env path, because eight `die` sites in this file share
+        # "run 'agent-mgr restore" -- two of them inside set-latch. A bare
+        # fragment would be satisfied by the config.yaml gate at :237, so a
+        # setup regression that never reached the plant would keep this green.
+        ("fifo", [".env -- run 'agent-mgr restore"]),
     ],
 )
 def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(run, instance, tmp_path, plant, expected):
@@ -182,10 +186,11 @@ def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(run, instance, tmp
 
     The open is O_NOFOLLOW relative to a directory FD on the home, so the kernel
     refuses it -- there is no resolve-then-use window for a link planted after a
-    check. Three things are asserted: that it refused, that the message tells
-    the operator the write did not half-happen, and that the host file was
-    neither read into the home nor replaced -- the last being the one that
-    actually says the secret stayed out."""
+    check. Asserted: that it refused, that stderr carries the diagnosis owed by
+    whichever layer turned it away -- the write path owes the did-not-half-happen
+    line, the `-f` gate owes only its own -- and that the host file was neither
+    read into the home nor replaced, which is the one that actually says the
+    secret stayed out."""
     secret = tmp_path / "host-only-secret"
     secret.write_text("BEGIN OPENSSH PRIVATE KEY\n")
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
