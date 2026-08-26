@@ -126,10 +126,12 @@ would then run against an empty path and report the same thing whatever the
 truth is. Fix the registry row or the descriptor first.
 
 **Now look at what is actually at that path, before anything else.** Do not skip
-this on the belief that your home is not a symlink: telling a plain directory
-from a link that a previous pass replaced is exactly what the table below is
-for, and getting it wrong is the silent wrong-volume restore this section
-exists to prevent. Two read-only commands.
+this on the belief that your home is not a symlink. The table below does not
+tell you *why* a plain directory is there — it cannot, and it says so — but it
+does tell you that a plain directory is what you have, which is the point at
+which you stop and look inside instead of acting. Skipping means acting on the
+belief without ever seeing the shape, and that is the silent wrong-volume
+restore this section exists to prevent. Two read-only commands.
 
 `agent-mgr resolve` reports `AGENT_HOME` as it was *declared* — `load_agent`
 normalises rather than canonicalises, so you get the link path, never its
