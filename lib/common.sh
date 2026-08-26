@@ -158,11 +158,32 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 # it existed to catch went undetected. The grammar above is measured against
 # compose-go; a second copy of it would drift from that measurement.
 #
-# $2 is the allowlist of keys that reach THIS process. $3 = "hooks" collects
-# everything else into AGENT_HOOK_ENV; the dotenv passes nothing, so a key
-# it may not set is dropped rather than smuggled through to the hooks.
+# $2 is the allowlist of keys that reach THIS process. $3 is the file's ROLE,
+# which decides two things that differ between the two callers:
+#
+#   descriptor  Compose reads this same file through --env-file, so the grammar
+#               must agree with compose-go's and a line Compose rejects is
+#               refused here too. Its non-allowlisted keys go to the hooks.
+#   dotenv      Compose never reads it. It is hand-maintained and written by the
+#               gateway, holds credentials, and agent-mgr wants exactly one
+#               non-secret value out of it. A malformed line there is warned
+#               about and skipped, NOT fatal: there is no parity to keep, and
+#               killing every command for every agent -- require_own_home fails
+#               closed on an unresolvable sibling -- over a stray line in
+#               somebody's credential file is wildly out of proportion to it.
+# Fatal for the descriptor, a warning for the dotenv. Returns non-zero when the
+# caller should skip the line rather than stop.
+_refuse() {
+    if [ "$1" = descriptor ]; then
+        die "$2"
+    fi
+    echo "agent-mgr: $2 -- ignoring the line" >&2
+    return 1
+}
+
 parse_env_file() {
-    local file="$1" allow="$2" collect="${3:-}"
+    local file="$1" allow="$2" role="${3:-dotenv}" collect=""
+    [ "$role" = descriptor ] && collect=hooks
     local line key value _rest
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
     # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
@@ -210,7 +231,8 @@ parse_env_file() {
         # evaluated arithmetically and arithmetic performs command substitution.
         # Compose errors on these too, so refusing is the agreeing behaviour.
         case "$key" in
-            ''|*[!A-Za-z0-9_]*) die "$file: malformed key: $key" ;;
+            ''|*[!A-Za-z0-9_]*)
+                _refuse "$role" "$file: malformed key: $key" || continue ;;
         esac
 
         # The value grammar, ported from compose-go in one pass rather than a
@@ -245,13 +267,13 @@ parse_env_file() {
                 _rest="${value#\"}"
                 case "$_rest" in
                     *\"*) value="${_rest%%\"*}" ;;
-                    *) die "$file: unterminated quote in value for $key" ;;
+                    *) _refuse "$role" "$file: unterminated quote in value for $key" || continue ;;
                 esac ;;
             "'"*)
                 _rest="${value#\'}"
                 case "$_rest" in
                     *"'"*) value="${_rest%%\'*}" ;;
-                    *) die "$file: unterminated quote in value for $key" ;;
+                    *) _refuse "$role" "$file: unterminated quote in value for $key" || continue ;;
                 esac ;;
             *)
                 case "$value" in *" #"*) value="${value%%" #"*}" ;; esac
@@ -323,7 +345,7 @@ load_agent() {
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
     AGENT_HOOK_ENV=()
-    parse_env_file "$descriptor" "$AGENT_KEYS" hooks
+    parse_env_file "$descriptor" "$AGENT_KEYS" descriptor
 
     # Convention, applied only where the descriptor said nothing.
     AGENT_NAME="$name"
@@ -364,7 +386,7 @@ load_agent() {
     # no-credential-through-compose contract is untouched. Identity is derived
     # above, so a dotenv cannot move its own home.
     if [ -f "$AGENT_HOME/.env" ]; then
-        parse_env_file "$AGENT_HOME/.env" AGENT_TZ
+        parse_env_file "$AGENT_HOME/.env" AGENT_TZ dotenv
     fi
 
     : "${AGENT_TZ:=America/Los_Angeles}"

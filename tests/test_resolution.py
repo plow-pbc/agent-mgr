@@ -370,10 +370,13 @@ def test_the_dotenv_is_read_never_executed(run, instance, tmp_path, injection_ma
     _home_env(tmp_path, "rowan", f"AGENT_T[$(touch {injection_marker})Z]=1\n")
     r = run("resolve", "rowan")
     assert not injection_marker.exists()
-    # Refused, like the descriptor: a malformed key is a malformed key whichever
-    # file it is in, and the dotenv goes through the same parser.
-    assert r.returncode != 0
-    assert "malformed key" in r.stderr
+    # Warned and skipped, NOT fatal. Compose never reads this file, so there is
+    # no parity to keep -- and killing every command for every agent over a
+    # stray line in somebody's hand-maintained credential file is out of all
+    # proportion to it. The descriptor, which Compose DOES read, still refuses.
+    assert r.returncode == 0, r.stderr
+    assert "malformed key" in r.stderr and "ignoring the line" in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
 
 
 def test_an_unterminated_final_line_is_still_read(run, instance, tmp_path):
@@ -422,3 +425,24 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
     assert "America/Los_Angeles" not in saw
 
 
+def test_a_broken_dotenv_does_not_take_down_other_agents(run, instance, tmp_path):
+    """The asymmetry, pinned.
+
+    A malformed line in a DESCRIPTOR is fatal, and through require_own_home's
+    fail-closed arm that reaches every other registered agent -- deliberate,
+    because Compose reads that file and a descriptor it cannot parse is one this
+    tool cannot reason about.
+
+    A dotenv is not that file. Compose never reads it, it is hand-maintained
+    beside credentials, and the only thing agent-mgr wants from it is a
+    timezone. A stray line there must cost that instance its zone and nothing
+    else -- not its own commands, and certainly not anybody else's.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "other", str(instance("other")))
+    _home_env(tmp_path, "rowan", "AGENT_T[oops]=1\n")
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    other = run("resolve", "other")
+    assert other.returncode == 0, other.stderr
