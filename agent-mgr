@@ -244,24 +244,6 @@ case "$cmd" in
             || die "$AGENT_NAME declares no latch server in $installed -- nothing would read this pair"
         env_file="$AGENT_HOME/.env"
         [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
-        # Resolved before it is read, and everything after uses the resolved
-        # path. This home is a live container mount, and the agents that most
-        # need a latch are the ones reading attacker-controlled input -- a
-        # listing page's JSON-LD, a pasted URL, a texted screenshot. A gateway
-        # that got out of hand can swap this leaf for a symlink to anything the
-        # operator can read; awk would follow it, and the mv below would then
-        # write that file's contents back INSIDE the mount, which turns a
-        # credential writer into a way out of the host. Resolving first also
-        # closes the window between the check and the use: a symlink swapped in
-        # afterwards is not the path this then reads or replaces.
-        home_real="$(canonical_path "$AGENT_HOME")" \
-            || die "refusing to write to $env_file -- could not resolve $AGENT_HOME"
-        env_real="$(canonical_path "$env_file")" \
-            || die "refusing to write to $env_file -- could not resolve it"
-        case "$env_real" in
-            "$home_real"/*) env_file="$env_real" ;;
-            *) die "refusing to write to $env_file -- it resolves to $env_real, outside ${AGENT_NAME}'s home ($home_real). A dotenv that leaves the home is not one this tool wrote." ;;
-        esac
         # On stdin, never argv, and this is the whole reason the command exists
         # in this shape: check-latch already hands the token to curl as a config
         # on stdin because the argv form puts a live relay credential in the
@@ -287,6 +269,37 @@ case "$cmd" in
         # exists to report, created by the command meant to prevent it.
         [ -n "$uid" ] || die "DOMO_DEVICE_UID was empty -- mint the pair on the Mac running Latch"
         [ -n "$tok" ] || die "DOMO_MCP_TOKEN was empty -- mint the pair on the Mac running Latch"
+        # Here, not up beside the `-f` test, because this is check-then-use and
+        # the gap is the whole exposure: above the prompts it spanned seconds of
+        # operator typing, which an in-container watcher wins at its leisure.
+        #
+        # The home is bind-mounted at /opt/data with the gateway running as the
+        # operator's uid, and the agents that most need a latch are the ones
+        # reading attacker-controlled input -- a listing page's JSON-LD, a pasted
+        # URL, a texted screenshot. So a gateway that got out of hand can swap
+        # this leaf for a symlink to any file the operator can read: awk follows
+        # it and the mv below republishes that file INSIDE the mount, which is a
+        # way out of the host rather than a bad write.
+        #
+        # What this buys is the PRE-EXISTING plant, not a closed race -- a link
+        # planted between this line and the mv below is still followed. Closing
+        # that needs the read and rename done relative to an O_NOFOLLOW directory
+        # FD, which is #25's subject and applies to this seam too. The same bound
+        # lib/fetch-tree states at its own check, narrowed here to a mktemp.
+        #
+        # canonical_path on BOTH sides, deliberately. A home symlinked onto a
+        # bigger disk is ordinary here -- load_agent keeps AGENT_HOME normalized,
+        # not resolved, for exactly that reason -- so resolving only one side
+        # would refuse every such home and send the operator back to hand-editing
+        # the dotenv, which is the thing this command exists to stop.
+        home_real="$(canonical_path "$AGENT_HOME")" \
+            || die "refusing to write to $env_file -- could not resolve $AGENT_HOME"
+        env_real="$(canonical_path "$env_file")" \
+            || die "refusing to write to $env_file -- could not resolve it"
+        case "$env_real" in
+            "$home_real"/*) env_file="$env_real" ;;
+            *) die "refusing to write to $env_file -- it resolves to $env_real, outside ${AGENT_NAME}'s home ($home_real). A dotenv that leaves the home is not one this tool wrote." ;;
+        esac
         # Beside the target, so the rename is atomic: a mktemp in /tmp can land
         # on another filesystem, where mv is copy-then-unlink and a crash leaves
         # the dotenv truncated. Every other key is carried through untouched --

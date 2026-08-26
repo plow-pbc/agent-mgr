@@ -185,3 +185,25 @@ def test_set_latch_refuses_a_dotenv_that_resolves_outside_the_home(run, instance
     assert secret.read_text() == "BEGIN OPENSSH PRIVATE KEY\n"
     # And the credential did not reach the host file either.
     assert "tok_xyz" not in secret.read_text()
+
+
+def test_set_latch_accepts_a_home_symlinked_onto_another_disk(run, instance, tmp_path):
+    """The accept side of the same guard, and the reason it resolves BOTH sides.
+    Putting agent state on the big disk is ordinary here -- load_agent keeps
+    AGENT_HOME normalized rather than resolved for exactly that reason -- so
+    resolving only the dotenv would put every such home 'outside' itself and
+    refuse the write. The operator's remedy would then be to hand-edit the
+    dotenv, which is what this command was added to stop, and the refusal test
+    alone would stay green through it.
+
+    Mirrors test_a_home_symlinked_onto_another_disk_still_works, which guards the
+    same setup for restore."""
+    target = tmp_path / "srv" / "rowan"
+    target.mkdir(parents=True)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / ".hermes-rowan").symlink_to(target)
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("restore", "rowan")
+    r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n")
+    assert r.returncode == 0, f"a symlinked home was refused: {r.stderr}"
+    assert "DOMO_MCP_TOKEN=tok_xyz" in (target / ".env").read_text().splitlines()
