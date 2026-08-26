@@ -201,11 +201,16 @@ differently on purpose:
 | in the file | what happens |
 |---|---|
 | another key `agent-mgr` owns — `AGENT_IMAGE`, `AGENT_CONFIG`, a hook | **named on stderr and dropped**, with the reason: identity keys point at the registry name, the rest at the agent's own `agent.env` |
-| anything else — including a typo like `AGENT_TIMEZONE` | **silently ignored**, the same as in a descriptor |
+| anything else — including a typo like `AGENT_TIMEZONE` | **silently dropped**, reaching nothing at all |
 
-The identity keys could never be in it. `AGENT_HOME`, `AGENT_CONTAINER` and
-`AGENT_PROJECT` belong to the registry name, and an overlay is keyed by that
-name, so a bad one would agree with itself: `require_own_home` asks whether the
+That last row differs from a descriptor, where an unowned key is *not* inert: it
+is forwarded to the restore and pre-transition hooks, and Compose reads the same
+file through `--env-file`, so a `compose.override.yml` can interpolate it. Only
+in an overlay does it go nowhere — don't put `STR_VAULT`-style variables there.
+
+The identity keys could never be in it — `AGENT_IDENTITY_KEYS` in
+`lib/common.sh` is the list. They belong to the registry name, and an overlay is
+keyed by that name, so a bad one would agree with itself: `require_own_home` asks whether the
 home ends in `.hermes-$AGENT_NAME`, which an overlay claiming a sibling's home
 passes only if it renames itself too. Excluding them is what closes that, not a
 later shape check.

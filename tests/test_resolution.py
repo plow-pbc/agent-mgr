@@ -1,4 +1,7 @@
+import os
 import pathlib
+
+from conftest import fake_docker
 
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
@@ -273,3 +276,36 @@ def test_resolve_shows_which_overlay_contributed(run, instance, registry):
     assert f"AGENT_OVERLAY={registry.parent / 'rowan.env'}" in run("resolve", "rowan").stdout
 
 
+def test_the_overlay_zone_reaches_compose_through_the_export(run, instance, registry, tmp_path):
+    """The whole chain, not the second hop.
+
+    `compose()` passes --env-file <the agent's own agent.env>, which in a shared
+    repo declares somebody else's zone. The overlay wins only if load_agent
+    EXPORTS the resolved AGENT_TZ (Compose reads shell variables ahead of
+    --env-file). Two hops, and testing either alone is green while the other is
+    broken: `resolve` reads ${!k} and never needs the export, and a rendering
+    test that injects AGENT_TZ by hand never runs the export list at all.
+
+    So this runs the real CLI against a stub `docker` that reports the
+    AGENT_TZ it was handed -- dropping AGENT_TZ from the export list fails here
+    and nowhere else.
+    """
+    repo = instance("rowan", descriptor="AGENT_TZ=America/Los_Angeles\n")
+    run("register", "rowan", str(repo))
+    _overlay(registry, "rowan", "AGENT_TZ=America/Chicago\n")
+
+    seen = tmp_path / "seen-tz"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    stub = b / "docker"
+    stub.write_text(stub.read_text().replace(
+        "#!/usr/bin/env bash",
+        f'#!/usr/bin/env bash\nprintf "%s\\n" "${{AGENT_TZ-<unset>}}" >> {seen}', 1))
+
+    run("compose", "rowan", "config", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert seen.exists(), "the stub docker never ran -- the chain was not exercised"
+    saw = seen.read_text()
+    assert "America/Chicago" in saw, (
+        f"compose was handed {saw.strip()!r}; the overlay's zone did not reach it, "
+        f"so the container would run on the shared descriptor's clock"
+    )
+    assert "America/Los_Angeles" not in saw

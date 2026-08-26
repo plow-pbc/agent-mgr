@@ -121,12 +121,11 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 #
 # Deliberately not "AGENT_KEYS minus the identity ones". A wider surface costs a
 # second descriptor dialect to document and keep tested before anything asks for
-# it, and widening later is one string. The identity keys -- AGENT_NAME,
-# AGENT_DIR, AGENT_HOME, AGENT_CONTAINER, AGENT_PROJECT -- could never be in it:
-# they are the registry name's to derive, that derivation is what lets one repo
-# serve several people, and the shape test cannot catch a bad override because
-# it asks whether AGENT_HOME ends in .hermes-$AGENT_NAME while the overlay is
-# keyed by AGENT_NAME, so a bad one would agree with itself.
+# it, and widening later is one string. AGENT_IDENTITY_KEYS (below) could never
+# be in it: those are the registry name's to derive, that derivation is what lets
+# one repo serve several people, and the shape test cannot catch a bad override
+# because it asks whether AGENT_HOME ends in .hermes-$AGENT_NAME while the
+# overlay is keyed by AGENT_NAME, so a bad one would agree with itself.
 AGENT_OVERLAY_KEYS="AGENT_TZ"
 
 # The keys an overlay could never set, named once so the comment above, the
