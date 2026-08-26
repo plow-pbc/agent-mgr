@@ -149,41 +149,61 @@ AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_
 # reports success having stopped nothing.
 COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES"
 
-load_agent() {
-    local name="${1:-}"
-    [ -n "$name" ] || die "which agent? try 'agent-mgr ls'"
+# Parse one declarative KEY=VALUE file. Read, NEVER execute.
+#
+# One copy, called for the agent's descriptor and again for the instance's
+# own dotenv. A second parser is what this file already paid for once: the
+# peer parser in require_own_home stripped only double quotes, so a sibling
+# declaring its home with single quotes compared unequal and the collision
+# it existed to catch went undetected. The grammar above is measured against
+# compose-go; a second copy of it would drift from that measurement.
+#
+# $2 is the allowlist of keys that reach THIS process. $3 is the file's ROLE,
+# which decides two things that differ between the two callers:
+#
+#   descriptor  Compose reads this same file through --env-file, so the grammar
+#               must agree with compose-go's and a line Compose rejects is
+#               refused here too. Its non-allowlisted keys go to the hooks.
+#   dotenv      Compose never reads it. It is hand-maintained and written by the
+#               gateway, holds credentials, and agent-mgr wants exactly one
+#               non-secret value out of it. A malformed line there is warned
+#               about and skipped, NOT fatal: there is no parity to keep, and
+#               killing every command for every agent -- require_own_home fails
+#               closed on an unresolvable sibling -- over a stray line in
+#               somebody's credential file is wildly out of proportion to it.
+# Fatal for the descriptor, a warning for the dotenv. Returns non-zero when the
+# caller should skip the line rather than stop.
+#
+# The dotenv branch names the file and the LINE NUMBER and quotes nothing. That
+# file sits beside credentials, and a malformed line's "key" is whatever precedes
+# the `=` -- for a line like `sk-abc123=x` that is the secret itself, which a
+# diagnostic must never put on stderr. A line number locates it exactly and
+# leaks nothing. The descriptor branch may quote, because agent-mgr writes that
+# file from its own template and it is documented to hold no credential.
+_refuse() {
+    if [ "$1" = descriptor ]; then
+        die "$2"
+    fi
+    echo "agent-mgr: $3: line $4: $5 -- ignoring it" >&2
+    return 1
+}
 
-    local dir
-    dir="$(registry_lookup "$name")" || die "$name is not registered -- run 'agent-mgr register $name <dir>'"
-    [ -d "$dir" ] || die "$name points at $dir, which no longer exists"
-
-    local descriptor="$dir/agent.env"
-    [ -f "$descriptor" ] || die "$dir has no agent.env -- an agent repo needs one"
-
-    # shellcheck disable=SC2086
-    unset $AGENT_KEYS $COMPOSE_KEYS
-    AGENT_HOME_DECLARED=0
-
-    # Read, never execute. This used to dot-source the descriptor, which made a
-    # file documented as declarative into host shell code: any repo registered
-    # here could run arbitrary commands with the operator's credentials the
-    # moment `agent-mgr resolve` touched it -- before a single Compose guard ran.
-    #
-    # Only AGENT_* is parsed. The override-only variables a descriptor also
-    # carries (STR_REPO and friends) are none of this function's business:
-    # Compose reads them itself through --env-file, with its own parser.
-    #
-    # $HOME is the one expansion, because it is the one the template documents.
-    # Anything else stays literal -- a descriptor cannot reach $(...) or a
-    # sibling variable, which is the whole point of not sourcing it.
+parse_env_file() {
+    local file="$1" allow="$2" role="$3" collect="" _lineno=0
+    [ "$role" = descriptor ] && collect=hooks
     local line key value _rest
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
     # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
     # this empty, and bash treats an empty array as unset under `set -u` until
     # 4.4 -- so on the 3.2 that macOS still ships, `restore` and every guarded
     # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
-    AGENT_HOOK_ENV=()
-    while IFS= read -r line; do
+    # `|| [ -n "$line" ]` so an unterminated final line is still seen. read
+    # returns non-zero at EOF even when it filled $line, and that was tolerable
+    # while this parsed only agent.env, which agent-mgr writes from its own
+    # template. It is not for an instance's own dotenv: that file is maintained
+    # by hand and by the gateway, so a last line with no newline is ordinary.
+    while IFS= read -r line || [ -n "$line" ]; do
+        _lineno=$((_lineno + 1))
         # Normalized the way compose-go's dotenv parser normalizes, because
         # Compose reads this SAME file through --env-file (see compose()) and
         # the two disagreeing about one file is the failure to avoid. Measured
@@ -213,13 +233,30 @@ load_agent() {
         key="${key%"${key##*[![:space:]]}"}"
         value="${value#"${value%%[![:space:]]*}"}"
 
+        # A dotenv is not this parser's to police. agent-mgr wants exactly one
+        # key out of it; every other line is a credential or a gateway setting
+        # it neither consumes nor owns, so validating those made it a partial
+        # linter for fields belonging to someone else -- and that is precisely
+        # where the leak risk lived, since a diagnostic about a malformed line
+        # in a credential file has to describe the line without quoting it.
+        #
+        # Skipping first deletes that whole role. It costs nothing an operator
+        # would notice: the near-misses that actually get typed -- spaces around
+        # the `=`, `export`, indentation -- are normalized ABOVE this point, so
+        # they still resolve. Only a genuine misspelling goes quiet, and its
+        # symptom is immediate and local: the zone did not change.
+        if [ "$role" = dotenv ] && [ "$key" != AGENT_TZ ]; then
+            continue
+        fi
+
         # What remains after normalization must be a real identifier. This is
         # where the execution hole was: a malformed key matched the allowlist as
         # a PATTERN and reached `printf -v`, where an array subscript is
         # evaluated arithmetically and arithmetic performs command substitution.
         # Compose errors on these too, so refusing is the agreeing behaviour.
         case "$key" in
-            ''|*[!A-Za-z0-9_]*) die "$descriptor: malformed key: $key" ;;
+            ''|*[!A-Za-z0-9_]*)
+                _refuse "$role" "$file: malformed key: $key" "$file" "$_lineno" "malformed key" || continue ;;
         esac
 
         # The value grammar, ported from compose-go in one pass rather than a
@@ -254,13 +291,13 @@ load_agent() {
                 _rest="${value#\"}"
                 case "$_rest" in
                     *\"*) value="${_rest%%\"*}" ;;
-                    *) die "$descriptor: unterminated quote in value for $key" ;;
+                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" "unterminated quote" || continue ;;
                 esac ;;
             "'"*)
                 _rest="${value#\'}"
                 case "$_rest" in
                     *"'"*) value="${_rest%%\'*}" ;;
-                    *) die "$descriptor: unterminated quote in value for $key" ;;
+                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" "unterminated quote" || continue ;;
                 esac ;;
             *)
                 case "$value" in *" #"*) value="${value%%" #"*}" ;; esac
@@ -294,22 +331,53 @@ load_agent() {
         # its absence; it is here because membership is a literal question, and
         # because loosening that check must not silently re-open the sink.
         # `--` for uniformity with the other guarded greps.
-        if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$key"; then
-            # Recorded by the parser that accepted it, so require_own_home does
-            # not need a second opinion about the same file. Its raw
-            # `grep '^[[:space:]]*AGENT_HOME='` predated the normalization and
-            # could not see `export AGENT_HOME=…` or `AGENT_HOME = …`, both of
-            # which load_agent accepts -- so a descriptor resolved fine and then
-            # every direct-write command refused it as undeclared.
+        if printf '%s' "$allow" | grep -Fqw -- "$key"; then
+            # Recorded by the parser that accepted it, so require_own_home needs
+            # no second opinion about the same file. Its raw
+            # `grep '^[[:space:]]*AGENT_HOME='` could not see `export AGENT_HOME=`
+            # or `AGENT_HOME = `, both of which this parser accepts -- so a
+            # descriptor resolved fine and every direct-write command then
+            # refused it as undeclared.
             [ "$key" = AGENT_HOME ] && AGENT_HOME_DECLARED=1
             printf -v "$key" '%s' "$value"
-        else
+        elif [ "$collect" = "hooks" ]; then
             # An instance's own variables -- STR_VAULT and friends -- which its
             # compose override and its hooks are written against. Passed to the
             # hooks as an environment, never into this process.
             AGENT_HOOK_ENV+=("$key=$value")
         fi
-    done < "$descriptor"
+    done < "$file"
+}
+
+load_agent() {
+    local name="${1:-}"
+    [ -n "$name" ] || die "which agent? try 'agent-mgr ls'"
+
+    local dir
+    dir="$(registry_lookup "$name")" || die "$name is not registered -- run 'agent-mgr register $name <dir>'"
+    [ -d "$dir" ] || die "$name points at $dir, which no longer exists"
+
+    local descriptor="$dir/agent.env"
+    [ -f "$descriptor" ] || die "$dir has no agent.env -- an agent repo needs one"
+
+    # shellcheck disable=SC2086
+    unset $AGENT_KEYS $COMPOSE_KEYS
+    AGENT_HOME_DECLARED=0
+
+    # Read, never execute. This used to dot-source the descriptor, which made a
+    # file documented as declarative into host shell code: any repo registered
+    # here could run arbitrary commands with the operator's credentials the
+    # moment `agent-mgr resolve` touched it -- before a single Compose guard ran.
+    #
+    # Only AGENT_* is parsed. The override-only variables a descriptor also
+    # carries (STR_REPO and friends) are none of this function's business:
+    # Compose reads them itself through --env-file, with its own parser.
+    #
+    # $HOME is the one expansion, because it is the one the template documents.
+    # Anything else stays literal -- a descriptor cannot reach $(...) or a
+    # sibling variable, which is the whole point of not sourcing it.
+    AGENT_HOOK_ENV=()
+    parse_env_file "$descriptor" "$AGENT_KEYS" descriptor
 
     # Convention, applied only where the descriptor said nothing.
     AGENT_NAME="$name"
@@ -331,6 +399,28 @@ load_agent() {
     AGENT_HOME="$home"
     : "${AGENT_CONTAINER:=hermes-$name}"
     : "${AGENT_PROJECT:=hermes-$name}"
+
+    # The instance's own dotenv -- the file the operator already keeps per
+    # person, mounted at /opt/data, holding its Plow token and Latch credential.
+    # Read AFTER the home is known and BEFORE the default below, so precedence
+    # is  this file > the shared descriptor > convention.
+    #
+    # This is what lets ONE repo serve several people, and it is deliberately
+    # almost nothing. config.yaml interpolates ${VAR} from this same dotenv at
+    # runtime, so a per-person model, locale or endpoint is already a line in
+    # here and no business of agent-mgr's. AGENT_TZ is the sole exception:
+    # Compose sets `TZ` into the container at render time, so the gateway never
+    # sees it and cannot resolve it from the file the way it resolves the rest.
+    #
+    # AGENT_TZ alone, and that matters -- this file holds credentials. One
+    # non-secret value enters agent-mgr's process; TZ still reaches the container
+    # through `environment:`, so nothing here goes to Compose and the
+    # no-credential-through-compose contract is untouched. Identity is derived
+    # above, so a dotenv cannot move its own home.
+    if [ -f "$AGENT_HOME/.env" ]; then
+        parse_env_file "$AGENT_HOME/.env" AGENT_TZ dotenv
+    fi
+
     : "${AGENT_TZ:=America/Los_Angeles}"
     : "${AGENT_IMAGE:=nousresearch/hermes-agent@$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/image.ref")}"
     # Where this agent's declarative config lives. Relative resolves against the

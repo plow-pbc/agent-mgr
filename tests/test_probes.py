@@ -1,6 +1,9 @@
+from pathlib import Path
 import os
 
 from conftest import fake_docker
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _bin(tmp_path, name, **kw):
@@ -219,3 +222,27 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
         # scaffolded repo could not discover the veto it is entitled to.
         assert hook in descriptor, (
             f"{hook} is a declared hook but templates/agent.env does not document it")
+
+
+def test_no_doc_hardcodes_the_conventional_dotenv_path():
+    """The per-person dotenv is `$AGENT_HOME/.env`, not `~/.hermes-<name>/.env`.
+
+    Those differ for exactly the instances whose descriptor declares AGENT_HOME
+    -- the case the docs most need to be right about -- and the spelling drifted
+    into four operator-facing files before anyone noticed, twice. A doc that
+    hardcodes the conventional path sends that operator to a file nothing reads.
+
+    No source-string assertion guarding it: if the read ever moves,
+    test_the_dotenv_follows_a_declared_home fails on behaviour, which is the
+    stronger signal and the one that cannot be satisfied by a matching string.
+    """
+    offenders = []
+    for rel in ("README.md", "docs/HOWTO.md", "templates/agent.env",
+                "templates/compose.yml"):
+        for n, line in enumerate((ROOT / rel).read_text().splitlines(), 1):
+            if ".hermes-<name>/.env" in line or ".hermes-rowan/.env" in line:
+                offenders.append(f"{rel}:{n}")
+    assert not offenders, (
+        "these name the conventional dotenv path, which is wrong for a "
+        f"declared-home instance -- use $AGENT_HOME/.env: {offenders}"
+    )
