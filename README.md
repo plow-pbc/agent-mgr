@@ -96,6 +96,18 @@ whether it is a skill or a plugin: pin it, don't copy it. The rule is dynamic �
 something one agent uses today graduates the moment a second wants it, which is
 the point at which it earns a pin instead of a directory.
 
+Worked example — publishing a property map from the Mac. Three pieces, two
+delivery targets, and all three live in the **agent's** repo:
+
+- the instruction *"to publish the map, run `just serve-map` on the Mac through
+  Latch"* → its `SKILL.md`, delivered to the **container**
+- the recipe `serve-map:` → its `justfile`, delivered to the **Mac**
+- the launchd plist that keeps it up → its `scripts/`, delivered to the **Mac**
+
+None of it is in `agent-mgr`, because no second agent publishes a property map.
+Which target a piece is delivered to is a separate question from which repo it
+lives in — and only the second one is this table's.
+
 **There is no third repo per skill.** A skill only one agent runs is that
 agent's code and belongs beside its compose file. Splitting it out costs a
 SHA-pin bump on every change, paid at both ends, and buys nothing until a
