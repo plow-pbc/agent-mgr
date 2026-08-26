@@ -181,6 +181,9 @@ def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
      "has no value"),
     (("run", "--entrypoint=", "--rm", "hermes"), True,
      "the same, spelled with =", "has no value"),
+    (("run", "--entrypoint=bash", "--rm", "hermes"), False,
+     "the = spelling WITH a value is a real override and must be admitted -- "
+     "the only arm no row reached", ""),
     (("run", "--rm", "hermes", "--entrypoint", "bash"), True,
      "--entrypoint AFTER the service is an argument to the service's own "
      "command, so s6 still boots -- a substring check for the flag passed this",

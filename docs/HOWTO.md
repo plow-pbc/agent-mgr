@@ -143,6 +143,7 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 |---|---|
 | `refusing to act: compose resolved ...` | the descriptor or override disagrees with the agent you named — this is the guard working |
 | `HERMES_UID ... must be set` | you ran `docker compose` directly; go through `agent-mgr` |
+| `refusing 'compose run'...` | `--entrypoint` must be the **first** argument after `run` and carry a non-empty value — see § Running a one-off container |
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |
 | a shared skill behaves oddly | compare the SHA in `skills.tsv` against what upstream has since fixed |
