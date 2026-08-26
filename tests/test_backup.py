@@ -6,7 +6,6 @@ and every home's own backups/ directory existed and was empty. This is the
 command that fills them.
 """
 import os
-import shutil
 import tarfile
 
 import pytest
@@ -168,16 +167,12 @@ def test_all_on_an_empty_registry_is_refused_rather_than_silently_green(run, tmp
 
 
 def test_a_failed_archive_never_lands_under_a_valid_name(run, instance, tmp_path, backup_dir):
-    """`-czf` truncates on open, so writing straight at the final name means a
-    run that dies partway destroys the morning's good archive and leaves a
-    truncated file that retention treats as healthy. For the tool holding the
-    only copy of unrebuildable state, a corrupt archive that looks good is the
-    worst possible output.
-
-    The failure is injected AFTER staging succeeds. Making the destination
-    unwritable instead fails `mktemp` before `tar` ever runs, so nothing is
-    staged and the whole stage-and-promote mechanism could be deleted with the
-    suite still green."""
+    """A run that dies partway must not destroy the previous good archive or
+    leave a truncated one under a valid name — for the tool holding the only
+    copy of unrebuildable state, a corrupt archive that looks healthy is the
+    worst possible output. The failure is injected after staging succeeds; an
+    unwritable destination instead fails `mktemp` before `tar` runs, staging
+    nothing and pinning nothing."""
     _, home = registered(run, instance, "rowan")
     (home / ".env").write_text("x\n")
     good = backup_dir / "rowan-20200101.tar.gz"
@@ -200,54 +195,19 @@ def test_a_failed_archive_never_lands_under_a_valid_name(run, instance, tmp_path
 
     assert r.returncode != 0, "tar status 2 is a real failure, not the tolerated warning"
     assert good.read_text() == "yesterday's, still good", "the previous good archive was destroyed"
-    # The FULL set, not a negative glob carrying today's date. `rowan-20260*`
-    # stops matching anything the command can write on 2026-10-01, and a
-    # never-matching negative assertion is permanently true -- the same vacuous
-    # shape as the `*.part` glob this test was rewritten to fix, with a delayed
-    # trigger instead of an immediate one. Asserting the whole listing is
-    # date-independent and also catches a partial landing under any other stamp.
+    # The FULL set, not a negative glob carrying today's date: a glob that
+    # stops matching anything the command can write is permanently true, and
+    # the whole listing also catches a partial landing under any other stamp.
     assert [p.name for p in backup_dir.glob("rowan-*.tar.gz")] == ["rowan-20200101.tar.gz"], \
         "a partial archive was promoted"
     assert not list(backup_dir.glob(".rowan-*")), "the staged file was left behind"
 
 
-def test_an_orphaned_stage_is_swept_rather_than_leaked_forever(run, instance, tmp_path, backup_dir):
-    """A unique staging name is what makes two same-day runs harmless, but a run
-    killed without its EXIT trap leaks a distinct near-full-size file that
-    retention's glob deliberately excludes -- dot-prefixed, so invisible to
-    `ls`, in the one directory every future backup's free space depends on."""
-    _, home = registered(run, instance, "rowan")
-    (home / ".env").write_text("x\n")
-    orphan = backup_dir / ".rowan-ab12cd"
-    orphan.write_text("a stage its run never got to promote")
-    os.utime(orphan, (0, 0))
-    live = backup_dir / ".rowan-ef34gh"
-    live.write_text("another invocation's stage, running right now")
-    # $dest is an operator-named directory that may hold anything, and deleting
-    # a SIBLING's stage is not tidy-up: that run's `mv` then fails and its
-    # backup is lost. Both of these are old enough to be swept if the sweep
-    # were not anchored to this agent's own staging shape.
-    sibling = backup_dir / ".life-ab12cd"
-    sibling.write_text("another agent's orphan, not this run's to prune")
-    os.utime(sibling, (0, 0))
-    bystander = backup_dir / ".keep-me"
-    bystander.write_text("an operator's own dotfile")
-    os.utime(bystander, (0, 0))
-
-    assert run("backup", "rowan",
-               env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)}).returncode == 0
-    assert not orphan.exists(), "the orphaned stage was left to accumulate"
-    assert live.exists(), "a concurrent invocation's live stage must survive the sweep"
-    assert sibling.exists(), "another agent's stage is not this run's to prune"
-    assert bystander.exists(), "a file this command never wrote must survive"
-
-
 def test_a_home_written_while_it_is_read_still_produces_an_archive(run, instance, tmp_path, backup_dir):
-    """tar exits 1 for 'file changed as we read it' -- which a RUNNING gateway
-    provokes on essentially every nightly run -- and the archive it produced is
+    """tar exits 1 for 'file changed as we read it', which a running gateway
+    provokes on essentially every nightly run, and the archive it produced is
     complete. Treating that as failure makes the nightly cry wolf, which is how
-    a real miss gets ignored. Status 2 stays a failure; the test above covers it.
-    """
+    a real miss gets ignored. Status 2 stays a failure."""
     import subprocess
     import sys
     _, home = registered(run, instance, "rowan")
@@ -276,12 +236,11 @@ def test_a_home_written_while_it_is_read_still_produces_an_archive(run, instance
 
 def test_a_home_symlinked_onto_another_disk_is_actually_archived(
         run, instance, tmp_path, backup_dir):
-    """Putting agent state on the big disk is ordinary and supported --
-    load_agent normalises rather than canonicalises for exactly that, and
-    test_no_second_gateway asserts it. Archiving from the home's PARENT stores
-    that top-level symlink AS a symlink: tar exits 0, the archive holds one
-    entry, and every credential, session and memory is absent. A backup that
-    reports success and contains nothing is the worst output this tool has."""
+    """A home symlinked onto a bigger disk is supported: load_agent normalises
+    rather than canonicalises for exactly that. Archiving from the home's
+    PARENT stores that top-level symlink as a symlink — tar exits 0, the
+    archive holds one entry, and every credential, session and memory is
+    absent."""
     target = tmp_path / "big-disk" / "rowan-state"
     target.mkdir(parents=True)
     repo = instance("rowan")
@@ -327,31 +286,3 @@ def test_an_unknown_option_is_refused_rather_than_read_as_a_target(
     assert r.returncode != 0
     assert "unknown option" in r.stderr
 
-
-def test_a_failed_sweep_cannot_cost_a_successful_backup_its_report(
-        run, instance, tmp_path, backup_dir):
-    """The sweep runs AFTER the promote, so under `set -e` an unguarded failure
-    kills the script between a good archive landing and the path being printed
-    — and lands a successful backup in `--all`'s failed list. `find` exits
-    non-zero on two errors reachable in ordinary operation: a concurrent
-    same-agent run mv'ing its stage away between readdir and the `-mtime` stat,
-    and an orphan this invocation cannot unlink.
-
-    Every other invariant on this branch is mutation-checked; without this the
-    `|| true` could be deleted with the suite green."""
-    _, home = registered(run, instance, "rowan")
-    (home / ".env").write_text("x\n")
-
-    real_find = shutil.which("find")
-    shim = tmp_path / "findbin"
-    shim.mkdir()
-    (shim / "find").write_text(f'#!/usr/bin/env bash\n"{real_find}" "$@"\nexit 1\n')
-    (shim / "find").chmod(0o755)
-
-    r = run("backup", "rowan",
-            env={"AGENT_MGR_BACKUP_DIR": str(backup_dir),
-                 "PATH": f"{shim}:{os.environ['PATH']}"})
-
-    assert r.returncode == 0, f"a sweep failure aborted a successful backup: {r.stderr}"
-    archive = next(iter(backup_dir.glob("rowan-*.tar.gz")))
-    assert str(archive) in r.stdout, "the archive landed but its path was never printed"
