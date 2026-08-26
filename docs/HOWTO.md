@@ -12,7 +12,7 @@ ln -s ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
 agent-mgr ls
 ```
 
-The registry lives at `~/.config/agent-mgr/agents` and maps a name to an
+The registry lives at `${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/agents` and maps a name to an
 agent repo, so every command works from any directory.
 
 ## Stand up a new agent
@@ -77,7 +77,7 @@ whatever it is — identity, config, its skill, its scripts.
 One case splits further. When several instances are registered against one
 checkout, a value belonging to a *person* rather than to the agent — a timezone
 — cannot live in `agent.env` either, because every instance reads it. That goes
-in `~/.config/agent-mgr/<name>.env`.
+in `${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/<name>.env`.
 
 ## Adding a shared skill
 

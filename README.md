@@ -56,7 +56,7 @@ The test for where something belongs: **would a second agent want this?**
 - `agent.env` — no, it *is* this agent's identity → **its repo**
 - a value belonging to one *person* — a timezone — no, and not its repo
   either when several instances share that checkout → **its overlay**,
-  `~/.config/agent-mgr/<name>.env`
+  `${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/<name>.env`
 - a recipe that publishes a property map — no, one agent runs it → **its repo**
 - the Plow Chat plugin — yes, every agent → **common**, pinned by SHA
 - a skill two agents share — pinned by SHA from upstream, installed by `add-skill`
@@ -181,14 +181,14 @@ So `load_agent` reads an optional overlay beside the registry, keyed by the same
 name:
 
 ```
-~/.config/agent-mgr/<name>.env
+${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/<name>.env
 ```
 
 Read **after** the repo's `agent.env`, through the same parser, so precedence is
 **overlay > descriptor > convention default**.
 
 ```sh
-printf 'AGENT_TZ=America/Chicago\n' > ~/.config/agent-mgr/rowan.env
+printf 'AGENT_TZ=America/Chicago\n' > "${XDG_CONFIG_HOME:-$HOME/.config}"/agent-mgr/rowan.env
 ```
 
 It sets `AGENT_TZ` and nothing else — one key, because one is the demonstrated
