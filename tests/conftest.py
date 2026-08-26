@@ -147,7 +147,7 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     })
     parts = [
         "#!/usr/bin/env bash",
-        f'case "$*" in *inspect*) echo "{mount or ""}"; exit 0 ;; esac' if mount else "",
+        f'case "$*" in *inspect*) echo "{mount}"; exit 0 ;; esac' if mount is not None else "",
         f'printf "%s\\n" "$*" >> {log}' if log else "",
         # stdin beside argv, in its OWN file: a test asserting a secret is
         # absent from argv proves nothing about whether it still reaches the

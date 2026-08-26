@@ -244,6 +244,7 @@ def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance
         assert "docker rm -f" not in r.stderr, (
             "offered to destroy a live gateway the refused command would only have bounced")
         assert "unregister" in r.stderr, "no escape named, so the owner is locked out"
+        assert "docker inspect" in r.stderr, "no way to find out whose it is"
     # The ORDER is the invariant, not just the exit code: checking after the call
     # would leave every assertion above green with the restart already sent to
     # the live project.
@@ -265,14 +266,18 @@ def test_a_container_that_cannot_be_identified_is_refused(run, instance, tmp_pat
     assert "could not say whose home it mounts" in r.stderr
 
 
-def test_a_mount_with_nothing_behind_it_is_named_as_a_stray(run, instance, tmp_path):
-    """The other side of the same message. A container mounting a path that does
-    not exist is nobody's, so removal is the right hint -- it is only wrong when
-    the home exists and the descriptor is the thing in the wrong."""
+def test_no_state_of_the_foreign_mount_produces_a_removal_command(run, instance, tmp_path):
+    """The discriminator that looked obvious -- does the foreign home exist? --
+    runs as the invoking user on THIS host, while the mount is a path on the
+    docker host owned by whoever runs that agent. Another user's home is
+    unstattable under a default 750, and this tool supports one repo serving two
+    people, so a live gateway would routinely read as nobody's. An empty mount
+    lands in the same place. The asymmetry is total, so no state offers removal."""
     run("register", "rowan", str(instance("rowan")))
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    mount=str(tmp_path / "nothing-here"))
-    r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "looks like a stray" in r.stderr
-    assert "docker rm -f" in r.stderr
+    for mount in (str(tmp_path / "nothing-here"), "/home/other/.hermes-rowan", ""):
+        b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                        mount=mount)
+        r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+        assert r.returncode != 0, f"touched a container mounting {mount!r}"
+        assert "docker rm -f" not in r.stderr, f"offered removal for mount {mount!r}"
+        assert "docker inspect" in r.stderr
