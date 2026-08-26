@@ -1,6 +1,8 @@
 import os
 import pathlib
 
+import pytest
+
 from conftest import fake_docker
 
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
@@ -315,3 +317,56 @@ def test_the_overlay_zone_reaches_compose_through_the_export(run, instance, regi
         f"so the container would run on the shared descriptor's clock"
     )
     assert "America/Los_Angeles" not in saw
+
+
+@pytest.fixture
+def injection_marker():
+    """A marker path containing NO '-'.
+
+    Load-bearing, not cosmetic. The exploit needs the key's bracket expression
+    to be a VALID character class, and a '-' between two characters inside one
+    is a range -- `[$(touch /tmp/pytest-of-odio/...)Z]` is an invalid range, so
+    grep errors out and the attack silently fails to reproduce. pytest's
+    tmp_path always contains '-', so a marker under it makes this test pass
+    against the vulnerable code: green for the wrong reason, which is the whole
+    defect class being fixed here.
+    """
+    d = pathlib.Path(f"/tmp/agentmgr_inj_{os.getpid()}")
+    d.mkdir(exist_ok=True)
+    marker = d / "executed"
+    if marker.exists():
+        marker.unlink()
+    yield marker
+    if marker.exists():
+        marker.unlink()
+    d.rmdir()
+
+
+def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_marker):
+    """Read, never execute -- the property this parser exists for.
+
+    The membership check ran $key as a grep PATTERN, so a bracket expression
+    could match an allowlisted name as a character class (`AGENT_T[...Z]`
+    matches AGENT_TZ). The name then reached `printf -v`, where bash evaluates
+    an array subscript arithmetically and arithmetic performs command
+    substitution -- so any `agent-mgr resolve` on a registered repo ran that
+    repo's code as the operator.
+    """
+    key = f"AGENT_T[$(touch {injection_marker})Z]"
+    run("register", "rowan", str(instance("rowan", descriptor=f"{key}=1\n")))
+    r = run("resolve", "rowan")
+    assert not injection_marker.exists(), (
+        "a descriptor key executed host code -- the parser is a shell again"
+    )
+    assert r.returncode == 0, r.stderr
+    # Dropped, not smuggled in under the name it impersonated.
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+
+
+def test_an_overlay_key_cannot_execute_host_code(run, instance, registry, injection_marker):
+    """Same sink, second file -- the overlay goes through the same parser."""
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan", f"AGENT_T[$(touch {injection_marker})Z]=1\n")
+    r = run("resolve", "rowan")
+    assert not injection_marker.exists(), "an overlay key executed host code"
+    assert r.returncode == 0, r.stderr

@@ -174,9 +174,19 @@ parse_env_file() {
         # commands run that repo's code with the operator's credentials. A
         # denylist could not close that -- it is an allowlist problem, because
         # the dangerous names are whatever this tool happens to read.
-        if printf '%s' "$allow" | grep -qw "$key"; then
+        # -F, not a regex, and it is load-bearing rather than tidy. `grep -qw`
+        # read $key as a PATTERN, so a descriptor could declare a key whose
+        # bracket expression matched an allowlisted name as a character class --
+        # `AGENT_T[$(...)Z]` matches AGENT_TZ -- and the name then reached
+        # `printf -v`, where bash evaluates an array subscript arithmetically and
+        # arithmetic performs command substitution. A registered repo's agent.env
+        # could run host commands with the operator's credentials on any
+        # `agent-mgr resolve`, defeating the read-never-execute property this
+        # parser exists for. With -F only an exact allowlisted identifier reaches
+        # the sink. `--` because a key may begin with a dash.
+        if printf '%s' "$allow" | grep -Fqw -- "$key"; then
             printf -v "$key" '%s' "$value"
-        elif [ "$collect" != "hooks" ] && printf '%s' "$AGENT_KEYS" | grep -qw "$key"; then
+        elif [ "$collect" != "hooks" ] && printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$key"; then
             # A key this tool owns, in a file not allowed to set it. Silence
             # would leave an operator believing an overlay took effect, and the
             # keys this rejects are exactly the ones whose failure is invisible
@@ -192,7 +202,7 @@ parse_env_file() {
             # message, a comment, a README line each restating a set the code
             # declares -- so the rule here is that no operator-facing sentence
             # spells a member of either list.
-            if printf '%s' "$AGENT_IDENTITY_KEYS" | grep -qw "$key"; then
+            if printf '%s' "$AGENT_IDENTITY_KEYS" | grep -Fqw -- "$key"; then
                 echo "agent-mgr: $file may not set $key -- ignoring it (identity comes from the registry name: $AGENT_IDENTITY_KEYS)" >&2
             else
                 echo "agent-mgr: $file may not set $key -- ignoring it (this file may set only: $allow; put this in the agent's agent.env)" >&2
