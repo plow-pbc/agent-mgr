@@ -93,7 +93,19 @@ LATCH_CONFIG = (
     ],
     ids=["pre-seeded-empty", "absent", "hand-edited-spellings", "already-duplicated"],
 )
-def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path, starting_dotenv):
+@pytest.mark.parametrize(
+    "stdin",
+    [
+        "dev_abc\ntok_xyz\n",
+        # What a paste actually looks like. The value is stripped on the way in,
+        # so the file holds what the gateway loads rather than a value it will
+        # strip differently -- and a trailing space surfaces only as a REVOKED
+        # misdiagnosis on a live host, never in a test that never pads.
+        "  dev_abc \n\ttok_xyz  \n",
+    ],
+    ids=["clean", "padded"],
+)
+def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path, starting_dotenv, stdin):
     """The dotenv is shared -- the rentals agent keeps a PMS token and a lock API
     key in the same file -- so an upsert that rewrote the file would take those
     with it. And whatever spelling a key arrives in, exactly one declaration may
@@ -103,7 +115,7 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
     env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
     env_file.write_text(starting_dotenv)
     b, _ = _fake_docker(tmp_path)
-    r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n",
+    r = run("set-latch", "rowan", input=stdin,
             env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     body = env_file.read_text()
@@ -135,12 +147,26 @@ def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance
     assert "declares no latch" in r.stderr
 
 
-def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, tmp_path):
-    """An empty write is the failure check-latch already reports as 'mint one
-    from the Mac'; refusing here keeps it from reaching the dotenv at all."""
+@pytest.mark.parametrize(
+    "stdin,missing",
+    [
+        ("dev_abc\n\n", "DOMO_MCP_TOKEN"),
+        # Empty is the PARSER's empty, not the shell's: `[ -n "   " ]` is true,
+        # so this used to be written out as a key the gateway loads as nothing.
+        ("dev_abc\n   \n", "DOMO_MCP_TOKEN"),
+        ("   \ntok_xyz\n", "DOMO_DEVICE_UID"),
+    ],
+    ids=["token-blank", "token-whitespace", "uid-whitespace"],
+)
+def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, tmp_path, stdin, missing):
+    """An empty write is the half-configured state check-latch exists to report
+    -- manufactured by the command meant to prevent it. Refused before anything
+    reaches the dotenv, so there is nothing to undo."""
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
     run("restore", "rowan")
-    r = run("set-latch", "rowan", input="dev_abc\n\n")
+    r = run("set-latch", "rowan", input=stdin)
     assert r.returncode != 0
-    assert "DOMO_MCP_TOKEN was empty" in r.stderr
-    assert "DOMO_DEVICE_UID=dev_abc" not in (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+    assert f"{missing} was empty" in r.stderr
+    body = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+    assert "dev_abc" not in body
+    assert "tok_xyz" not in body
