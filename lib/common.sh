@@ -184,7 +184,7 @@ _refuse() {
     if [ "$1" = descriptor ]; then
         die "$2"
     fi
-    echo "agent-mgr: $3: line $4 is malformed -- ignoring it" >&2
+    echo "agent-mgr: $3: line $4: $5 -- ignoring it" >&2
     return 1
 }
 
@@ -240,7 +240,7 @@ parse_env_file() {
         # Compose errors on these too, so refusing is the agreeing behaviour.
         case "$key" in
             ''|*[!A-Za-z0-9_]*)
-                _refuse "$role" "$file: malformed key: $key" "$file" "$_lineno" || continue ;;
+                _refuse "$role" "$file: malformed key: $key" "$file" "$_lineno" "malformed key" || continue ;;
         esac
 
         # The value grammar, ported from compose-go in one pass rather than a
@@ -275,13 +275,13 @@ parse_env_file() {
                 _rest="${value#\"}"
                 case "$_rest" in
                     *\"*) value="${_rest%%\"*}" ;;
-                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" || continue ;;
+                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" "unterminated quote" || continue ;;
                 esac ;;
             "'"*)
                 _rest="${value#\'}"
                 case "$_rest" in
                     *"'"*) value="${_rest%%\'*}" ;;
-                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" || continue ;;
+                    *) _refuse "$role" "$file: unterminated quote in value for $key" "$file" "$_lineno" "unterminated quote" || continue ;;
                 esac ;;
             *)
                 case "$value" in *" #"*) value="${value%%" #"*}" ;; esac

@@ -375,8 +375,9 @@ def test_the_dotenv_is_read_never_executed(run, instance, tmp_path, injection_ma
     # stray line in somebody's hand-maintained credential file is out of all
     # proportion to it. The descriptor, which Compose DOES read, still refuses.
     assert r.returncode == 0, r.stderr
-    assert "is malformed" in r.stderr and "ignoring it" in r.stderr
-    # and it quotes nothing from a file that sits beside credentials
+    # names the line and the KIND of error, quotes nothing from a file that
+    # sits beside credentials
+    assert "line 1: malformed key" in r.stderr and "ignoring it" in r.stderr
     assert "AGENT_T[" not in r.stderr
     assert "AGENT_TZ=America/Los_Angeles" in r.stdout
 
@@ -449,4 +450,5 @@ def test_a_broken_dotenv_does_not_take_down_other_agents(run, instance, tmp_path
     # restore, not resolve: require_own_home runs on direct-write commands only,
     # so `resolve` cannot observe the amplification this test exists to deny.
     other = run("restore", "other")
+    assert other.returncode == 0, other.stderr
     assert "could not resolve rowan" not in other.stderr
