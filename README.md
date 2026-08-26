@@ -147,6 +147,59 @@ of the *product*. The tell is proportion: when the README is longer than the
 thing it documents, it has stopped being a README and become a runbook that
 nothing verifies.
 
+## One repo, several people
+
+An agent repo is normally one person's. It does not have to be: `AGENT_HOME`,
+`AGENT_CONTAINER` and `AGENT_PROJECT` are derived from the **registry name**, so
+two rows against the *same checkout* resolve to separate homes and containers.
+
+```sh
+agent-mgr register life  ~/services/life-assistant-hermes-agent
+agent-mgr register rowan ~/services/life-assistant-hermes-agent   # same directory
+```
+
+`require_own_home` already enforces the discipline that makes this safe: it
+accepts a home only when it ends in `.hermes-<name>`, so a repo that *declared*
+`AGENT_HOME` could not be shared at all — the second instance would resolve to
+the first's home and be refused. A shared repo must stay silent on identity, and
+silence is the only thing that works.
+
+### The per-instance overlay
+
+Everything else an instance needs is already outside the tree: the account
+binding is decided by which handset answers activation, and credentials live in
+the instance's own dotenv. One thing was not. A tracked descriptor holds **one**
+value, so a per-person setting — a timezone above all — had nowhere to go, and
+shipping one in a shared `agent.env` hands it to every instance. No test catches
+that: the value is correct for whoever it was chosen for, and only the sharing
+makes it wrong.
+
+So `load_agent` reads an optional overlay beside the registry, keyed by the same
+name:
+
+```
+~/.config/agent-mgr/<name>.env
+```
+
+Read **after** the repo's `agent.env`, through the same parser, so precedence is
+**overlay > descriptor > convention default**.
+
+```sh
+printf 'AGENT_TZ=America/Chicago\n' > ~/.config/agent-mgr/rowan.env
+```
+
+It may set `AGENT_TZ`, `AGENT_IMAGE`, `AGENT_CONFIG`, `AGENT_RESTORE_HOOK` and
+`AGENT_PRE_TRANSITION`. It may **not** set `AGENT_HOME`, `AGENT_CONTAINER` or
+`AGENT_PROJECT` — those belong to the registry name, and an overlay is keyed by
+that name, so a bad one would agree with itself: `require_own_home` asks whether
+the home ends in `.hermes-$AGENT_NAME`, which an overlay claiming a sibling's
+home passes only if it renames itself too. Excluding the keys is what closes
+that, not a later shape check.
+
+Same contract as the descriptor otherwise — read, never executed; `$HOME` is the
+one expansion; one parser for both files, because a second dialect is what this
+tool already paid for once.
+
 ## What this builds on
 
 ```

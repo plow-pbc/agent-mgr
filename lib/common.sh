@@ -114,7 +114,69 @@ AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_
 # exactly as expected, so nothing downstream notices -- `up` creates a stack
 # under a foreign project against this agent's live home, and `down` then
 # reports success having stopped nothing.
+# What a PER-INSTANCE OVERLAY may set: AGENT_KEYS minus the identity ones.
+#
+# AGENT_NAME, AGENT_DIR, AGENT_HOME, AGENT_CONTAINER and AGENT_PROJECT are the
+# registry name's to derive, and that derivation is what lets one repo serve
+# several people -- two rows against one checkout resolve to separate homes and
+# containers. Letting a file override them re-opens the collision class
+# require_own_home closes, and the shape test cannot catch it: that test asks
+# whether AGENT_HOME ends in .hermes-$AGENT_NAME, and an overlay is keyed by
+# AGENT_NAME, so a bad one would agree with itself.
+AGENT_OVERLAY_KEYS="AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
+
 COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES"
+
+# Parse one declarative KEY=VALUE file. Read, NEVER execute.
+#
+# One copy, called for the repo descriptor and again for the per-instance
+# overlay. A second parser is what this file already paid for once: the peer
+# parser in require_own_home stripped only double quotes, so a sibling
+# declaring its home with single quotes compared unequal and the collision it
+# existed to catch went undetected. Quote stripping, $HOME expansion and the
+# allowlist must agree between descriptor and overlay or the overlay is a
+# second dialect.
+#
+# $2 is the allowlist of keys that reach THIS process. $3 = "hooks" collects
+# everything else into AGENT_HOOK_ENV; an overlay passes nothing, so a key it
+# may not set is dropped rather than smuggled through to the hooks.
+parse_env_file() {
+    local file="$1" allow="$2" collect="${3:-}"
+    local line key value
+    while IFS= read -r line; do
+        case "$line" in
+            \#*|'') continue ;;
+            [A-Za-z_]*=*) ;;
+            *) continue ;;
+        esac
+        key="${line%%=*}"
+        value="${line#*=}"
+        # One layer of surrounding quotes, the way a dotenv file is usually written.
+        case "$value" in
+            \"*\") value="${value#\"}"; value="${value%\"}" ;;
+            "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
+        esac
+        value="${value//\$\{HOME\}/$HOME}"
+        value="${value//\$HOME/$HOME}"
+        # Only AGENT_KEYS reaches THIS process. Everything else a descriptor
+        # declares is collected for the hooks and never exported here.
+        #
+        # The previous shape exported every key, which handed a registered repo
+        # the dispatcher: AGENT_MGR_ROOT decides where lib/resolve-guard is
+        # loaded from, so a descriptor setting it made ordinary lifecycle
+        # commands run that repo's code with the operator's credentials. A
+        # denylist could not close that -- it is an allowlist problem, because
+        # the dangerous names are whatever this tool happens to read.
+        if printf '%s' "$allow" | grep -qw "$key"; then
+            printf -v "$key" '%s' "$value"
+        elif [ "$collect" = "hooks" ]; then
+            # An instance's own variables -- STR_VAULT and friends -- which its
+            # compose override and its hooks are written against. Passed to the
+            # hooks as an environment, never into this process.
+            AGENT_HOOK_ENV+=("$key=$value")
+        fi
+    done < "$file"
+}
 
 load_agent() {
     local name="${1:-}"
@@ -142,41 +204,29 @@ load_agent() {
     # $HOME is the one expansion, because it is the one the template documents.
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
-    local line key value
     AGENT_HOOK_ENV=()
-    while IFS= read -r line; do
-        case "$line" in
-            \#*|'') continue ;;
-            [A-Za-z_]*=*) ;;
-            *) continue ;;
-        esac
-        key="${line%%=*}"
-        value="${line#*=}"
-        # One layer of surrounding quotes, the way a dotenv file is usually written.
-        case "$value" in
-            \"*\") value="${value#\"}"; value="${value%\"}" ;;
-            "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
-        esac
-        value="${value//\$\{HOME\}/$HOME}"
-        value="${value//\$HOME/$HOME}"
-        # Only AGENT_KEYS reaches THIS process. Everything else a descriptor
-        # declares is collected for the hooks and never exported here.
-        #
-        # The previous shape exported every key, which handed a registered repo
-        # the dispatcher: AGENT_MGR_ROOT decides where lib/resolve-guard is
-        # loaded from, so a descriptor setting it made ordinary lifecycle
-        # commands run that repo's code with the operator's credentials. A
-        # denylist could not close that -- it is an allowlist problem, because
-        # the dangerous names are whatever this tool happens to read.
-        if printf '%s' "$AGENT_KEYS" | grep -qw "$key"; then
-            printf -v "$key" '%s' "$value"
-        else
-            # An instance's own variables -- STR_VAULT and friends -- which its
-            # compose override and its hooks are written against. Passed to the
-            # hooks as an environment, never into this process.
-            AGENT_HOOK_ENV+=("$key=$value")
-        fi
-    done < "$descriptor"
+    parse_env_file "$descriptor" "$AGENT_KEYS" hooks
+
+    # The per-instance overlay, read AFTER the repo descriptor so it wins.
+    #
+    # This is what lets ONE repo serve several people. Everything else an
+    # instance needs is already outside the tree -- the account binding is
+    # decided by which handset answers activation, and credentials live in the
+    # instance's own dotenv -- but a tracked descriptor holds ONE value, so a
+    # per-person setting like AGENT_TZ had nowhere to go. Shipping one in a
+    # shared descriptor gives it to every instance, which no test can catch:
+    # the value is right for whoever it was chosen for.
+    #
+    # Beside the registry, keyed by the same name, because that is the one
+    # per-instance surface this tool already owns.
+    local overlay
+    overlay="$(dirname "$AGENT_MGR_REGISTRY")/$name.env"
+    # `if`, not `&&`: under set -e a false test as the last command of a block
+    # takes the function down with it, which is the shape this file already
+    # records paying for in reload-if-running.
+    if [ -f "$overlay" ]; then
+        parse_env_file "$overlay" "$AGENT_OVERLAY_KEYS"
+    fi
 
     # Convention, applied only where the descriptor said nothing.
     AGENT_NAME="$name"

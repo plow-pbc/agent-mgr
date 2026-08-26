@@ -1,3 +1,5 @@
+import pathlib
+
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
@@ -169,3 +171,87 @@ def test_an_instance_variable_still_reaches_its_hook(run, instance, tmp_path):
 
 
 
+
+
+# --- the per-instance overlay ------------------------------------------------
+#
+# What lets ONE agent repo serve several people. Everything else an instance
+# needs already lives outside the tree; a tracked descriptor holds one value, so
+# a per-person setting had nowhere to go.
+
+
+def _overlay(registry, name, text):
+    """Write ~/.config/agent-mgr/<name>.env, beside the registry."""
+    registry.parent.mkdir(parents=True, exist_ok=True)
+    (registry.parent / f"{name}.env").write_text(text)
+
+
+def test_no_overlay_changes_nothing(run, instance, registry, tmp_path):
+    """The absent case is the common one, and it must resolve identically."""
+    run("register", "rowan", str(instance("rowan")))
+    before = run("resolve", "rowan").stdout
+    _overlay(registry, "someone-else", "AGENT_TZ=America/Chicago\n")
+    assert run("resolve", "rowan").stdout == before
+
+
+def test_an_overlay_sets_a_per_instance_value(run, instance, registry):
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan", "AGENT_TZ=America/Chicago\n")
+    assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
+
+
+def test_the_overlay_beats_the_shared_descriptor(run, instance, registry):
+    """The whole point: one repo, two instances, different zones."""
+    repo = instance("rowan", descriptor="AGENT_TZ=America/Los_Angeles\n")
+    run("register", "rowan", str(repo))
+    _overlay(registry, "rowan", "AGENT_TZ=America/Chicago\n")
+    out = run("resolve", "rowan").stdout
+    assert "AGENT_TZ=America/Chicago" in out
+    assert "America/Los_Angeles" not in out
+
+
+def test_two_instances_of_one_repo_take_their_own_zones(run, instance, registry):
+    """One checkout, two registry rows, two overlays -- the shape this exists for."""
+    repo = str(instance("life"))
+    run("register", "life", repo)
+    run("register", "rowan", repo)
+    _overlay(registry, "rowan", "AGENT_TZ=America/Chicago\n")
+    life, rowan = run("resolve", "life").stdout, run("resolve", "rowan").stdout
+    assert "AGENT_TZ=America/Los_Angeles" in life
+    assert "AGENT_TZ=America/Chicago" in rowan
+    assert "AGENT_HOME=" in life and "/.hermes-life" in life
+    assert "/.hermes-rowan" in rowan
+
+
+def test_an_overlay_cannot_retarget_identity(run, instance, registry, tmp_path):
+    """Home, container and project are the REGISTRY NAME's to derive.
+
+    An overlay is keyed by that same name, so a bad one would agree with itself:
+    require_own_home asks whether AGENT_HOME ends in .hermes-$AGENT_NAME, which
+    an overlay claiming a sibling's home passes only if it also renames itself.
+    Excluding the keys is what closes it, not a later shape check.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan",
+             "AGENT_HOME=/opt/hijack\nAGENT_CONTAINER=hermes\nAGENT_PROJECT=hermes\n")
+    out = run("resolve", "rowan").stdout
+    assert "/opt/hijack" not in out
+    assert f"AGENT_HOME={tmp_path / 'home'}/.hermes-rowan" in out
+    assert "AGENT_CONTAINER=hermes-rowan" in out
+    assert "AGENT_PROJECT=hermes-rowan" in out
+
+
+def test_an_overlay_is_read_never_executed(run, instance, registry):
+    """Same contract as the descriptor: a value cannot reach $(...)."""
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan", "AGENT_TZ=$(touch /tmp/agent-mgr-overlay-pwned)\n")
+    out = run("resolve", "rowan").stdout
+    assert "AGENT_TZ=$(touch /tmp/agent-mgr-overlay-pwned)" in out
+    assert not pathlib.Path("/tmp/agent-mgr-overlay-pwned").exists()
+
+
+def test_an_overlay_expands_home_like_the_descriptor(run, instance, registry, tmp_path):
+    """One parser, so the two files cannot drift into separate dialects."""
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan", 'AGENT_CONFIG=$HOME/elsewhere.yaml\n')
+    assert f"AGENT_CONFIG={tmp_path / 'home'}/elsewhere.yaml" in run("resolve", "rowan").stdout
