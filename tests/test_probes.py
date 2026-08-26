@@ -258,3 +258,26 @@ def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credent
     assert r.returncode != 0
     assert "cannot read" in r.stderr
     assert "is empty" not in r.stderr
+
+
+def test_check_latch_probes_the_last_canonical_declaration_not_the_first(run, instance, tmp_path):
+    """Appending a line at the bottom is how a second canonical declaration
+    happens, and the gateway takes the last one -- it assigns as it reads. First
+    would probe a credential nothing is using and report REVOKED for a live one.
+
+    Asserted on what reached curl, not the exit code: the fake relay answers 200
+    to either value. A bare `=`-less line is in the same fixture because it used
+    to match the key under -F= and hand back its own name as the value, which the
+    relay 401s and check-latch reports as REVOKED."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("restore", "property")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
+        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=stale_first\n"
+        "DOMO_MCP_TOKEN=live_last\nDOMO_MCP_TOKEN\n")
+    log = tmp_path / "docker.log"
+    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
+    assert r.returncode == 0, r.stderr
+    stdin = (tmp_path / "docker.log.stdin").read_text()
+    assert 'header = "Authorization: Bearer live_last"' in stdin
+    assert "stale_first" not in stdin
+    assert "Bearer DOMO_MCP_TOKEN" not in stdin

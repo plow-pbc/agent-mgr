@@ -687,8 +687,14 @@ dotenv_read() {
     # an empty value -- and "the credential is missing" sends the operator to
     # re-mint and revoke a live one over a permission problem.
     [ -r "$2" ] || die "cannot read $2"
+    # The separator is required BEFORE the key test. Under -F= a line carrying
+    # no `=` puts the whole line in $1, so a stray bare `DOMO_MCP_TOKEN` matched
+    # the key and then substr returned that line as its own value -- non-empty,
+    # so the guard passed and the relay got `Bearer DOMO_MCP_TOKEN`, answered
+    # 401, and check-latch told the operator to revoke a live credential over a
+    # malformed line. The parser this replaced skipped `=`-less lines outright.
     key="$1" awk -F= '
-        $1 == ENVIRON["key"] { v = substr($0, index($0, "=") + 1) }
+        index($0, "=") && $1 == ENVIRON["key"] { v = substr($0, index($0, "=") + 1) }
         END { gsub(/^[ \t]+|[ \t]+$/, "", v); printf "%s", v }' "$2"
 }
 
