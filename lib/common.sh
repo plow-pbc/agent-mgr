@@ -429,14 +429,16 @@ require_running_container_is_ours() {
     # deliberately supports -- so picking one and trusting it identified an
     # arbitrary member of the set and ignored the rest. Any foreign mount
     # refuses; this agent's own one-offs mount its own home and pass.
-    # Resolved ONCE, above the loop, and into a local -- both deliberate. A bare
-    # assignment carries the substitution's status, so under `set -e` a
-    # canonical_path that cannot run stops the command here. Inline in the `if`
-    # below it could not: `set -e` is suspended inside a condition, so a failed
-    # call on both sides compared "" to "", matched, and `continue`d past the
-    # refusal for a container mounting a FOREIGN home. The twin in
-    # require_own_home fails closed on the same input; this one inverted.
-    self="$(canonical_path "$AGENT_HOME")"
+    # Resolved ONCE, above the loop, and refused EXPLICITLY rather than through
+    # `set -e`. Inline in the `if` below, a failed call on both sides compared
+    # "" to "", matched, and `continue`d past the refusal for a container
+    # mounting a FOREIGN home. Hoisting alone does not fix that: `set -e` is
+    # suspended for everything on the left of a `||`, function bodies included,
+    # and `lib/reload-if-running` calls this whole path exactly that way -- so
+    # the assignment would quietly leave "" there too. `|| die` holds in any
+    # caller context; the exit status is the only thing that does.
+    self="$(canonical_path "$AGENT_HOME")" \
+        || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve $AGENT_HOME"
     for cid in $cids; do
     mounted="$(docker inspect --format \
         '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
@@ -447,7 +449,8 @@ require_running_container_is_ours() {
     [ -z "$mounted" ] || mounted="$(normalized_path "$mounted")"
     # Same-directory question, so resolved on both sides like the collision loop.
     if [ -n "$mounted" ]; then
-        m="$(canonical_path "$mounted")"
+        m="$(canonical_path "$mounted")" \
+            || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts"
         [ "$m" = "$self" ] && continue
     fi
     # No removal command here, deliberately, and no branch that could produce
@@ -590,13 +593,14 @@ require_own_home() {
     # credentials into a live agent's mounted home.
     # Resolved once, before any row is read, and unconditionally. Invariant
     # across the loop -- the sibling load_agent below runs in a subshell, so it
-    # cannot move this one. Unconditionally because THIS is the fail-closed
-    # side: a resolver that cannot run now stops every direct-write command
-    # here, rather than being reached only when a sibling happens to exist. It
-    # buys back the per-row interpreter start at two or more siblings and costs
-    # one at zero, which is the right side of that trade for a guard.
-    local other odir ohome o skipped=0 skipped_named= self
-    self="$(canonical_path "$AGENT_HOME")"
+    # cannot move this one. Unconditionally because this is the fail-closed
+    # side: a resolver that cannot run stops every direct-write command here,
+    # rather than being reached only when a sibling happens to exist. It buys
+    # back the per-row interpreter start at two or more siblings and costs one
+    # at zero, which is the right side of that trade for a guard.
+    local other odir ohome o err why skipped=0 skipped_named= self
+    self="$(canonical_path "$AGENT_HOME")" \
+        || die "refusing to write to $AGENT_HOME -- could not resolve it"
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
         # `|| true` is load-bearing under set -e: a bare assignment carries the
@@ -612,7 +616,7 @@ require_own_home() {
         # for the refusal. The previous shape ran load_agent twice per row on
         # every direct-write command and threw the second result away for every
         # row that resolves, which is the common case.
-        local err; err="$(mktemp)"
+        err="$(mktemp)"
         ohome="$( load_agent "$other" >/dev/null 2>"$err" && printf '%s' "$AGENT_HOME" )" || true
         why="$(cat "$err")"; rm -f "$err"
         if [ -z "$ohome" ]; then
@@ -635,7 +639,8 @@ require_own_home() {
         # `set -e` is suspended for the left-hand command, so a resolver that
         # failed for THIS path alone would compare unequal, skip the die, and
         # open the very collision the loop exists to close.
-        local o; o="$(canonical_path "$ohome")"
+        o="$(canonical_path "$ohome")" \
+            || die "refusing to write to $AGENT_HOME -- could not resolve ${other}'s home"
         [ "$o" = "$self" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
