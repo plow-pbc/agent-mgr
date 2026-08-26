@@ -41,7 +41,7 @@ To let it drive a Mac, put the pair from that Mac in that instance's dotenv —
 ```sh
 DOMO_DEVICE_UID=dev_...
 DOMO_MCP_TOKEN=...
-agent-mgr check-latch errands  # "latch reachable ... (HTTP 200)"
+agent-mgr check-latch errands   # "latch reachable ... (HTTP 200)"
 ```
 
 Minting them needs the `relay:device` scope, which only the Mac running Latch

@@ -163,8 +163,8 @@ An agent repo is normally one person's. It does not have to be: `AGENT_HOME`,
 rows against the *same checkout* resolve to separate homes and containers.
 
 ```sh
-agent-mgr register life  ~/services/life-assistant-hermes-agent
-agent-mgr register rowan ~/services/life-assistant-hermes-agent   # same directory
+agent-mgr register alice ~/services/shared-hermes-agent
+agent-mgr register bob   ~/services/shared-hermes-agent   # same directory
 ```
 
 `require_own_home` already enforces what makes that safe: it accepts a home only
@@ -195,7 +195,7 @@ cannot resolve it from the dotenv the way it resolves everything else. So
 `load_agent` reads that one key from the same file:
 
 ```sh
-printf '\nAGENT_TZ=America/Chicago\n' >> "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')/.env"
+printf '\nAGENT_TZ=America/Chicago\n' >> "$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')/.env"
 ```
 
 The leading newline is not decoration. A dotenv the gateway or a person last
