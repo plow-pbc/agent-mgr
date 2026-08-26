@@ -15,9 +15,12 @@ registry_path() { printf '%s\n' "$AGENT_MGR_REGISTRY"; }
 # The name column is matched literally. A name is validated to [a-z0-9-] on the
 # way in, so it carries no regex metacharacters -- but the match is anchored and
 # tab-terminated anyway, so a future name that does cannot match its own prefix.
-# What makes the literal-match property above true. Both writers call it: without
-# it `unregister '.*'` passes the existence probe, matches every tab-bearing row
-# and writes an empty file -- the whole fleet registry gone, reported as success.
+# What makes the literal-match property above true. Every path that interpolates
+# a name calls it -- both writers and load_agent, which is the read side -- so
+# the property is enforced rather than merely followed. Without it `unregister
+# '.*'` matches every tab-bearing row and writes an empty file (the whole fleet
+# registry gone, reported as success), and `restore 's.r'` selects str's row
+# while deriving its home from the pattern.
 registry_valid_name() {
     case "${1:-}" in
         ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: ${1:-}" ;;
