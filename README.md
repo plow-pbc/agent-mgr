@@ -193,6 +193,15 @@ exists only before it. A single shared ref would send the plugin's post-strip
 SHA at the activate URL and 404 — on `activate`, the one command that is a
 one-time irreversible spend. `tests/test_install.py` pins the pairing.
 
+**Only `runtime/plow-chat-plugin.ref` may be bumped.**
+`runtime/plow-chat-activate.ref` is frozen at a pre-strip commit and must not be
+bumped forward at all — not to `HEAD`, not to any later SHA. That is the
+realistic slip rather than the collapse above: someone reaching for "latest in
+`hermes-plow-chat`" lands on `HEAD`, where the path this ref names no longer
+exists. Nothing in the suite can catch it — proving it needs ancestry against
+another repo's history, which is a network call — so this paragraph is the
+enforcement, and `tests/test_probes.py` pins that it still says so.
+
 ## Sharing with `plow-pbc/plow`
 
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow)'s `cloud-agents/hermes`

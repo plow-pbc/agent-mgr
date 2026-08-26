@@ -233,14 +233,26 @@ def test_the_readme_still_states_which_pin_may_move():
     now back-references this section rather than carrying a second copy.
     """
     import pathlib
+    import re
     root = pathlib.Path(__file__).resolve().parent.parent
     # The SECTION, not the file: the rule surviving as a stray sentence
     # elsewhere is exactly the drift this exists to catch.
     section = (root / "README.md").read_text().split("## What this builds on")
     assert len(section) == 2, "the builds-on section moved -- this probe reads it"
     body = section[1].split("\n## ")[0]
-    for claim in ("plow-chat-activate.ref", "plow-chat-plugin.ref",
-                  "create_plow_chat_curl.sh", "must not be"):
+    # The PROSE, not the whole section: this section also carries a diagram and
+    # a dependency table that name both refs and the script for their own
+    # reasons, so a claim list matched against the section stays green while the
+    # rule itself is deleted -- which is the state this probe first shipped in.
+    body = re.sub(r"```.*?```", "", body, flags=re.S)
+    body = "\n".join(l for l in body.splitlines() if not l.startswith("|"))
+    # Phrases that appear ONLY in the normative sentences. A bare "must not be"
+    # also matched the adjacent do-not-collapse rule, so losing the freeze rule
+    # -- the one an operator bumping a pin actually trips -- read as green.
+    for claim in ("frozen at a pre-strip commit",
+                  "must not be\nbumped forward at all",
+                  "Only `runtime/plow-chat-plugin.ref` may be bumped",
+                  "Strip the SEED ceremony"):
         assert claim in body, (
-            f"the builds-on section no longer states {claim!r} -- it is the only "
-            "thing keeping the activate pin from being bumped past the strip")
+            f"the builds-on prose no longer states {claim!r} -- that paragraph is "
+            "the only thing keeping the activate pin from being bumped past the strip")
