@@ -46,6 +46,6 @@ def test_reload_refuses_to_run_outside_agent_mgr(tmp_path):
     """It sources common.sh from AGENT_MGR_ROOT; without it the failure must be
     a clear message rather than an unbound-variable trace."""
     r = subprocess.run([str(ROOT / "lib" / "reload-if-running"), "rowan"],
-                       capture_output=True, text=True, env={"PATH": f"/usr/bin:/bin:{os.environ['PATH']}"})
+                       capture_output=True, text=True, env={"PATH": f"{os.environ['PATH']}:/usr/bin:/bin"})
     assert r.returncode != 0
     assert "run me through agent-mgr" in r.stderr

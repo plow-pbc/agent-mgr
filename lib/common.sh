@@ -258,6 +258,12 @@ compose() {
 # is a trade rather than a free win.
 COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec run cp pull build push"
 
+# The subset that reaches an EXISTING container, and so needs it identified.
+# `config`, `version`, `ls`, `images`, `build`, `pull` and `push` do not, and
+# `run` starts a throwaway beside it -- gating those would make `config`
+# require a live daemon it never needed.
+COMPOSE_ADDRESSES_A_CONTAINER="logs exec cp top port"
+
 # The container that already EXISTS under this project may not be ours.
 #
 # Every other check here compares the descriptor against the config agent-mgr

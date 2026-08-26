@@ -99,7 +99,7 @@ shape: a second copy of something `agent-mgr` already owns.
 | path | required | what |
 |---|---|---|
 | `agent.env` | yes | the descriptor — overrides only; it may be entirely comments |
-| `config.yaml` | yes | the declarative half of the agent's home — model, plugins, `mcp_servers` |
+| `config.yaml` | yes | the declarative half of the agent's home — model, plugins, `mcp_servers`. `AGENT_CONFIG` may name another relative path; the rentals agent keeps its under `runtime/` |
 | `README.md` | yes, hand-written | what this agent is, what it can and cannot reach, and how to bring it up |
 | `.env.example` | if it has extra keys | the dotenv contract, with no values |
 | `tests/` | if it has siblings | what this agent must **not** reach, asserted |
@@ -107,7 +107,7 @@ shape: a second copy of something `agent-mgr` already owns.
 | `SKILL.md`, `scripts/`, `references/` | if the agent does something | its own skill: the instructions the container reads, and whatever runs for them |
 | `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env` |
 | a restore hook | if it has its own deploy step | named by `AGENT_RESTORE_HOOK`; `restore` sequences it, so one command is the whole deploy |
-| a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command. `restore` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
+| a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `restore` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
 
 What must **not** be there is the common half: **no `compose.yml`, no activation
 script, no `model-provider` or `reload-if-running`** — `agent-mgr` owns those,
@@ -192,14 +192,3 @@ thing.
 
 The test is the same shape as the layer test above: **is this the same fact, or
 does it only look similar?** A pinned SHA is the same fact. A lifecycle is not.
-## Why `agent` uses `exec`
-
-The Hermes image's s6 entrypoint starts a gateway *whatever command you pass
-it*. So `docker compose run ... chat -q` brings up a **second** gateway against
-the same `/opt/data`, which connects to the chat, answers alongside the real
-one, and on exit posts a shutdown notice into the owners' channel.
-
-That is not hypothetical. Over two days on one host it produced 25 gateway
-starts against a baseline of 1–6 per day, 21 shutdown notices into an owners'
-channel in a single day, and 6 sqlite errors from two gateways racing one
-session database. `tests/test_no_second_gateway.py` is the guard.

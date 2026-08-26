@@ -281,3 +281,42 @@ def test_no_state_of_the_foreign_mount_produces_a_removal_command(run, instance,
         assert r.returncode != 0, f"touched a container mounting {mount!r}"
         assert "docker rm -f" not in r.stderr, f"offered removal for mount {mount!r}"
         assert "docker inspect" in r.stderr
+
+
+@pytest.mark.parametrize("args", [
+    ("logs", "rowan"),
+    ("agent", "rowan", "what's on today?"),
+    ("sign-in", "rowan"),
+    ("compose", "rowan", "exec", "hermes", "cat", "/opt/data/.env"),
+    ("compose", "rowan", "cp", "./x", "hermes:/opt/data/"),
+])
+def test_every_command_that_reaches_an_existing_container_identifies_it(
+        run, instance, tmp_path, args):
+    """Not just the ones that STOP it. `agent rowan "<prompt>"` would exec a turn
+    inside production's gateway and answer into the live owners' channel;
+    `compose rowan cp` writes into production's home; `logs` streams it. The
+    transition seam covers none of these -- `logs` bypassed even the passthrough,
+    calling compose straight from the dispatch table."""
+    run("register", "rowan", str(instance("rowan")))
+    # sign-in reads the INSTALLED config before it asks whether a gateway is
+    # running, so without this it dies earlier than the check under test.
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True, exist_ok=True)
+    (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
+    b = fake_docker(tmp_path, home=home, name="rowan",
+                    mount="/home/someone-else/.hermes-rowan", exec_output="x")
+    r = run(*args, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, f"{args[0]} reached a container mounting a different home"
+    assert "not rowan's home" in r.stderr
+
+
+@pytest.mark.parametrize("sub", ["config", "version", "ls", "images", "build", "pull"])
+def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, tmp_path, sub):
+    """The identification costs a `compose ps`, which needs a live daemon. Gating
+    the whole leaves-it-running list would make `config` -- which never contacted
+    one -- require it."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    mount="/home/someone-else/.hermes-rowan")
+    r = run("compose", "rowan", sub, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, f"{sub} was gated on a container it never touches: {r.stderr}"

@@ -51,7 +51,9 @@ case "$cmd" in
             up)      compose_transition up -d ;;
             down)    compose_transition down ;;
             restart) compose_transition restart hermes ;;
-            logs)    compose logs -f --tail 100 ;;   # a read
+            # Through the same check: logs streams an EXISTING container, so a
+            # copycat descriptor would otherwise read production's gateway log.
+            logs)    require_running_container_is_ours; compose logs -f --tail 100 ;;   # a read
         esac
         ;;
     resolve-guard)
@@ -355,10 +357,14 @@ EOF
         # Leaves-it-running passes through; everything else is a transition and
         # asks the veto, whether or not this tool has heard of it.
         if compose_transitions_nothing "$1"; then
-            # Reads and execs address an EXISTING container, so they need the
-            # same identification -- `compose rowan cp ./x hermes:/opt/data/`
-            # writes into whatever is running under that project.
-            require_running_container_is_ours
+            # Only the ones that address an EXISTING container: `compose rowan
+            # cp ./x hermes:/opt/data/` writes into whatever runs under that
+            # project. `config`, `version`, `ls`, `images`, `build`, `pull`,
+            # `push` and `run` touch no running container, and gating them would
+            # make `config` need a live daemon it never needed.
+            case " $COMPOSE_ADDRESSES_A_CONTAINER " in
+                *" $1 "*) require_running_container_is_ours ;;
+            esac
             compose "$@"
         else
             compose_transition "$@"
