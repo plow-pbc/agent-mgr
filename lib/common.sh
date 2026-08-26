@@ -410,7 +410,7 @@ COMPOSE_NEEDS_NO_IDENTIFICATION="config version ls images build push run ps"
 # which is how one repo serves two people -- so the fix identifies the
 # container rather than constraining the name.
 require_running_container_is_ours() {
-    local cid mounted
+    local cid cids mounted self m
     # A compose that REFUSED to run is not "no container" -- conflating them is
     # exactly what reload-if-running's own comment rejects, and it would silently
     # disable this check on, say, a Compose too old for `--status`. The
@@ -436,7 +436,6 @@ require_running_container_is_ours() {
     # call on both sides compared "" to "", matched, and `continue`d past the
     # refusal for a container mounting a FOREIGN home. The twin in
     # require_own_home fails closed on the same input; this one inverted.
-    local cid self
     self="$(canonical_path "$AGENT_HOME")"
     for cid in $cids; do
     mounted="$(docker inspect --format \
@@ -448,7 +447,7 @@ require_running_container_is_ours() {
     [ -z "$mounted" ] || mounted="$(normalized_path "$mounted")"
     # Same-directory question, so resolved on both sides like the collision loop.
     if [ -n "$mounted" ]; then
-        local m; m="$(canonical_path "$mounted")"
+        m="$(canonical_path "$mounted")"
         [ "$m" = "$self" ] && continue
     fi
     # No removal command here, deliberately, and no branch that could produce
@@ -589,10 +588,14 @@ require_own_home() {
     # the rentals agent's repo would stop `str` resolving, and a copycat
     # declaring the same bare `.hermes` would then pass and write config and
     # credentials into a live agent's mounted home.
-    # Invariant across the loop -- the sibling load_agent below runs in a
-    # subshell, so it cannot move this one -- and resolving it per row cost an
-    # interpreter start per registry row.
-    local other odir ohome skipped=0 skipped_named= self
+    # Resolved once, before any row is read, and unconditionally. Invariant
+    # across the loop -- the sibling load_agent below runs in a subshell, so it
+    # cannot move this one. Unconditionally because THIS is the fail-closed
+    # side: a resolver that cannot run now stops every direct-write command
+    # here, rather than being reached only when a sibling happens to exist. It
+    # buys back the per-row interpreter start at two or more siblings and costs
+    # one at zero, which is the right side of that trade for a guard.
+    local other odir ohome o skipped=0 skipped_named= self
     self="$(canonical_path "$AGENT_HOME")"
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
@@ -628,7 +631,12 @@ require_own_home() {
         # match neither accepted shape. This one asks "is it the same
         # directory", and two spellings reaching one directory through a symlink
         # is exactly the aliasing this loop exists to catch.
-        [ "$(canonical_path "$ohome")" = "$self" ] \
+        # Into a local for the same reason `self` is: inline in this `&&` list
+        # `set -e` is suspended for the left-hand command, so a resolver that
+        # failed for THIS path alone would compare unequal, skip the die, and
+        # open the very collision the loop exists to close.
+        local o; o="$(canonical_path "$ohome")"
+        [ "$o" = "$self" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
