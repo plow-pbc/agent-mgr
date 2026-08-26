@@ -253,6 +253,34 @@ def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instanc
         "the operator was not told the activation succeeded, which is the whole point")
 
 
+@pytest.mark.parametrize("args", [
+    ("install-plugin", "rowan"),
+    ("sign-in", "rowan"),
+    ("add-skill", "rowan", "plow-pbc/property-hunt", "--ref", "a" * 40),
+])
+def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
+        run, instance, tmp_path, args):
+    """The negative half of `activate` being "the one command a refusal does not
+    fail". These three are in the same position -- the write has landed by the
+    reload -- so activate's `|| echo ...SUCCEEDED...` is the obvious next
+    copy-paste, and it would make the word "one" false with a green suite."""
+    import os
+    _guarded(instance, run, tmp_path, refuses=True)
+    from conftest import fake_docker, fake_skill_gh
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True, exist_ok=True)
+    # What each subcommand needs BEFORE its reload, so the refusal is what stops
+    # it rather than a missing precondition: sign-in reads the installed config,
+    # add-skill fetches a tarball. A RUNNING gateway for all three -- the reload
+    # exits before the guard when there is none.
+    (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
+    b = fake_skill_gh(tmp_path)
+    fake_docker(tmp_path, home=home, name="rowan")
+    r = run(*args, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, f"{args[0]} reported success past a refusing guard"
+    assert "refused" in r.stderr, f"{args[0]} did not name the refusal: {r.stderr}"
+
+
 def test_the_guard_runs_before_a_transition_and_not_before_a_read(run, instance, tmp_path):
     import os
     _guarded(instance, run, tmp_path, refuses=False)

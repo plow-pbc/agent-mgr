@@ -119,3 +119,34 @@ def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
     return b
 
 
+
+
+def fake_skill_gh(tmp_path, *, skill_name="property-hunt", extra_files=(), subdirs=(), src=None):
+    """A `gh` that serves a real tarball, so the REAL fetch-skill runs end to end.
+
+    Only the gh half: pairing it with a RUNNING fake_docker is what lets a test
+    reach add-skill's reload, which a non-running one exits before.
+    """
+    import io
+    import tarfile
+
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    root = "plow-pbc-repo-abc1234"
+    prefix = f"{root}/{src}/" if src else f"{root}/"
+    members = {f"{prefix}SKILL.md": f"---\nname: {skill_name}\n---\n# {skill_name}\n"}
+    for name, body in (*extra_files, *subdirs):
+        members[f"{prefix}{name}"] = body
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for name, body in members.items():
+            data = body.encode()
+            info = tarfile.TarInfo(name)
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    (tmp_path / "skill.tgz").write_bytes(buf.getvalue())
+
+    (b / "gh").write_text(f'#!/usr/bin/env bash\ncat {tmp_path / "skill.tgz"}\n')
+    (b / "gh").chmod(0o755)
+    return b
