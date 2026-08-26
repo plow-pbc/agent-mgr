@@ -472,7 +472,7 @@ require_own_home() {
     # the rentals agent's repo would stop `str` resolving, and a copycat
     # declaring the same bare `.hermes` would then pass and write config and
     # credentials into a live agent's mounted home.
-    local other odir ohome skipped=0 skipped_named= incomplete_refuses=0
+    local other odir ohome skipped=0 skipped_named=
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
         # `|| true` is load-bearing under set -e: a bare assignment carries the
@@ -481,9 +481,13 @@ require_own_home() {
         # was moved, a repo with no agent.env -- would abort the caller. With
         # both streams already redirected the operator would get exit 1 and no
         # output, from one unrelated stale row, on every direct-write command.
+        # One invocation, not two: load_agent is a subshell, a descriptor
+        # parse, a realpath and a digest validation, and the second call's
+        # result was discarded for every row that resolves -- the common case.
+        # Stdout carries the home, stderr the reason it refused.
         local why
         why="$( load_agent "$other" 2>&1 >/dev/null )" || true
-        ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" || true
+        ohome="$( { load_agent "$other" 2>/dev/null && printf '%s' "$AGENT_HOME"; } )" || true
         if [ -z "$ohome" ]; then
             skipped=1
             # The REASON, not just the name. load_agent refuses a present,
@@ -505,19 +509,18 @@ require_own_home() {
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
-    # A bare `.hermes` carries no name, so it always rests on the loop being
-    # complete. A conventional home rests on it only when the declared path can
-    # resolve somewhere else -- two links to one directory is what falsified
-    # "cannot collide". A self-canonical conventional home cannot alias, so an
-    # incomplete set costs it nothing.
-    if [ "$skipped" -ne 0 ]; then
-        case "$AGENT_HOME" in
-            */.hermes) incomplete_refuses=1 ;;
-            *) [ "$(realpath -m -- "$AGENT_HOME")" = "$AGENT_HOME" ] \
-                   && incomplete_refuses=0 || incomplete_refuses=1 ;;
-        esac
-        [ "$incomplete_refuses" -eq 0 ] || die "refusing to write to $AGENT_HOME -- ${skipped_named} could not be resolved (reason above), so this tool cannot prove no one else claims that home. Fix that descriptor if the agent is still there; 'agent-mgr unregister ${skipped_named}' only if it is gone."
-    fi
+    # Unconditional, and deliberately not narrowed. Three rounds tried to scope
+    # this to homes that "could alias" and each proxy was wrong in a new
+    # direction, because aliasing is a relation between TWO paths: no property
+    # of this home proves anything about the home of a sibling we could not
+    # resolve, and that sibling's home is exactly the information we are
+    # missing. A proxy would need the fact whose absence triggered the check.
+    #
+    # So the choice is refuse or proceed, and this is the one check in this tool
+    # whose job is to fail closed. The cost is availability on a stale row, paid
+    # down by the reason and the remedy in the message rather than by guessing.
+    [ "$skipped" -eq 0 ] \
+        || die "refusing to write to $AGENT_HOME -- ${skipped_named} could not be resolved (reason above), so this tool cannot prove no one else claims that home. Fix that descriptor if the agent is still there; 'agent-mgr unregister ${skipped_named}' only if it is gone."
 
     case "$AGENT_HOME" in
         *"/.hermes-$AGENT_NAME") return 0 ;;

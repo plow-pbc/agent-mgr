@@ -243,30 +243,34 @@ def test_the_legacy_owner_is_refused_by_a_stale_row_and_unregister_clears_it(
     assert r.returncode == 0, f"unregister did not clear the refusal: {r.stderr}"
 
 
-def test_an_incomplete_set_refuses_only_a_home_that_could_alias(run, instance, tmp_path):
-    """The invariant broke only because a DECLARED home can resolve elsewhere.
-    A self-canonical conventional home cannot alias anything, so an unresolvable
-    sibling costs it nothing -- refusing it would trade fleet-wide availability
-    for a hazard that provably is not there. A symlinked one can alias, and the
-    loop is its only defence, so it refuses."""
+def test_an_unresolvable_sibling_refuses_every_home(run, instance, tmp_path):
+    """Refuses unconditionally, and the narrowing that was tried three times is
+    the thing being declined here.
+
+    Every proxy for "could this home alias" was wrong in a new direction,
+    because aliasing is a relation between TWO paths: no property of this home
+    says anything about the home of a sibling we could not resolve, and that
+    sibling's home is precisely the information missing. A proxy would need the
+    fact whose absence triggered the check. Self-canonicality also fails on any
+    host with a symlinked $HOME, which is ordinary.
+
+    So the choice is refuse or proceed, this is the one check whose job is to
+    fail closed, and the availability cost is paid down by the message rather
+    than by guessing.
+    """
     import shutil
     dead = instance("dead")
     run("register", "dead", str(dead))
     shutil.rmtree(dead)
-
     run("register", "plain", str(instance("plain")))
+
     r = run("restore", "plain")
-    assert r.returncode == 0, f"a home that cannot alias was refused: {r.stderr}"
-    assert "could not resolve dead" in r.stderr, "the skip should still be audible"
-
-    (tmp_path / "srv").mkdir(exist_ok=True)
-    (tmp_path / "home").mkdir(exist_ok=True)
-    (tmp_path / "home" / ".hermes-linked").symlink_to(tmp_path / "srv")
-    run("register", "linked", str(instance("linked")))
-    r = run("restore", "linked")
-    assert r.returncode != 0, "a home that could alias was trusted"
+    assert r.returncode != 0, "an incomplete collision set was trusted"
     assert "cannot prove no one else claims that home" in r.stderr
+    assert "could not resolve dead" in r.stderr, "the skipped row was not named"
 
+    assert run("unregister", "dead").returncode == 0
+    assert run("restore", "plain").returncode == 0, "unregister did not clear it"
 
 def test_the_refusal_carries_the_real_reason_and_the_right_remedy(run, instance, tmp_path):
     """load_agent refuses a present, healthy, RUNNING agent whose descriptor
