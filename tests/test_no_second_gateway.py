@@ -9,7 +9,12 @@ day, and 6 sqlite errors from two gateways racing one session database.
 """
 import os
 import re
+import subprocess
 import tempfile
+# Bound at import time, on purpose: collection does this before any fixture
+# runs, so this name keeps pointing at the ORIGINAL run however `subprocess.run`
+# is later rebound. See the test that uses it.
+from subprocess import run as prebound_run
 from pathlib import Path
 
 import pytest
@@ -188,7 +193,6 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
 @pytest.mark.parametrize("path, why", [
     ("{outside}", "built from scratch, dropping the shadow entirely"),
     ("{outside}{sep}{inherited}", "inherits the shadow but resolves ahead of it"),
-    ("", "an explicit env with no PATH at all, which resolves no docker"),
 ])
 def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
     """The companion to the fence below: it proves the stub refuses an unstubbed
@@ -214,12 +218,47 @@ def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
     # thing on a machine with docker somewhere else, or with none at all. The
     # assert fires before the spawn, so this never executes.
     with tempfile.TemporaryDirectory() as outside:
-        (Path(outside) / "docker").write_text("#!/bin/sh\nexit 0\n")
-        (Path(outside) / "docker").chmod(0o755)
+        _docker_outside_the_suite(outside)
         with pytest.raises(AssertionError, match="the suite did not create"):
             run("ls", env={"PATH": path.format(
                 outside=outside, sep=os.pathsep,
                 inherited=os.environ["PATH"])}), why
+
+
+def _docker_outside_the_suite(d):
+    (Path(d) / "docker").write_text("#!/bin/sh\nexit 0\n")
+    (Path(d) / "docker").chmod(0o755)
+    return d
+
+
+def test_an_explicit_env_with_no_path_is_refused():
+    """The `run` fixture cannot express this: it always builds a PATH, so the
+    row above reaches the guard as {"PATH": ""}. An env with no PATH KEY takes
+    a different branch -- CPython falls back to os.defpath, which is
+    /bin:/usr/bin, and finds the operator's docker there. Spawned directly so
+    the case is actually pinned rather than described.
+    """
+    with pytest.raises(AssertionError, match="the suite did not create"):
+        subprocess.run([str(ROOT / "agent-mgr"), "ls"], env={})
+
+
+def test_the_guard_sees_an_entry_point_bound_before_it_was_installed():
+    """Why the guard wraps Popen and not run.
+
+    `prebound_run` was bound at this module's import -- which collection does
+    before any fixture runs -- so it keeps pointing at the original function
+    however `subprocess.run` is later rebound. It reaches the daemon through
+    the module-global Popen, which is why wrapping THAT catches it and
+    wrapping `run` does not.
+
+    Written after the first attempt at this test used `check_output`, which
+    proved nothing: check_output calls `run` by name, so a run-only patch
+    intercepts it just as well.
+    """
+    with tempfile.TemporaryDirectory() as outside:
+        _docker_outside_the_suite(outside)
+        with pytest.raises(AssertionError, match="the suite did not create"):
+            prebound_run([str(ROOT / "agent-mgr"), "ls"], env={"PATH": outside})
 
 
 def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_path):
