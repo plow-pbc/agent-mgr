@@ -23,7 +23,7 @@ sourced. Everything after that point is portable, and `python3` and `docker`
 have to be on `PATH`.
 
 ```sh
-agent-mgr new errands ~/services/errands-hermes-agent   # scaffold the repo
+agent-mgr new errands ~/services/errands-hermes-agent
 agent-mgr restore errands    # the whole deploy: config, plugin, restore hook
 agent-mgr activate errands   # prints a code; text it from the agent's phone
 agent-mgr up errands
