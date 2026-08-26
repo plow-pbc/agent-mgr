@@ -415,9 +415,14 @@ def test_a_resolver_that_fails_refuses_instead_of_passing(run, instance, tmp_pat
     """
     b = tmp_path / "stub-bin"
     b.mkdir()
+    # Matched on the full call and on the qualified name, not on `$2` and a
+    # bare `realpath`: argument position and a loose word would both make this
+    # stub silently start killing some other python3 call -- lib/resolve-guard
+    # runs one too. `os.path.realpath(` is canonical_path's alone, and there is
+    # a note beside it in lib/common.sh saying so.
     (b / "python3").write_text(
         "#!/bin/sh\n"
-        'case "$2" in *realpath*) exit 1 ;; esac\n'
+        'case "$*" in *"os.path.realpath("*) exit 1 ;; esac\n'
         f'exec {sys.executable} "$@"\n'
     )
     (b / "python3").chmod(0o755)
@@ -425,4 +430,8 @@ def test_a_resolver_that_fails_refuses_instead_of_passing(run, instance, tmp_pat
     run("register", "rowan", str(instance("rowan")))
     r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
+    # The whole refusal, not just "could not resolve": that phrase appears in
+    # every one of these guards, so a looser assertion stays green if the
+    # refusal relocates between them -- which is the failure this pins.
+    assert "refusing to write to" in r.stderr
     assert "could not resolve" in r.stderr

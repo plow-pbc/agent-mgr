@@ -36,6 +36,11 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # Two functions because the two GNU forms mean different things, and the callers
 # below depend on the difference: normalized_path leaves symlinks intact
 # (`-m -s`), canonical_path follows them (`-m`).
+#
+# `os.path.realpath(` appears in this file only here. A test shadows python3
+# and fails on exactly that text to reach the ownership guards past load_agent,
+# which resolves through normalized_path -- so a second caller of it would
+# quietly change which call that test kills.
 normalized_path() {
     python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
 }
@@ -450,7 +455,7 @@ require_running_container_is_ours() {
     # same-directory question, resolved on both sides like the collision loop.
     if [ -n "$mounted" ]; then
         mounted="$(normalized_path "$mounted")" \
-            || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts. Anything already written is written; re-run once that is fixed."
+            || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
         m="$(canonical_path "$mounted")" \
             || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
         [ "$m" = "$self" ] && continue
