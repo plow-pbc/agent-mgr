@@ -599,32 +599,38 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     tests with it. One merge later this PR added `flock`, which is util-linux and
     which macOS does not ship, breaking restore, install-plugin and add-skill on
     the macOS 12.3 floor README commits to. Both landed green here, because
-    everything exists on Linux; both were found by an operator on a Mac.
+    everything exists on Linux; both were found by an operator on a Mac. (A Mac
+    that happens to have Homebrew's flock would have passed too, which is its own
+    reason not to depend on it.)
 
-    Not a portability proof -- a tripwire, and the selection rule is: forms this
-    repo has already been bitten by, plus the likeliest next ones for the shell
-    it actually writes. `stat -c` / `date -d` are deliberately absent; neither
-    stat nor date appears anywhere here, so they would be decoration.
+    Not a portability proof -- a tripwire on forms this repo has MEASURABLY been
+    bitten by. The only real check is running the suite on a Mac; a denylist over
+    shell source cannot be complete, and each speculative entry bought a new
+    "your pattern misses spelling X" round without pinning anything real.
 
-    `readlink -f` is absent for a different reason: it is what SETS the 12.3
-    floor -- that is the release where readlink grew -f -- and the entrypoint
-    resolves itself through it before anything else is sourced. Denying it would
-    redden agent-mgr:8 on the very platform this test defends.
+    Measured on macOS 26.5.2 (`so@mbp`, 2026-08-26) rather than assumed:
+      /bin/bash          3.2.57  -- the 4.0+ syntax below is a hard failure
+      flock              /opt/homebrew/bin/flock -- Homebrew only, not system
+      mktemp / mktemp -d exit 0  -- bare form is FINE, contrary to a review
+                                    finding; it defaults a template like GNU
+
+    Deliberately absent: `sed -i` (never appears here, and a regex cannot
+    reliably span a sed script -- `;` and `|` inside the expression defeat any
+    character-class bridge), `stat -c` / `date -d` (neither command appears),
+    and `readlink -f`, which is what SETS the 12.3 floor -- that is the release
+    where readlink grew -f, and the entrypoint resolves itself through it before
+    anything else is sourced. Denying it would redden agent-mgr:8 on the very
+    platform this test defends.
     """
     import re
     banned = {
-        # Bitten: #19 (realpath) and this PR (flock).
+        # Bitten: #19 (realpath) and this PR (flock -- Homebrew-only on the Mac).
         "flock": r"\bflock\b",
         # Boundary, not a flag: BSD realpath ERRORS on a path that does not exist
         # yet, which a first restore needs, so bare `realpath "$p"` IS the #19
         # break. The lookbehind is what skips os.path.realpath( in a python3 -c.
         "realpath": r"(?<![\w.])realpath\b",
-        # Likeliest next: GNU sed -i takes no suffix, BSD requires one. Matched
-        # anywhere in the command, not just adjacent to `sed` -- this repo's own
-        # surviving call (agent-mgr) is flags-first, so the ordering the naive
-        # pattern missed is the one this codebase actually writes.
-        "sed -i": r"\bsed\b[^|;&\n]*\s-i\b|\bsed\b[^|;&\n]*--in-place",
-        # macOS 12.3 ships bash 3.2, and every script here is #!/usr/bin/env bash.
+        # /bin/bash is 3.2.57 on macOS 26.5, and every script here is #!/usr/bin/env bash.
         # The -A class is spelled many ways -- -Ag, -gA, -Ar, typeset -A -- and
         # all are equally 4-only, so match any flag cluster containing a capital
         # A. Case-sensitive, so a plain indexed `-a` stays legal.
