@@ -143,14 +143,19 @@ Why the recipe is shaped that way:
   why it needs a named target and cannot splat into `$HOME`. `logs/`, `cache/`
   and `lazy-packages/` are excluded from it, so a restored home does not have
   them — that is expected, not a truncated archive, and the agent rebuilds them.
-- **If it stops part-way, run `ls -d "$aside"` before undoing anything.** There
-  are stop points *before* the rename, and on those nothing moved: `$aside` does
-  not exist and `$real` is still your live home, so removing `$real` would
-  destroy the thing the recipe was protecting. If `$aside` does exist it holds
-  the real home — move the partial `$real` out of the way, then `mv "$aside"
-  "$real"`. The likely stop point is the extract, since `backup-homes` accepts
-  tar's "file changed as we read it" and a session database torn mid-write is an
-  ordinary nightly artifact.
+- **If the chain stops part-way, do not undo and do not re-run it yet.** The
+  set-aside was a *rename*, so whatever moved still exists in full — nothing has
+  been lost and nothing needs rescuing in a hurry. Look at what is actually at
+  `$real` and `$aside` first. Re-pasting the block is the move to avoid: it
+  computes a fresh stamp and renames the half-restored `$real` into a *second*
+  `restoring-*` sibling, leaving two set-asides with nothing to tell them apart.
+
+  There is deliberately no undo recipe here. The right action differs at every
+  stop point — a vetoed `down` moved nothing, a failed `tar` leaves a partial
+  `$real` beside a complete `$aside`, and a failed `restore` or `up` leaves a
+  *good* `$real` that wants finishing rather than rolling back — and three
+  attempts at compressing that into one instruction each produced a worse one
+  than the last, including a `mv` that nests the home inside itself.
 
 ## Two layers: where does my code go?
 
