@@ -222,9 +222,31 @@ def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance
     checkout so one repo can serve two people. So the container gets identified
     rather than the name constrained."""
     run("register", "rowan", str(instance("rowan")))
+    log = tmp_path / "argv"
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    mount="/home/someone-else/.hermes-rowan")
+                    mount="/home/someone-else/.hermes-rowan", log=log)
+    for cmd in ("restart", "up", "down"):
+        r = run(cmd, "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+        assert r.returncode != 0, f"{cmd} touched a container mounting a different home"
+        assert "not rowan's home" in r.stderr
+        assert "/home/someone-else/.hermes-rowan" in r.stderr, "the message must name what it found"
+        assert "docker rm -f" in r.stderr, "no escape named, so the owner is locked out"
+    # The ORDER is the invariant, not just the exit code: checking after the call
+    # would leave every assertion above green with the restart already sent to
+    # the live project.
+    argv = log.read_text()
+    for mutating in ("restart", " up ", " down "):
+        assert mutating not in argv, f"a {mutating.strip()} reached compose before the check"
+
+
+def test_a_container_that_cannot_be_identified_is_refused(run, instance, tmp_path):
+    """The other half of not-fail-open: a container exists and docker will not
+    say whose home it mounts. We are about to touch something we cannot
+    identify, so this refuses rather than assuming it is ours."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    d = b / "docker"
+    d.write_text(d.read_text().replace('*inspect*) echo', '*inspect*) exit 3 ;; *never*) echo'))
     r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0, "restarted a container mounting a different home"
-    assert "not rowan's home" in r.stderr
-    assert "/home/someone-else/.hermes-rowan" in r.stderr, "the message must name what it found"
+    assert r.returncode != 0, "touched a container docker could not identify"
+    assert "could not say whose home it mounts" in r.stderr

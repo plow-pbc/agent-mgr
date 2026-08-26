@@ -284,7 +284,12 @@ require_running_container_is_ours() {
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
     mounted="$(printf '%s' "$mounted" | tr -s /)"; mounted="${mounted%/}"
     [ -n "$mounted" ] && [ "$mounted" = "$AGENT_HOME" ] && return 0
-    die "refusing to touch the container running as $AGENT_PROJECT -- it mounts ${mounted:-<nothing>} at /opt/data, not ${AGENT_NAME}'s home ($AGENT_HOME). The compose project comes from the agent NAME, so a name that collides with a live agent reaches it however isolated this descriptor is."
+    # The escape, named: every agent-mgr route out of this state goes through
+    # compose_transition and is refused by this same check, so without it the
+    # rightful owner is locked out of their own project with no tool-supported
+    # recovery -- the same dead end `unregister` exists to remove for
+    # require_own_home's fail-closed arm.
+    die "refusing to touch the container running as $AGENT_PROJECT -- it mounts ${mounted:-<nothing>} at /opt/data, not ${AGENT_NAME}'s home ($AGENT_HOME). The compose project comes from the agent NAME, so a name that collides with a live agent reaches it however isolated this descriptor is. If that container is a stray and you own this name, remove it with: docker rm -f $cid"
 }
 
 # Every route to a container transition goes through here, so the instance's
