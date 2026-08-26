@@ -12,6 +12,10 @@ ln -s ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
 agent-mgr ls
 ```
 
+Needs **`gh`, authenticated** (`gh auth status`). `restore` installs the Plow
+Chat plugin through the same `gh api` snapshot that installs a skill, so every
+agent needs it, not only one that ships a `skills.tsv`.
+
 The registry lives at `~/.config/agent-mgr/agents` and maps a name to an
 instance repo, so every command works from any directory.
 

@@ -73,10 +73,15 @@ case "$cmd" in
         [ -f "$skeleton" ] || skeleton="$AGENT_MGR_ROOT/templates/env.example"
         [ -f "$AGENT_HOME/.env" ] || install -m 600 "$skeleton" "$AGENT_HOME/.env"
 
-        # Plugin before config, deliberately: the installer enables itself by
-        # patching a `plugins:` block into whatever config.yaml it finds, so
-        # installing the canonical copy afterwards makes it win unconditionally
-        # rather than depending on the installer staying idempotent.
+        # The plugin no longer touches config.yaml -- fetch-tree writes only
+        # under $AGENT_HOME/plugins/, and templates/config.yaml is what enables
+        # plow-chat-platform. So the old reason for this order (let the canonical
+        # config land last and win over a block the installer patched in) is
+        # gone with the installer that patched it.
+        #
+        # It stays first because it is the step that reaches the network: a
+        # missing or unauthenticated `gh` should fail before this rewrites the
+        # agent's live config.yaml, not after.
         install_plow_plugin
 
         install -m 600 "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"

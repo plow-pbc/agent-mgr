@@ -47,10 +47,28 @@ def test_restore_on_an_instance_with_no_config_is_refused(run, instance):
     assert "config.yaml" in r.stderr
 
 
-def test_the_plugin_pin_is_a_sha_not_a_branch():
-    """A branch would silently re-point a running agent on the next upstream push."""
-    ref = (ROOT / "runtime" / "plow-chat-plugin.ref").read_text().strip()
+@pytest.mark.parametrize("pin", ["plow-chat-plugin.ref", "plow-chat-activate.ref"])
+def test_every_shipped_pin_is_a_sha_not_a_branch(pin):
+    """A branch would silently re-point a running agent on the next upstream push.
+
+    Both, because the activate pin gates the one command that is a one-time
+    irreversible spend -- a branch name or a truncated SHA in that file would
+    otherwise surface only when an operator ran it.
+    """
+    ref = (ROOT / "runtime" / pin).read_text().strip()
     assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)
+
+
+def test_the_two_pins_name_the_repos_they_are_for():
+    """The split exists to stop one ref reaching two repos; this is that invariant.
+
+    The adapter moved to hermes-plow-chat and the activation script stayed in
+    the archived seed, so a bump that edits the wrong file sends a SHA at a repo
+    that has never had it -- and 404s on activate, the irreversible one.
+    """
+    src = (ROOT / "lib" / "common.sh").read_text() + (ROOT / "agent-mgr").read_text()
+    assert "plow-pbc/hermes-plow-chat" in src and "plow-chat-plugin.ref" in src
+    assert "plow-pbc/seed-hermes-plow" in src and "plow-chat-activate.ref" in src
 
 
 def test_the_image_pin_is_a_digest_not_a_tag():
@@ -169,18 +187,30 @@ def test_an_agent_with_no_hook_restores_fine(run, instance, tmp_path):
 def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance, tmp_path):
     """It used to be a second command the caller had to remember in order."""
     run("register", "rowan", str(instance("rowan")))
+    plugin = tmp_path / "home" / ".hermes-rowan" / "plugins" / "plow-chat-platform"
+    # Seed the layout a real pre-migration agent has, so the cleanup below is
+    # something this test can fail on. Verified against the live homes on the
+    # host: all three carry ref/hermes-plugin/plow_chat INSIDE
+    # plugins/plow-chat-platform/, which is why a whole-directory swap clears
+    # it. Asserting its absence against a home this test created fresh proved
+    # nothing at all.
+    legacy = plugin / "ref" / "hermes-plugin" / "plow_chat"
+    legacy.mkdir(parents=True)
+    (legacy / "adapter.py").write_text("# the old SEED layout\n")
+
     r = run("restore", "rowan")
     assert r.returncode == 0, r.stderr
     # The files, not the fetch. This used to assert that a faked `curl` ran,
     # which stopped meaning anything the moment the plugin started arriving
     # through fetch-tree -- and would have kept passing on a fetch that
     # installed nothing. What restore owes the caller is a plugin in the home.
-    plugin = tmp_path / "home" / ".hermes-rowan" / "plugins" / "plow-chat-platform"
     assert (plugin / "plugin.yaml").is_file(), "restore did not install the plugin manifest"
     assert (plugin / "__init__.py").is_file(), "restore did not install the adapter"
     assert "name: plow-chat-platform" in (plugin / "plugin.yaml").read_text()
-    # The flattening: the old SEED layout left this inside every agent's home.
-    assert not (plugin / "ref").exists(), "the ref/ tree should not reach an agent's home"
+    # Replace, not overlay: the swap is what retires the old SEED layout from
+    # an agent's home. Overlaying would leave a second, stale copy of the
+    # adapter in the directory the gateway enumerates.
+    assert not (plugin / "ref").exists(), "the ref/ tree survived the install"
 
 def _transition_env(tmp_path, log=None):
     from conftest import fake_docker

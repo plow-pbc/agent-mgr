@@ -53,7 +53,14 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
     legacy = tmp_path / "home" / ".hermes"
     legacy.mkdir(parents=True)
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    r = run("activate", "str", env={"AGENT_MGR_PLUGIN_REF": "not-a-sha"})
+    # ACTIVATE_REF, not PLUGIN_REF. activate reads its own pin now, so the
+    # plugin override stopped reaching it -- the command ran on through curl,
+    # bash and reload-if-running, which also dragged a hermetic test onto the
+    # host's real docker daemon. And the surviving assertion matched a string
+    # that appears nowhere in the tool, so it could not have failed either way.
+    r = run("activate", "str", env={"AGENT_MGR_ACTIVATE_REF": "not-a-sha"})
     # It gets past the home guard and fails later, on the ref -- which is the
-    # proof that the guard let it through.
-    assert "refuses to target" not in r.stderr
+    # proof that the guard let it through. Asserted on what the tool prints.
+    assert r.returncode != 0
+    assert "40-char SHA" in r.stderr
+    assert "refuses to act" not in r.stderr

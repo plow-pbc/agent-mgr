@@ -44,10 +44,17 @@ tree_name="${dest##*/}"
 # close, reopened by the cleanup.
 backup=""
 target=""
+staging=""
 cleanup() {
     rm -rf "$tmp"
     [ -n "$backup" ] && [ -e "$backup" ] && [ ! -e "$target" ] && mv "$backup" "$target"
     rm -rf "$backup"
+    # $staging too. Any exit between the copy and the swap -- a failed chmod
+    # pass, a SIGTERM -- otherwise leaves <dest>.incoming.<pid> INSIDE the live
+    # directory the gateway enumerates. A pid-scoped pre-clean could not help:
+    # it only ever removed this run's, so earlier ones accumulated, each a
+    # syntactically valid tree sitting beside the real one.
+    rm -rf "$staging"
 }
 tmp="$(mktemp -d)"; trap cleanup EXIT
 
@@ -79,7 +86,6 @@ target="$home/$root/$dest"
 # running agent reading a half-written tree for the duration of the copy, and a
 # failure partway through would leave it there permanently.
 staging="$target.incoming.$$"
-rm -rf "$staging"
 mkdir -p "$(dirname "$target")"
 cp -a "$src" "$staging"
 # Scripts are invoked directly by the agent; an unreadable 644 fails from inside

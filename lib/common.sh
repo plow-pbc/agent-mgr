@@ -263,8 +263,15 @@ install_plow_plugin() {
     # The whole directory is replaced rather than overlaid, which is also what
     # clears the ref/hermes-plugin/plow_chat/ tree the old SEED layout left
     # inside every agent's home.
+    #
+    # `gh api`, so restore now needs an authenticated gh on every host -- it used
+    # to need one only for an instance that shipped a skills.tsv. Said here
+    # because fetch-tree's own message names a repo and a ref and nothing about
+    # which step this was or what already landed, and this failure lands
+    # mid-restore with the dotenv written and config.yaml not.
     "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" plugins plugin.yaml \
-        plow-pbc/hermes-plow-chat "$ref" plow-chat-platform plow-chat-platform
+        plow-pbc/hermes-plow-chat "$ref" plow-chat-platform plow-chat-platform \
+        || die "could not install the Plow Chat plugin from plow-pbc/hermes-plow-chat at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? The dotenv skeleton IS written; config.yaml and skills are NOT."
 }
 
 # Refuse to write into a home that is not this agent's.
