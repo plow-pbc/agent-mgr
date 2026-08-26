@@ -613,18 +613,31 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     """
     import re
     banned = {
-        # Bitten: #19 (realpath), this PR (flock), and common.sh:182 already
-        # records a bash 3.2 bite -- an empty array under `set -u` before 4.4.
+        # Bitten: #19 (realpath) and this PR (flock).
         "flock": r"\bflock\b",
         # Boundary, not a flag: BSD realpath ERRORS on a path that does not exist
         # yet, which a first restore needs, so bare `realpath "$p"` IS the #19
         # break. The lookbehind is what skips os.path.realpath( in a python3 -c.
         "realpath": r"(?<![\w.])realpath\b",
-        # Likeliest next: GNU sed -i takes no suffix, BSD requires one.
-        "sed -i": r"\bsed\s+-i\b",
+        # Likeliest next: GNU sed -i takes no suffix, BSD requires one. Matched
+        # anywhere in the command, not just adjacent to `sed` -- this repo's own
+        # surviving call (agent-mgr) is flags-first, so the ordering the naive
+        # pattern missed is the one this codebase actually writes.
+        "sed -i": r"\bsed\b[^|;&\n]*\s-i\b|\bsed\b[^|;&\n]*--in-place",
         # macOS 12.3 ships bash 3.2, and every script here is #!/usr/bin/env bash.
-        "bash 4+ only syntax": r"\b(declare|local)\s+-A\b|\b(mapfile|readarray)\b"
-                               r"|\$\{[A-Za-z_0-9]+(,,|\^\^)",
+        # The -A class is spelled many ways -- -Ag, -gA, -Ar, typeset -A -- and
+        # all are equally 4-only, so match any flag cluster containing a capital
+        # A. Case-sensitive, so a plain indexed `-a` stays legal.
+        "bash 4+ only syntax": r"\b(declare|typeset|local)\s+-[A-Za-z]*A[A-Za-z]*\b"
+                               r"|\b(mapfile|readarray)\b"
+                               r"|\$\{[A-Za-z_0-9]+(,,?|\^\^?)",
+        # The one array this code documents as possibly-empty. common.sh guards
+        # it as ${AGENT_HOOK_ENV[@]+"${...[@]}"} because bash before 4.4 treats
+        # an empty array as unset under `set -u` -- that guard reads like
+        # removable ceremony, and deleting it passes here and kills restore and
+        # every guarded transition on the 12.3 floor. A blanket bare-[@] rule
+        # cannot do this job: other arrays here are legitimately never empty.
+        "AGENT_HOOK_ENV unguarded": r'(?<!\+)"\$\{AGENT_HOOK_ENV\[@\]\}"',
     }
     scripts = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
     for script in scripts:
@@ -634,6 +647,6 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
                          if not l.lstrip().startswith("#"))
         for tool, pattern in banned.items():
             assert not re.search(pattern, code), (
-                f"{script.name} uses {tool}, which is GNU/util-linux-only -- "
-                "this repo's floor is macOS 12.3 (README) and the suite runs on "
-                "Linux, so it would land green and fail on the operator's Mac")
+                f"{script.name} uses {tool}, which is not portable to the "
+                "macOS 12.3 floor README commits to -- the suite runs on Linux, "
+                "so it lands green here and fails on the operator's Mac")
