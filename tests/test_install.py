@@ -168,24 +168,19 @@ def test_an_agent_with_no_hook_restores_fine(run, instance, tmp_path):
 
 def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance, tmp_path):
     """It used to be a second command the caller had to remember in order."""
-    marker = tmp_path / "plugin-installed"
-    # Its own directory: conftest's run fixture rewrites a no-op curl into
-    # tmp_path/bin on every invocation, which would clobber this one.
-    b = tmp_path / "plugin-bin"
-    b.mkdir(exist_ok=True)
-    (b / "curl").write_text(
-        "#!/usr/bin/env bash\n"
-        'out=""\n'
-        'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done\n'
-        f'printf "#!/usr/bin/env bash\\ntouch {marker}\\n" > "$out"\n'
-    )
-    (b / "curl").chmod(0o755)
-    import os
     run("register", "rowan", str(instance("rowan")))
-    r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("restore", "rowan")
     assert r.returncode == 0, r.stderr
-    assert marker.exists(), "restore did not install the plugin"
-
+    # The files, not the fetch. This used to assert that a faked `curl` ran,
+    # which stopped meaning anything the moment the plugin started arriving
+    # through fetch-tree -- and would have kept passing on a fetch that
+    # installed nothing. What restore owes the caller is a plugin in the home.
+    plugin = tmp_path / "home" / ".hermes-rowan" / "plugins" / "plow-chat-platform"
+    assert (plugin / "plugin.yaml").is_file(), "restore did not install the plugin manifest"
+    assert (plugin / "__init__.py").is_file(), "restore did not install the adapter"
+    assert "name: plow-chat-platform" in (plugin / "plugin.yaml").read_text()
+    # The flattening: the old SEED layout left this inside every agent's home.
+    assert not (plugin / "ref").exists(), "the ref/ tree should not reach an agent's home"
 
 def _transition_env(tmp_path, log=None):
     from conftest import fake_docker

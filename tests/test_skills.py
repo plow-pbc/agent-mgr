@@ -48,7 +48,7 @@ def test_a_fetched_file_that_is_not_the_named_skill_is_refused(run, instance, tm
             "--dest", "productivity/property-hunt",
             env=_fake_bin(tmp_path, skill_name="something-else"))
     assert r.returncode != 0
-    assert "not the property-hunt skill" in r.stderr
+    assert "does not name property-hunt" in r.stderr
 
 
 def test_a_refused_fetch_leaves_no_partial_skill_behind(run, instance, tmp_path):

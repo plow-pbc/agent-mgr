@@ -252,11 +252,19 @@ install_plow_plugin() {
     # A SHA, never a branch: a branch would silently re-point a running agent on
     # the next upstream push, and this plugin holds the chat token.
     [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the plugin ref must be a 40-char SHA, got: $ref"
-    local tmp; tmp="$(mktemp)"
-    curl -fsSL "https://raw.githubusercontent.com/plow-pbc/seed-hermes-plow/$ref/ref/scripts/install_direct_mount.sh" -o "$tmp" \
-        || { rm -f "$tmp"; die "could not fetch the plugin installer at ${ref:0:7}"; }
-    PLOW_CHAT_PLUGIN_REF="$ref" bash "$tmp" --data-dir "$AGENT_HOME"
-    rm -f "$tmp"
+    # Through the same installer skills use. It was fetching a 270-line
+    # general-purpose installer out of the old SEED and using one narrow path
+    # through it; what that path needs -- a snapshot at the pinned ref, a
+    # manifest name check, and a staged swap with a rollback trap -- fetch-tree
+    # already does, and does correctly. This is the install whose half-written
+    # state takes an agent off its phone line, so it is the last one that should
+    # have had its own hand-rolled copy.
+    #
+    # The whole directory is replaced rather than overlaid, which is also what
+    # clears the ref/hermes-plugin/plow_chat/ tree the old SEED layout left
+    # inside every agent's home.
+    "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" plugins plugin.yaml \
+        plow-pbc/hermes-plow-chat "$ref" plow-chat-platform plow-chat-platform
 }
 
 # Refuse to write into a home that is not this agent's.
