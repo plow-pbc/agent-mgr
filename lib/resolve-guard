@@ -77,20 +77,26 @@ case "$got_build:$got_image" in
     # happen. Third wrong premise about pull behaviour on this rule, and the
     # only one caught by running it.
     #
-    # An EXPLICIT refetching policy is the real hole. Stated as an ALLOWLIST,
-    # for the reason COMPOSE_LEAVES_IT_RUNNING is: a list of what to refuse has
-    # to be complete to be correct, and this one was not -- `refresh` refetches
-    # and was absent from it. The full set is Compose's own, from the validator:
+    # A build service fetches unless it says otherwise, and I got this wrong
+    # twice before measuring it properly. Marker test -- Dockerfile touches
+    # /BUILT_HERE, `image:` names a real registry tag, then check which one the
+    # container came from:
     #
-    #   always|never|build|if_not_present|missing|refresh|daily|weekly|every_(...)
+    #   default      PULLED      never   BUILT
+    #   missing      PULLED      build   BUILT
+    #   always       PULLED
     #
-    # of which never, build, if_not_present and missing leave a built image
-    # alone. Anything else is refused, named or not, so a policy the spec adds
-    # later costs a loud refusal rather than a silent fetch.
+    # So only `never` and `build` are safe. An earlier probe used an
+    # UNRESOLVABLE registry and showed "Built" for `missing` -- but a failed
+    # pull falls back to the build, which looks identical to never pulling, and
+    # that false negative is what talked me into removing this arm once.
+    #
+    # `if_not_present` is absent because `compose config` normalises it to
+    # `missing` before this guard sees it -- measured, not assumed.
     build:*)
         case "${got_pull:--}" in
-            -|missing|never|build|if_not_present) ;;
-            *) die "refusing to act: ${AGENT_NAME}'s service builds its image but sets pull_policy: $got_pull, which is not one of the policies that leave a built image alone (missing, never, build). It would fetch '$got_image' from a registry over the top of what this host built and run it with the agent's credentials. Drop the policy, or pin a digest." ;;
+            never|build) ;;
+            *) die "refusing to act: ${AGENT_NAME}'s service builds its image but its pull_policy is '${got_pull:-unset}', and only 'never' or 'build' keep Compose from fetching '$got_image' over the top of what this host built -- the default and 'missing' both pull when the local tag is absent, and the result runs with this agent's credentials. Add 'pull_policy: never' beside the build." ;;
         esac ;;
     *) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which is neither a digest nor built here. A pulled tag re-resolves on the next pull and this container holds the agent's credentials -- pin it as ...@sha256:..., or give the service a build." ;;
 esac

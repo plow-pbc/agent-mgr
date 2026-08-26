@@ -296,34 +296,35 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     ({"image": "nousresearch/hermes-agent:latest"}, True,
      "a pulled tag re-resolves on the next pull, and this container holds the "
      "agent's credentials", "neither a digest nor built here"),
-    ({"build": True}, False,
-     "the rentals agent's shape, and refusing it broke every command", ""),
-    ({"build": True, "image": "nousresearch/hermes-agent:latest"}, False,
+    ({"build": True, "pull_policy": "never"}, False,
+     "the rentals agent's shape, once it declares it will not fetch", ""),
+    ({"build": True, "image": "nousresearch/hermes-agent:latest",
+      "pull_policy": "never"}, False,
      "a built service is exempt whatever it is NAMED -- two attempts to derive "
      "safety from the reference string were both wrong, so the passthrough "
      "forces --ignore-buildable on pull and makes the exemption true instead", ""),
     ({}, False, "the fleet-wide digest", ""),
-    ({"build": True, "pull_policy": "missing"}, False,
-     "an explicit `missing` still builds -- verified against a real compose, "
-     "with an image naming an unresolvable registry", ""),
+    ({"build": True, "pull_policy": "missing"}, True,
+     "`missing` PULLS when the local tag is absent -- the earlier probe said "
+     "otherwise only because its registry was unresolvable and the failed pull "
+     "fell back to the build", "only 'never' or 'build'"),
     ({"build": True, "pull_policy": "always"}, True,
      "and a policy that refetches IS the hole -- it fetches over the top of "
-     "what this host built", "sets pull_policy: always"),
+     "what this host built", "only 'never' or 'build'"),
     ({"build": True, "pull_policy": "refresh"}, True,
      "a real Compose policy that refetches and was absent from the denylist -- "
-     "which is why the arm is an allowlist", "sets pull_policy: refresh"),
+     "which is why the arm is an allowlist", "only 'never' or 'build'"),
     ({"build": True, "pull_policy": "some_future_policy"}, True,
      "anything the spec adds later is refused unnamed, rather than admitted",
-     "sets pull_policy: some_future_policy"),
+     "only 'never' or 'build'"),
     ({"build": True, "pull_policy": "build"}, False,
      "`build` leaves a built image alone", ""),
-    ({"build": True, "pull_policy": "if_not_present"}, False,
-     "the spec's alias for `missing`, so it builds too -- the one allowlist "
-     "entry no row reached", ""),
+    ({"build": True}, True,
+     "no policy at all is the default, and the default pulls", "only 'never' or 'build'"),
     ({"build": True, "pull_policy": "daily"}, True,
-     "the periodic policies refetch like `always`", "sets pull_policy: daily"),
+     "the periodic policies refetch like `always`", "only 'never' or 'build'"),
     ({"build": True, "pull_policy": "every_12h"}, True,
-     "including the parameterised one", "sets pull_policy: every_12h"),
+     "including the parameterised one", "only 'never' or 'build'"),
     ({"build": True, "pull_policy": "never"}, False,
      "an explicit never is fine too, just not required", ""),
 ])

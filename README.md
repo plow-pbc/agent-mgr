@@ -119,11 +119,12 @@ near-miss: keep it for this agent's own recipes and tests, never to restate
 an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image
 by `sha256:` digest — never a tag or a branch. (One exception: an image this host
 **builds**, which may carry any tag — the rentals agent's
-`sams-str-hermes-agent:local`, say. A `build:` service does not fetch a missing
-image, it builds it, so there is nothing mutable to substitute. What is refused
-is a build that *also* declares a refetching `pull_policy`, and a `pull` or
-`--pull always` through this tool that would fetch over the top of what the host
-built. `resolve-guard` checks what Compose **resolves**, so an override cannot
+`sams-str-hermes-agent:local`, say. A `build:` service must declare
+`pull_policy: never` (or `build`), because the default and `missing` both
+**pull** when the local tag is absent — measured, not assumed — and the fetched
+image then runs with the agent's credentials. With that set, there is nothing
+mutable to substitute. A `pull` or `--pull always` through this tool is refused
+for the same reason. `resolve-guard` checks what Compose **resolves**, so an override cannot
 slip a pulled tag past it.) A moving ref re-points a running
 agent on the next upstream push, and these carry the chat token and drive a
 filesystem. Copying the artifact in instead makes the agent's repo a fork of it
