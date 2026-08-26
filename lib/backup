@@ -9,10 +9,19 @@
 # backups/ directory existed and was empty.
 #
 # Invoked through `agent-mgr backup`, which resolves the descriptor first, so
-# AGENT_NAME and AGENT_HOME arrive already guarded.
+# the name and home arrive already guarded.
 set -euo pipefail
-home="${1:?usage: backup <home> <dest> <keep>}"
-dest="${2:?}"; keep="${3:?}"
+name="${1:?usage: backup <name> <home> <dest> <keep>}"
+home="${2:?}"; dest="${3:?}"; keep="${4:?}"
+
+# Named by the AGENT NAME, not the home's basename. require_own_home admits the
+# legacy `*/.hermes` shape for any agent that declares it and only refuses two
+# agents resolving to the SAME directory -- so two agents with distinct homes
+# ending in the same component would otherwise write one filename, and `--all`
+# would silently overwrite the first with the second and exit 0. The name is
+# also what the operator typed, which is what they will look for.
+stamp="$(date -u +%Y%m%d)"
+archive="$dest/$name-$stamp.tar.gz"
 
 # tar from the home's PARENT with a relative member path, so an archive restores
 # as `.hermes-rowan/...` wherever it is unpacked. An absolute path would make
@@ -20,21 +29,41 @@ dest="${2:?}"; keep="${3:?}"
 # still right.
 parent="$(dirname "$home")"
 base="$(basename "$home")"
-stamp="$(date -u +%Y%m%d)"
-archive="$dest/$base-$stamp.tar.gz"
+
+# Staged, then promoted. Written straight at its final name, `-czf` truncates on
+# open: a second run that dies partway -- disk full, SIGINT -- would destroy the
+# morning's good archive AND leave a truncated file under a perfectly valid
+# name, indistinguishable from a good backup and treated as one by retention.
+# For the tool holding the only copy of unrebuildable state, a corrupt archive
+# that looks healthy is the worst possible output.
+trap 'rm -f "$archive.part"' EXIT
 
 # Excluded because they are most of the bytes and none of the value: a home
 # restored without them is the same agent on its next boot. Carrying them
 # instead is how a backup becomes one nobody keeps enough copies of.
+#
+# `|| [ $? -eq 1 ]`, and the distinction is measured rather than assumed: tar
+# exits 1 for "file changed as we read it", which a RUNNING gateway provokes on
+# essentially every nightly run as it writes sessions, kanban and memories --
+# and the archive it produced is complete and gzip-intact. Status 2 is a real
+# failure (unstattable path, unwritable destination). Swallowing 1 as success
+# is what keeps the "keep going, then fail loudly" contract from crying wolf
+# every night, which is how a real miss gets ignored.
+#
+# NOT --warning=no-file-changed: that suppresses the message and leaves the
+# exit status at 1, so it fixes the noise and none of the bug.
 tar --exclude="$base/logs" \
     --exclude="$base/cache" \
     --exclude="$base/lazy-packages" \
-    -C "$parent" -czf "$archive" "$base"
+    -C "$parent" -czf "$archive.part" "$base" || [ $? -eq 1 ]
+
+mv "$archive.part" "$archive"
+trap - EXIT
 
 # Retention, matched to the exact names this command writes. $dest is an
 # operator-named directory that may hold anything -- a bare `find -delete` over
 # it is a delete primitive pointed at their data -- so the glob is anchored to
-# THIS agent's basename and this command's own stamp format. Another agent's
+# THIS agent's name and this command's own stamp format. Another agent's
 # archives are not this run's to prune either: `backup --all` prunes each one
 # under its own name, and a single-agent run must not reach a sibling's copies.
 #
@@ -51,7 +80,7 @@ days = int(sys.argv[1])
 today = datetime.datetime.now(datetime.timezone.utc).date()
 print((today - datetime.timedelta(days=days)).strftime("%Y%m%d"))' "$keep")"
 
-for old_archive in "$dest/$base-"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz; do
+for old_archive in "$dest/$name-"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz; do
     # The unmatched glob arrives as itself; nullglob is not set because this
     # script is sourced by nothing and setting a shell option for one loop is
     # a wider change than the test it saves.

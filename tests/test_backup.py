@@ -131,11 +131,11 @@ def test_retention_prunes_only_this_agents_own_archives(run, instance, tmp_path)
     (home / ".env").write_text("x\n")
     dest = tmp_path / "backups"
     dest.mkdir()
-    stale = dest / ".hermes-rowan-20200101.tar.gz"
+    stale = dest / "rowan-20200101.tar.gz"
     stale.write_text("old")
     bystander = dest / "important.tar.gz"
     bystander.write_text("not ours")
-    other_agent = dest / ".hermes-life-20200101.tar.gz"
+    other_agent = dest / "life-20200101.tar.gz"
     other_agent.write_text("someone else's")
 
     r = run("backup", "rowan", "--keep", "1",
@@ -144,3 +144,91 @@ def test_retention_prunes_only_this_agents_own_archives(run, instance, tmp_path)
     assert not stale.exists(), "the agent's own stale archive should be pruned"
     assert bystander.exists(), "a file this command never wrote must survive"
     assert other_agent.exists(), "another agent's archive is not this run's to prune"
+
+
+def test_archives_are_named_by_the_agent_not_its_home(run, instance, tmp_path):
+    """require_own_home admits the legacy `*/.hermes` shape for any agent that
+    declares it, and only refuses two agents resolving to the SAME directory.
+    Named by the home's basename, two agents with distinct homes ending in the
+    same component collapse onto one filename: --all overwrites the first with
+    the second and exits 0, leaving an agent with no copy at all."""
+    dest = tmp_path / "backups"
+    dest.mkdir()
+    for name in ("rowan", "life"):
+        repo = instance(name, descriptor=f"AGENT_HOME=$HOME/{name}-side/.hermes\n")
+        assert run("register", name, str(repo)).returncode == 0
+        home = _home(run, name)
+        home.mkdir(parents=True)
+        (home / ".env").write_text("x\n")
+
+    r = run("backup", "--all", env={"AGENT_MGR_BACKUP_DIR": str(dest)})
+    assert r.returncode == 0, r.stderr
+    written = sorted(p.name.split("-")[0] for p in dest.glob("*.tar.gz"))
+    assert written == ["life", "rowan"], f"the two homes collapsed onto {written}"
+
+
+def test_all_on_an_empty_registry_is_refused_rather_than_silently_green(run, tmp_path):
+    """A timer reporting success having archived nothing is the exact silent
+    miss this command exists to end -- and an unreadable registry looks the
+    same as an empty one, since registry_list swallows it."""
+    dest = tmp_path / "backups"
+    dest.mkdir()
+    r = run("backup", "--all", env={"AGENT_MGR_BACKUP_DIR": str(dest)})
+    assert r.returncode != 0
+    assert "nothing was backed up" in r.stderr
+
+
+def test_a_failed_archive_never_lands_under_a_valid_name(run, instance, tmp_path):
+    """`-czf` truncates on open, so writing straight at the final name means a
+    run that dies partway destroys the morning's good archive and leaves a
+    truncated file that retention treats as healthy. For the tool holding the
+    only copy of unrebuildable state, a corrupt archive that looks good is the
+    worst possible output."""
+    _, home = registered(run, instance, "rowan")
+    (home / ".env").write_text("x\n")
+    dest = tmp_path / "backups"
+    dest.mkdir()
+    good = dest / "rowan-20200101.tar.gz"
+    good.write_text("yesterday's, still good")
+    dest.chmod(0o500)
+    try:
+        r = run("backup", "rowan", env={"AGENT_MGR_BACKUP_DIR": str(dest)})
+    finally:
+        dest.chmod(0o700)
+    assert r.returncode != 0, "an unwritable destination is a real failure, not a warning"
+    assert good.read_text() == "yesterday's, still good"
+    assert not list(dest.glob("*.part")), "a staged archive was left behind"
+
+
+def test_a_home_written_while_it_is_read_still_produces_an_archive(run, instance, tmp_path):
+    """tar exits 1 for 'file changed as we read it' -- which a RUNNING gateway
+    provokes on essentially every nightly run -- and the archive it produced is
+    complete. Treating that as failure makes the nightly cry wolf, which is how
+    a real miss gets ignored. Status 2 stays a failure; the test above covers it.
+    """
+    import subprocess
+    import sys
+    _, home = registered(run, instance, "rowan")
+    (home / ".env").write_text("x\n")
+    big = home / "sessions.db"
+    big.write_bytes(b"x" * (60 * 1024 * 1024))
+    dest = tmp_path / "backups"
+    dest.mkdir()
+
+    churn = subprocess.Popen(
+        [sys.executable, "-c",
+         "import sys, time\n"
+         "f = open(sys.argv[1], 'r+b')\n"
+         "for _ in range(600):\n"
+         "    f.seek(0); f.write(b'y' * 4096); f.flush(); time.sleep(0.002)\n",
+         str(big)],
+        env={"PATH": __import__("os").environ["PATH"]})
+    try:
+        r = run("backup", "rowan", env={"AGENT_MGR_BACKUP_DIR": str(dest)})
+    finally:
+        churn.kill()
+        churn.wait()
+
+    assert r.returncode == 0, r.stderr
+    archive = next(iter(dest.glob("*.tar.gz")))
+    assert any(m.endswith("/.env") for m in members(archive))

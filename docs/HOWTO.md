@@ -94,12 +94,28 @@ could not archive. Aborting on the first bad row would leave the healthy agents
 unbacked-up too, and the whole point of `--all` is that a row missed is an agent
 with no copy at all.
 
+**What the archive does and does not guarantee.** It is taken from a *running*
+agent, so it is crash-consistent, not transaction-consistent. The irreplaceable
+half — `auth.json`, the dotenv, `SOUL.md`, memories, kanban — are plain files
+and come across whole. The gateway's SQLite session database is the exception:
+its main file and its `-wal` are read at different instants, so a restored copy
+may need SQLite's own recovery, and in the worst case loses the tail of the
+session history. That is the deliberate trade — a nightly that stopped the
+rentals gateway to get a clean read would cost more than the session tail is
+worth. For a consistent copy, `agent-mgr down <name>` first and back up then.
+
+`tar` exits 1 with *"file changed as we read it"* whenever a running gateway
+writes mid-read, which is most nights; the archive it produced is complete and
+`backup` treats that as success. Status 2 — an unstattable path, an unwritable
+destination — is a real failure and fails the command. (`--warning=no-file-changed`
+would only hide the message; the status stays 1.)
+
 To restore one, stop the agent first — unpacking under a live gateway gives two
 writers to one session database:
 
 ```sh
 agent-mgr down rowan
-tar -C "$HOME" -xzf /path/to/.hermes-rowan-20260826.tar.gz
+tar -C "$HOME" -xzf /path/to/rowan-20260826.tar.gz
 agent-mgr up rowan
 ```
 

@@ -145,21 +145,31 @@ case "$cmd" in
             # leave every healthy agent unbacked-up as well, and the whole point
             # of --all is that a row missed is an agent with no copy at all.
             failed=""
+            backed_up=0
             while IFS=$'\t' read -r name _; do
                 [ -n "$name" ] || continue
-                if ! ( load_agent "$name"
-                       [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
-                       "$AGENT_MGR_ROOT/lib/backup" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep" ); then
+                if ( load_agent "$name"
+                     [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
+                     "$AGENT_MGR_ROOT/lib/backup" "$AGENT_NAME" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep" ); then
+                    backed_up=$((backed_up + 1))
+                else
                     failed="$failed $name"
                 fi
             done <<EOF
 $(registry_list)
 EOF
+            # An empty registry, or one this process could not read -- which
+            # registry_list swallows with `|| true` and the heredoc hides again.
+            # Without this the nightly timer reports success having archived
+            # nothing, which is the silent miss the whole command exists to end.
+            # `ls` already refuses to be quiet about an empty registry.
+            [ "$backed_up" -gt 0 ] || [ -n "$failed" ] \
+                || die "no agents registered -- nothing was backed up"
             [ -z "$failed" ] || die "these agents were NOT backed up:$failed"
         else
             load_agent "$target"
             [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
-            "$AGENT_MGR_ROOT/lib/backup" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep"
+            "$AGENT_MGR_ROOT/lib/backup" "$AGENT_NAME" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep"
         fi
         ;;
     install-plugin)
