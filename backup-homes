@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Snapshot every agent home on this host.
+#
+# The repo is the image and the home is the volume. `agent-mgr restore` rebuilds
+# the image half from git whenever you like -- config.yaml, the plugin, the
+# pinned skills. Nothing rebuilds the volume half: auth.json, the dotenv, the
+# sessions, the memories and the kanban exist in exactly one place.
+#
+#   backup-homes /somewhere/not/this/disk
+#
+# A glob rather than the registry, deliberately. It needs no row to be current,
+# so it also catches a home whose agent is mid-migration or not registered yet:
+# measured on this host, it found two the registry did not have.
+set -euo pipefail
+dest="${1:?usage: backup-homes <dest>}"
+
+# Before anything is created. These archives hold .env and auth.json, and tar
+# honours the umask -- the first ones taken here by hand came out 0664.
+umask 077
+
+for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
+    [ -d "$home" ] || continue
+    name="$(basename "$home")"
+    # `-C "$home" .`, not `-C <parent> <basename>`: a home symlinked onto a
+    # bigger disk is supported, and from the parent tar stores that symlink AS a
+    # symlink -- exit 0, one entry, and no credentials, sessions or memories in
+    # the archive at all. Measured.
+    #
+    # `|| [ $? -eq 1 ]`: tar exits 1 for "file changed as we read it", which a
+    # running gateway provokes on essentially every nightly run, and the archive
+    # it produced is complete. Status 2 stays a real failure.
+    #
+    # logs/, cache/ and lazy-packages/ are most of the bytes and none of the
+    # value: 1.5 GB of homes becomes 439 MB of archives.
+    #
+    # ${name#.} so the archives are visible to a plain `ls` -- a backup nobody
+    # can see is one nobody checks.
+    tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
+        -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%d).tar.gz" . \
+        || [ $? -eq 1 ]
+done

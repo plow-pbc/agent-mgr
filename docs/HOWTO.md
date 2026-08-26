@@ -64,12 +64,50 @@ agent-mgr up rowan / down rowan / restart rowan / logs rowan
 agent-mgr agent rowan "what's on today?"
 agent-mgr check-latch rowan
 agent-mgr check-connectors rowan
+backup-homes ~/agent-backups
 ```
 
 Both `check-` commands ask **from inside the container**, because the container
 is what has to reach `api.plow.co`. Egress, DNS and CA config all differ between
 your shell and that network namespace, and every one of those failures is
 invisible to a host-side probe. There is deliberately no host fallback.
+
+## Backing up the homes
+
+The repo is the image and the home is the volume. `restore` rebuilds the image
+half from git any time; nothing rebuilds the volume half — `auth.json`, the
+dotenv, the sessions, the memories, the kanban.
+
+```sh
+backup-homes /somewhere/not/this/disk
+```
+
+It globs `~/.hermes*` rather than reading the registry, so it does not depend on
+a row being current and it catches a home whose agent is mid-migration. It skips
+`logs/`, `cache/` and `lazy-packages/` — 1.5 GB of homes becomes ~440 MB — and
+writes mode-0600 archives, because they hold credentials.
+
+Nightly, with 14 days kept:
+
+```sh
+0 4 * * * ~/services/agent-mgr/backup-homes ~/agent-backups && find ~/agent-backups -name '*.tar.gz' -mtime +14 -delete
+```
+
+To restore one, stop the agent first — two writers to one session database
+otherwise. The archive is contents-rooted (`./` entries), so it unpacks into a
+directory you name rather than splatting into `$HOME`:
+
+```sh
+agent-mgr down rowan
+home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
+mkdir -p "$home" && tar -C "$home" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz
+agent-mgr restore rowan   # repo-owned config, plugin and skills win
+agent-mgr up rowan
+```
+
+If that home is a symlink, check what is actually at the path before running
+`mkdir -p` on it — on a link that vanished it creates a plain directory and the
+restore lands on the wrong volume, silently. `ls -ld "$home"` tells you.
 
 ## Two layers: where does my code go?
 
