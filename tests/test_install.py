@@ -672,23 +672,32 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
     records it. The safe spelling, ${AGENT_HOOK_ENV[@]+"${AGENT_HOOK_ENV[@]}"},
     reads like removable ceremony, and simplifying it passes on Linux.
 
-    Stated as a POSITIVE invariant -- every code line mentioning the array is
-    also guarded -- rather than as a pattern per bad spelling. That is the whole
-    point: quoted, unquoted, `env`-prefixed or not, there is nothing to
-    enumerate, which is what the denylist above could not manage for this form.
+    Stated as a POSITIVE invariant -- every mention of the array is guarded --
+    rather than as a pattern per bad spelling. That is the whole point: quoted,
+    unquoted, `env`-prefixed or not, there is nothing to enumerate, which is
+    what the denylist above could not manage for this form. Counted per
+    occurrence rather than searched per line, so the claim holds literally.
     """
     root_files = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
     for script in root_files:
         for n, line in enumerate(script.read_text().splitlines(), 1):
             if line.lstrip().startswith("#"):
                 continue
-            # A trailing comment can legitimately name the array while
-            # explaining the guard; cut at " #" -- which cannot hit a `${x##*/}`
-            # expansion, since that has no space before the hash.
-            code = line.split(" #", 1)[0]
-            if "AGENT_HOOK_ENV[@]" not in code:
+            if "AGENT_HOOK_ENV[@]" not in line:
                 continue
-            assert "AGENT_HOOK_ENV[@]+" in code, (
+            # Counted, not searched. A substring test is per-LINE: one guarded
+            # and one bare expansion on the same line passes, because the
+            # guarded spelling itself supplies the `+`. The canonical form
+            # ${AGENT_HOOK_ENV[@]+"${AGENT_HOOK_ENV[@]}"} carries exactly two
+            # mentions per guard, so the ratio rejects a mixed line.
+            #
+            # No trailing-comment stripping: cutting at " #" is blind to
+            # quoting, so an expansion after a `#` inside a string literal would
+            # never be examined at all. The full-line skip above already covers
+            # the prose in common.sh that named this array, and if someone later
+            # writes a trailing comment mentioning it the cost is a loud test
+            # failure, not a silent hole.
+            assert line.count("AGENT_HOOK_ENV[@]") == 2 * line.count("AGENT_HOOK_ENV[@]+"), (
                 f"{script.name}:{n} expands AGENT_HOOK_ENV[@] without the `+` "
                 "guard -- empty under `set -u` on the bash 3.2 macOS ships, so "
                 "this passes here and breaks restore on the operator's Mac")
