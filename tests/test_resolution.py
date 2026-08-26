@@ -186,7 +186,7 @@ def test_an_instance_variable_still_reaches_its_hook(run, instance, tmp_path):
 
 
 def _overlay(registry, name, text):
-    """Write ~/.config/agent-mgr/<name>.env, beside the registry."""
+    """Write the overlay beside the registry -- ${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/<name>.env."""
     registry.parent.mkdir(parents=True, exist_ok=True)
     (registry.parent / f"{name}.env").write_text(text)
 
