@@ -159,16 +159,18 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, 
     assert "tok_xyz" not in body
 
 
-def test_set_latch_refuses_a_dotenv_that_resolves_outside_the_home(run, instance, tmp_path):
+def test_set_latch_will_not_follow_a_dotenv_symlinked_out_of_the_home(run, instance, tmp_path):
     """The home is a live container mount, and the agents that most need a latch
     read attacker-controlled input. A gateway that got out of hand can swap the
-    dotenv for a symlink to any file the operator can read: the upsert would
-    follow it and then write that file's contents back inside the mount, which
-    is an exfiltration path out of the host, not a bad write.
+    dotenv for a symlink to any file the operator can read: following it would
+    copy that file's contents back inside the mount, which is an exfiltration
+    path out of the host, not a bad write.
 
-    Both halves are asserted. The refusal is the visible one; that the host file
-    was neither read into the home nor replaced by a regular file is the one
-    that actually says the secret stayed out."""
+    The open is O_NOFOLLOW relative to a directory FD on the home, so the kernel
+    refuses it -- there is no resolve-then-use window for a link planted after a
+    check. Both halves are asserted: the refusal is the visible one, and that
+    the host file was neither read into the home nor replaced is the one that
+    actually says the secret stayed out."""
     secret = tmp_path / "host-only-secret"
     secret.write_text("BEGIN OPENSSH PRIVATE KEY\n")
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
@@ -178,8 +180,10 @@ def test_set_latch_refuses_a_dotenv_that_resolves_outside_the_home(run, instance
     env_file.symlink_to(secret)
     r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n")
     assert r.returncode != 0
-    assert "outside" in r.stderr
-    # Still a symlink: the mv never landed, so nothing materialised in the mount.
+    assert "cannot read" in r.stderr
+    # The operator needs to know the write did not half-happen.
+    assert "Nothing was written" in r.stderr
+    # Untouched: the publish never ran, so nothing materialised in the mount.
     assert env_file.is_symlink()
     assert secret.read_text() == "BEGIN OPENSSH PRIVATE KEY\n"
     # And the credential did not reach the host file either.
@@ -187,13 +191,13 @@ def test_set_latch_refuses_a_dotenv_that_resolves_outside_the_home(run, instance
 
 
 def test_set_latch_accepts_a_home_symlinked_onto_another_disk(run, instance, tmp_path):
-    """The accept side of the same guard, and the reason it resolves BOTH sides.
-    Putting agent state on the big disk is ordinary here -- load_agent keeps
-    AGENT_HOME normalized rather than resolved for exactly that reason -- so
-    resolving only the dotenv would put every such home 'outside' itself and
-    refuse the write. The operator's remedy would then be to hand-edit the
-    dotenv, which is what this command was added to stop, and the refusal test
-    alone would stay green through it.
+    """The accept side, and the reason only the LEAF is opened no-follow. Putting
+    agent state on the big disk is ordinary here -- load_agent keeps AGENT_HOME
+    normalized rather than resolved for exactly that reason -- and the home's
+    own parents are operator-owned, not container-owned. Refusing a symlinked
+    home would send the operator back to hand-editing the dotenv, which is what
+    this command was added to stop, and the refusal test alone stays green
+    through that.
 
     Mirrors test_a_home_symlinked_onto_another_disk_still_works, which guards the
     same setup for restore."""

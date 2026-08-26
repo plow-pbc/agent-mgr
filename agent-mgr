@@ -269,58 +269,32 @@ case "$cmd" in
         # exists to report, created by the command meant to prevent it.
         [ -n "$uid" ] || die "DOMO_DEVICE_UID was empty -- mint the pair on the Mac running Latch"
         [ -n "$tok" ] || die "DOMO_MCP_TOKEN was empty -- mint the pair on the Mac running Latch"
-        # Here, not up beside the `-f` test, because this is check-then-use and
-        # the gap is the whole exposure: above the prompts it spanned seconds of
-        # operator typing, which an in-container watcher wins at its leisure.
+        # Through lib/owned-file, which holds the home as a directory FD and
+        # opens the leaf under it with O_NOFOLLOW. That is containment the
+        # kernel enforces, rather than a resolve-then-use check that only ever
+        # proved what the path pointed at a moment earlier -- the leaf lives in
+        # a mount the gateway writes, and the agents that most need a latch are
+        # the ones reading attacker-controlled input. #25 named this form; the
+        # helper is general because fetch-tree's publication seam needs it too.
         #
-        # The home is bind-mounted at /opt/data with the gateway running as the
-        # operator's uid, and the agents that most need a latch are the ones
-        # reading attacker-controlled input -- a listing page's JSON-LD, a pasted
-        # URL, a texted screenshot. So a gateway that got out of hand can swap
-        # this leaf for a symlink to any file the operator can read: awk follows
-        # it and the mv below republishes that file INSIDE the mount, which is a
-        # way out of the host rather than a bad write.
-        #
-        # What this buys is the PRE-EXISTING plant, not a closed race -- a link
-        # planted between this line and the mv below is still followed. Closing
-        # that needs the read and rename done relative to an O_NOFOLLOW directory
-        # FD, which is #25's subject and applies to this seam too. The same bound
-        # lib/fetch-tree states at its own check, narrowed here to a mktemp.
-        #
-        # canonical_path on BOTH sides, deliberately. A home symlinked onto a
-        # bigger disk is ordinary here -- load_agent keeps AGENT_HOME normalized,
-        # not resolved, for exactly that reason -- so resolving only one side
-        # would refuse every such home and send the operator back to hand-editing
-        # the dotenv, which is the thing this command exists to stop.
-        home_real="$(canonical_path "$AGENT_HOME")" \
-            || die "refusing to write to $env_file -- could not resolve $AGENT_HOME"
-        env_real="$(canonical_path "$env_file")" \
-            || die "refusing to write to $env_file -- could not resolve it"
-        case "$env_real" in
-            "$home_real"/*) env_file="$env_real" ;;
-            *) die "refusing to write to $env_file -- it resolves to $env_real, outside ${AGENT_NAME}'s home ($home_real). A dotenv that leaves the home is not one this tool wrote." ;;
-        esac
-        # Beside the target, so the rename is atomic: a mktemp in /tmp can land
-        # on another filesystem, where mv is copy-then-unlink and a crash leaves
-        # the dotenv truncated. Every other key is carried through untouched --
-        # this agent's PMS token and lock key live in the same file.
-        tmp="$(mktemp "$env_file.XXXXXX")"
-        trap 'rm -f "$tmp"' EXIT
+        # The read is isolated before the transform rather than piped into it:
+        # in one pipeline a refused read still lets awk reach its END block and
+        # publish a two-line file over the real dotenv.
+        current="$("$AGENT_MGR_ROOT/lib/owned-file" read "$AGENT_HOME" .env)" \
+            || die "refusing to write ${AGENT_NAME}'s dotenv -- see above. Nothing was written."
         # One spelling in, one spelling out -- the same `KEY=value` at column 0
         # that dotenv_read is the only reader of. Every other key is carried
         # through untouched: this agent's PMS token and lock API key live here.
-        uid="$uid" tok="$tok" awk -F= '
-            $1 == "DOMO_DEVICE_UID" { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
-            $1 == "DOMO_MCP_TOKEN"  { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
-            { print }
-            END {
-                if (!u) print "DOMO_DEVICE_UID=" ENVIRON["uid"]
-                if (!t) print "DOMO_MCP_TOKEN="  ENVIRON["tok"]
-            }' "$env_file" > "$tmp"
-        # Before the move, not after: a world-readable window on a shared host
-        # is the exposure, however brief it is.
-        chmod 600 "$tmp"
-        mv "$tmp" "$env_file"
+        printf '%s\n' "$current" \
+            | uid="$uid" tok="$tok" awk -F= '
+                $1 == "DOMO_DEVICE_UID" { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
+                $1 == "DOMO_MCP_TOKEN"  { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
+                { print }
+                END {
+                    if (!u) print "DOMO_DEVICE_UID=" ENVIRON["uid"]
+                    if (!t) print "DOMO_MCP_TOKEN="  ENVIRON["tok"]
+                }' \
+            | "$AGENT_MGR_ROOT/lib/owned-file" write "$AGENT_HOME" .env 600
         echo "wrote DOMO_DEVICE_UID and DOMO_MCP_TOKEN (...${tok: -3}) to $env_file"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the credential just written"
         echo "now prove it reaches the Mac: agent-mgr check-latch $AGENT_NAME"
