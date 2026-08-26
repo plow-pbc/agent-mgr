@@ -11,15 +11,21 @@ speed beats hardening for scale: prefer loud failures to fallbacks, pragmatic
 DRY architecture to defensive layering, and don't guard edge cases that cannot
 trigger at this size. A handled case the intent never asked for is a cost.
 
-"Fail loudly" has documented exceptions here, and each carries the comment
-that earns it: the restart inside `lib/reload-if-running` is non-fatal for
-every caller, `activate` additionally survives a refused guard because its
-one-time activation is already spent, and several `|| true` / `2>/dev/null`
-sites exist so a missing key or an unreachable relay can be *classified*
-rather than kill the command. The test is what the suppression hides, not
-whether it is commented: swallowing an **absence** — a missing file, key or
-row that the next line handles — is the idiom here and needs no defence.
-Swallowing a **failure the command then reports as success** is the finding.
+"Fail loudly" has deliberate exceptions here, and the axis that separates them
+from bugs is **what the operator is left with** — not whether the command
+exited 0, and not whether the suppression carries a comment.
+
+A suppression is a **design decision** when the failure is surfaced and
+classified: `lib/reload-if-running` prints which agent did not restart and the
+command to run, `activate` prints "SUCCEEDED — do NOT re-run" because a red
+exit would cost a second one-time activation, the relay probe splits `000`
+from `401` because a dead network and a dead credential need different fixes.
+Several `|| true` and `2>/dev/null` sites swallow a plain absence — a missing
+registry, key or row the next line handles — and need no defence at all.
+
+A suppression is a **finding** when it leaves the operator with no signal or a
+wrong next step: a failed `compose ps` read as "no gateway running", so the
+reload silently never happens and the caller reports success.
 
 The pre-transition veto's contract is owned by `README.md` § What belongs in
 an agent's repo. Do not restate it in a review — flag drift between it and
