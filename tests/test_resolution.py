@@ -509,7 +509,13 @@ def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
     run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
     r = run("resolve", "rowan")
     assert (r.returncode == 0) is accepted, r.stderr
-    if not accepted:
+    if accepted:
+        # Accepted AND still empty. The '' arm in the resolver's path loop is
+        # what keeps it that way; without it an empty hook resolves to "$dir/",
+        # `resolve` still exits 0, and the `[ -n "$AGENT_PRE_TRANSITION" ]`
+        # short-circuit downstream starts trying to execute a directory.
+        assert f"{line}\n" in r.stdout
+    else:
         assert "empty value for" in r.stderr
 
 

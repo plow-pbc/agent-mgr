@@ -201,11 +201,13 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     import pathlib
     import re
     root = pathlib.Path(__file__).resolve().parent.parent
-    # The resolver's own loop, not a name heuristic: it is what decides which
-    # keys are agent-supplied executables rather than derived values.
-    loop = re.search(r"^\s*for _hook in ([A-Z_ ]+); do$",
+    # The resolver's own list, not a name heuristic: it is what decides which
+    # keys are agent-supplied executables rather than derived values, and the
+    # path loop walks it, so a hook cannot reach the resolver without passing
+    # through here.
+    loop = re.search(r'^EMPTY_MEANS_UNSET="([A-Z_ ]+)"$',
                      (root / "lib" / "common.sh").read_text(), re.M)
-    assert loop, "the hook loop moved -- this probe reads it to know what to check"
+    assert loop, "EMPTY_MEANS_UNSET moved -- this probe reads it to know what to check"
     # The TABLE, not the file: a hook mentioned only in prose or an example block
     # would satisfy a whole-README grep while the row the contract lives in stays
     # missing -- which is the way a third hook would realistically land.

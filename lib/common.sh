@@ -140,6 +140,15 @@ USAGE
 # same failure class that once rewrote a live home to uid 501:20.
 AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
 
+# The hooks -- and, not coincidentally, the only consumed keys whose default IS
+# empty. load_agent defines them from this list and the path loop below walks
+# it, so there is one place a third hook is added. Empty and unset mean the same
+# thing for them, which is why the parser lets an empty value through: nothing
+# fills in behind the operator, and `AGENT_RESTORE_HOOK=` is the natural way to
+# write "this agent has no restore step". Every other consumed key defaults to a
+# real value, which is what makes an empty one a silent substitution.
+EMPTY_MEANS_UNSET="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
+
 # Compose's own environment variables, unset for the same reason and with a
 # sharper edge: COMPOSE_PROJECT_NAME outranks the template's `name:` attribute,
 # so a stale one in the caller's shell files this agent's stack under another
@@ -147,14 +156,6 @@ AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_
 # exactly as expected, so nothing downstream notices -- `up` creates a stack
 # under a foreign project against this agent's live home, and `down` then
 # reports success having stopped nothing.
-# The keys whose default IS empty: load_agent sets `: "${X:=}"` for both, the
-# path-resolution loop has an explicit '' arm, and pre_transition short-circuits
-# on an empty value. For these, empty and unset mean the same thing, so nothing
-# is silently substituted and `AGENT_RESTORE_HOOK=` is the natural way to write
-# "this agent has no restore step". Every other consumed key defaults to a real
-# value, which is what makes an empty one a silent substitution.
-EMPTY_MEANS_UNSET="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
-
 COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES"
 
 # Parse one declarative KEY=VALUE file. Read, NEVER execute.
@@ -456,9 +457,8 @@ load_agent() {
     # ordering falls to whoever reads the README, which is not an owner.
     # Always defined, empty when the instance declares none: every key in
     # AGENT_KEYS is printed by `resolve`, and an unset one is fatal under `set -u`.
-    : "${AGENT_RESTORE_HOOK:=}"
-    : "${AGENT_PRE_TRANSITION:=}"
-    for _hook in AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION; do
+    for _hook in $EMPTY_MEANS_UNSET; do
+        printf -v "$_hook" '%s' "${!_hook-}"
         case "${!_hook}" in
             ''|/*) ;;
             *) printf -v "$_hook" '%s' "$dir/${!_hook}" ;;
