@@ -120,10 +120,14 @@ target.
 
 Four states at the link path. Only one means "carry on":
 
+`ls -ld "$home"` tells you which of the four you have — it prints the link and
+its target without following it, and `[ -e "$home" ]` then separates a live
+symlink (true) from a dangling one (false, because `-e` dereferences).
+
 | what is there | what it tells you | what to do |
 |---|---|---|
-| a live symlink | link and target both fine | nothing — go to the block below |
-| a dangling symlink | the link survived, its target did not | recreate the target directory |
+| a live symlink | link and target both fine | nothing — skip to the restore block |
+| a dangling symlink | the link survived, its target did not | recreate the target directory; leave the link |
 | nothing at all | the link is gone; this says **nothing** about the target | look for the target first, recreate whichever is missing, then the link |
 | a plain directory | **undecidable from here** — a previous pass may have run `mkdir -p` on a vanished link, or this home was never a symlink and that directory *is* the live agent | look inside it *before* moving anything |
 
@@ -132,7 +136,7 @@ creates a plain directory where the link was; the restore then lands on the
 wrong volume with no error, and the agent comes up on a home it was never
 configured with.
 
-Once you know which state you are in, on GNU:
+Recreating link and target, once you know you need to (GNU):
 
 ```sh
 mkdir -p /big/disk/rowan
@@ -143,11 +147,16 @@ ln -sT /big/disk/rowan ~/.hermes-rowan
 bare `ln -s` treats it as a *destination directory*, silently creating
 `~/.hermes-rowan/rowan` and exiting 0. `-n` does **not** help — measured; it
 only covers a destination that is a symlink to a directory, not a real one.
-`mv` absorbs the same way (`mv ~/.hermes-rowan ~/.hermes-rowan.bak` onto an
-existing `.bak` nests it as `.bak/.hermes-rowan`, exit 0), and there is no `-T`
-for `mv` on any platform, nor any `-T` at all on macOS. That is why the table
-above is a decision you make by looking, rather than a guard this document
-pretends to enforce.
+A bare `mv` absorbs the same way: `mv ~/.hermes-rowan ~/.hermes-rowan.bak` onto
+an existing `.bak` nests it as `.bak/.hermes-rowan` and exits 0. GNU `mv -T`
+does refuse that — measured: onto a non-empty directory it fails with
+`Directory not empty`. Note it does **not** refuse an *empty* one, which it
+replaces silently, so `-T` narrows the hazard rather than removing it. Neither
+`-T` exists on macOS at all.
+
+So the flags help on GNU and run out on macOS, and even on GNU `mv -T` leaves
+the empty-directory case open — which is why the table above is a decision you
+make by looking, rather than a guard this document pretends to enforce.
 
 Do not delete what is at that path. It is equally the shape of a home that was
 never a symlink at all — in which case that directory *is* the live agent, and
