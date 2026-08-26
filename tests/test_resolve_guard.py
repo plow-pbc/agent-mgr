@@ -204,3 +204,34 @@ def test_one_stale_registry_row_does_not_break_every_other_agent(run, instance, 
     r = run("restore", "rowan")
     assert r.returncode == 0, f"a stale sibling row broke a healthy agent: {r.stderr}"
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
+
+
+def test_an_unresolvable_sibling_does_not_open_the_legacy_home(run, instance, tmp_path):
+    """The one arm that rests on the collision check having been complete. `str`
+    owns the bare `.hermes`; move its repo and it stops resolving, so a copycat
+    declaring the same home would otherwise pass and write config and
+    credentials into a live agent's mounted home. Skipping the row silently
+    turned the only fail-closed check here into a fail-open one."""
+    import shutil
+    str_repo = instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")
+    run("register", "str", str(str_repo))
+    shutil.rmtree(str_repo)
+    run("register", "copycat", str(instance("copycat", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+    r = run("restore", "copycat")
+    assert r.returncode != 0, "a copycat claimed a live agent's home through a stale row"
+    assert "could not be resolved" in r.stderr
+    assert "could not resolve str" in r.stderr, "the skipped row was not named"
+
+
+def test_the_conventional_home_is_unaffected_by_an_unresolvable_sibling(run, instance, tmp_path):
+    """Only the bare home rests on the loop being complete -- a conventional home
+    carries the agent's own name and cannot collide, so a skipped row must not
+    cost it anything beyond the warning."""
+    import shutil
+    gone = instance("gone", descriptor="AGENT_HOME=$HOME/.hermes\n")
+    run("register", "gone", str(gone))
+    shutil.rmtree(gone)
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restore", "rowan")
+    assert r.returncode == 0, f"a stale row blocked a conventional home: {r.stderr}"
+    assert "could not resolve gone" in r.stderr, "the skip should still be audible"

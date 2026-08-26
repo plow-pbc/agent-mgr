@@ -323,10 +323,15 @@ require_own_home() {
     # convention default, and the copy drifted immediately: this one stripped
     # only double quotes, so a sibling declaring AGENT_HOME='"'"'$HOME/.hermes'"'"'
     # compared unequal to the same path and the collision went undetected --
-    # which is the one thing this loop exists to catch. A sibling whose
-    # descriptor load_agent refuses yields nothing and falls through to the
-    # convention, which is the safe direction.
-    local other odir ohome
+    # which is the one thing this loop exists to catch.
+    #
+    # A sibling load_agent cannot resolve leaves the collision set INCOMPLETE,
+    # and that is recorded rather than shrugged off: silently dropping the row
+    # turns the one fail-closed check in this tool into a fail-open one. Moving
+    # the rentals agent's repo would stop `str` resolving, and a copycat
+    # declaring the same bare `.hermes` would then pass and write config and
+    # credentials into a live agent's mounted home.
+    local other odir ohome skipped=0
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
         # `|| true` is load-bearing under set -e: a bare assignment carries the
@@ -336,7 +341,11 @@ require_own_home() {
         # both streams already redirected the operator would get exit 1 and no
         # output, from one unrelated stale row, on every direct-write command.
         ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" || true
-        [ -n "$ohome" ] || continue
+        if [ -z "$ohome" ]; then
+            skipped=1
+            echo "agent-mgr: could not resolve $other -- the collision check skipped that row" >&2
+            continue
+        fi
         [ "$ohome" = "$AGENT_HOME" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
@@ -348,6 +357,13 @@ require_own_home() {
             # convention can never produce a bare `.hermes`, so this is always a
             # deliberate declaration, and the collision check above is what
             # stops a second agent from making the same one.
+            #
+            # Which is why an incomplete check refuses this arm. Only the bare
+            # home rests on the collision loop having seen every sibling; the
+            # conventional one carries the agent's own name and cannot collide.
+            # So a skipped row costs a refusal here and nothing anywhere else.
+            [ "$skipped" -eq 0 ] \
+                || die "refusing to write to $AGENT_HOME -- a registered agent could not be resolved, so this tool cannot prove no one else claims that home. Fix or re-register the row named above."
             grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
             die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
