@@ -81,23 +81,27 @@ Then two codes out, two answers back:
 
 | | who | what |
 |---|---|---|
-| 1 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code |
-| 2 | you | `agent-mgr activate bob` — prints `Plow Activate: <code>` |
+| 1 | you | `agent-mgr activate bob` — prints `Plow Activate: <code>`, then restarts the gateway |
+| 2 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code, then waits |
 | 3 | **them** | open the URL in *their* browser, enter the device code |
 | 4 | **them** | text the activation code **from the handset that should own the agent** |
 | 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
-| 6 | you | put the pair in their dotenv, then `check-latch bob` and `restart bob` |
+| 6 | you | put the pair in **their** instance's dotenv — `$AGENT_HOME/.env`, which `agent-mgr resolve bob` prints — then `check-latch bob` and `restart bob` |
 
 Steps 1 and 2 send together; 3 and 4 come back together.
 
-`sign-in` hands you the URL and then waits on the browser step, so run
-`activate` in a second terminal (or before it) rather than expecting step 1 to
-return first. Which is why:
+**`activate` first, and let it finish.** It ends by restarting the gateway to
+load the credential it just wrote, and `sign-in` runs `hermes auth add` through
+`compose exec` **in that same container** — so an `activate` completing while a
+`sign-in` waits kills the device-code session under it. Running them in two
+terminals to save a minute is the one arrangement that breaks. If it happens
+anyway, re-run `sign-in`: it costs nothing, unlike the step above it. Which is
+why:
 
 **Do not run 1 and 2 until they say they are at their phone.** Both codes are
-short-lived — the device code expires in about fifteen minutes — and the
-activation is a **one-time spend**: mint it while they are away from their desk
-and you cannot mint it again. Wait for "I'm here", then send both.
+short-lived — minutes, not hours — and the activation is a **one-time spend**:
+mint it while they are away from their desk and you cannot mint it again.
+Wait for "I'm here", then send both.
 
 **Step 4 is the account boundary, and it is decided by the handset.** `POST
 /v1/auth/activate` carries no credential; the binding is whoever texts the code
