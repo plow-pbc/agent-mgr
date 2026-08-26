@@ -38,7 +38,12 @@ def run(registry, tmp_path):
 
 @pytest.fixture
 def instance(tmp_path):
-    """Create an agent repo on disk and return its path."""
+    """Create an agent's repo on disk and return its path.
+
+    Named `instance` from the three-layer model. The concept it makes is still
+    right -- one agent's repo -- so the rename is tracked rather than swept: a
+    blind one would also hit `instance override`, which is Compose's word.
+    """
 
     def _instance(name, descriptor="", config="model:\n  provider: openai-codex\n"):
         repo = tmp_path / f"{name}-repo"

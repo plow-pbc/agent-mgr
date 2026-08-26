@@ -173,7 +173,7 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     import re
     root = pathlib.Path(__file__).resolve().parent.parent
     # The resolver's own loop, not a name heuristic: it is what decides which
-    # keys are instance-supplied executables rather than derived values.
+    # keys are agent-supplied executables rather than derived values.
     loop = re.search(r"^\s*for _hook in ([A-Z_ ]+); do$",
                      (root / "lib" / "common.sh").read_text(), re.M)
     assert loop, "the hook loop moved -- this probe reads it to know what to check"

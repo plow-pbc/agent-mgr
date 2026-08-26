@@ -191,7 +191,7 @@ case "$cmd" in
         [[ "$skill_ref" =~ ^[0-9a-f]{40}$ ]] || die "the skill ref must be a 40-char SHA, got: $skill_ref"
         : "${skill_dest:=${skill_repo##*/}}"
         "$AGENT_MGR_ROOT/lib/fetch-skill" "$AGENT_HOME" "$skill_repo" "$skill_ref" "$skill_dest" "$skill_src"
-        # Record the pin in the INSTANCE repo: it is that agent's declaration of
+        # Record the pin in the AGENT repo: it is that agent's declaration of
         # what it runs, and it belongs under review beside its config.
         tsv="$AGENT_DIR/skills.tsv"; touch "$tsv"
         t="$(mktemp)"
