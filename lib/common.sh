@@ -718,11 +718,19 @@ require_own_home() {
 #   - Taking a trimmed copy means a flag or a branch inside the guard every
 #     direct-write command depends on, to let one read-only caller skip a loop.
 #
-# The cost of not taking it is bounded and different in kind: two agents whose
-# declared homes alias each archive it under their own name, into one
-# operator-owned directory at umask 077. A duplicate archive whose name
-# over-claims -- not a miss, not an account boundary crossed. That is the trade,
-# and it is written here rather than argued in a commit message.
+# The cost of not taking it: two agents whose declared homes alias each archive
+# it under their own name, into one operator-owned directory at umask 077. A
+# duplicate archive whose name over-claims, rather than a miss.
+#
+# What that does NOT bound, and an earlier version of this note wrongly claimed
+# it did: a symlinked home. The check above compares the declared NAME, so
+# `.hermes-rowan` pointing at `$HOME/.ssh` passes it and tar follows the link.
+# That is not backup's boundary to hold, though -- templates/compose.yml mounts
+# ${AGENT_HOME} at /opt/data, so the same symlink already gave the gateway that
+# directory read-write for its whole life, and no resolved-identity comparison
+# exists anywhere on this path. Tracked as plow-pbc/agent-mgr#30 rather than
+# patched here, because scoping it to backup alone would leave the wider mount
+# untouched while implying it was closed.
 require_home_shape() {
     local verb="${1:-write to}"
     case "$AGENT_HOME" in

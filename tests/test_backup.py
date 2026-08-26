@@ -103,7 +103,6 @@ def test_all_covers_every_registered_agent(run, instance, tmp_path, backup_dir):
     assert r.returncode == 0, r.stderr
     assert len(list(backup_dir.glob("*.tar.gz"))) == 3
 
-
 def test_all_reports_the_agents_it_could_not_back_up_and_exits_nonzero(run, instance, tmp_path, backup_dir):
     """Keep going, then fail loudly. Aborting on the first bad row would leave
     the healthy agents unbacked-up too, and exiting 0 would hide the gap."""
@@ -306,7 +305,6 @@ def test_a_descriptor_cannot_point_the_archive_at_the_whole_account(
     assert "refusing to archive" in r.stderr
     assert not list(backup_dir.glob("*.tar.gz")), "it archived the account anyway"
 
-
 def test_one_broken_registry_row_does_not_cost_the_healthy_agents_their_backup(
         run, instance, tmp_path, backup_dir):
     """`--all`'s whole contract is that a bad row costs only its own backup.
@@ -345,3 +343,44 @@ def test_a_hand_edited_registry_name_cannot_escape_the_backup_directory(
     assert r.returncode != 0
     assert "lowercase" in r.stderr
     assert not list(tmp_path.glob("**/*pwned*.tar.gz")), "the archive escaped the destination"
+
+
+@pytest.mark.parametrize("breakage", ["missing-home", "missing-repo"])
+def test_all_reports_a_broken_row_and_still_backs_up_the_healthy(
+        run, instance, tmp_path, backup_dir, breakage):
+    """`--all`'s contract is that a bad row costs only its own backup. Both
+    breakages are inputs to it: a registered agent whose home was never
+    restored, and one whose repo moved out from under the registry. The second
+    is also the regression check for taking require_own_home here — that guard
+    is fail-closed on any sibling it cannot resolve, so it would abort every
+    healthy agent's archive and report the whole fleet as failed."""
+    _, home = registered(run, instance, "rowan")
+    (home / ".env").write_text("x\n")
+    ghost = instance("ghost")
+    assert run("register", "ghost", str(ghost)).returncode == 0
+    if breakage == "missing-repo":
+        shutil.rmtree(ghost)
+
+    r = run("backup", "--all", env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
+    assert r.returncode != 0, "the broken row must still be reported"
+    assert "ghost" in r.stderr
+    assert [p.name.split("-")[0] for p in backup_dir.glob("*.tar.gz")] == ["rowan"], \
+        "the broken row cost the healthy agent its backup"
+
+
+def test_a_directory_at_the_archive_name_is_refused_not_promoted_into(
+        run, instance, tmp_path, backup_dir):
+    """`mv` into a directory succeeds and lands the stage inside it, and `du`
+    then sizes the directory — so the run prints a path and reports success for
+    something no `tar -xzf` can read. In the tool whose whole job is that a
+    reported backup is a real one."""
+    _, home = registered(run, instance, "rowan")
+    (home / ".env").write_text("x\n")
+    from datetime import datetime, timezone
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d")
+    (backup_dir / f"rowan-{stamp}.tar.gz").mkdir()
+
+    r = run("backup", "rowan", env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
+    assert r.returncode != 0
+    assert "is a directory" in r.stderr
+    assert not list(backup_dir.glob(".rowan-*")), "the stage was left behind"

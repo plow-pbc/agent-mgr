@@ -75,6 +75,13 @@ tar --exclude=./logs \
     --exclude=./lazy-packages \
     -C "$home" -czf "$stage" . || [ $? -eq 1 ]
 
+# A directory at the archive's name turns `mv` into a move INTO it: exit 0, the
+# stage lands as `<archive>/<stage-name>`, and `du -h "$archive"` then sizes the
+# directory happily -- so the run prints a path and reports success for
+# something no `tar -xzf` can read. Measured. Refused rather than handled: there
+# is no sensible way to promote into a directory, and this is the tool whose
+# whole job is that a reported backup is a real one.
+[ -d "$archive" ] && { echo "backup: $archive is a directory -- move it aside; a backup cannot be promoted into it" >&2; exit 1; }
 mv "$stage" "$archive"
 trap - EXIT
 

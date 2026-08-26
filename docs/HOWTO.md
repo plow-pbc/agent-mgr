@@ -115,9 +115,17 @@ writers to one session database:
 
 ```sh
 agent-mgr down rowan
+mkdir -p ~/.hermes-rowan        # tar will not create it, and total loss is the case
 tar -C ~/.hermes-rowan -xzf /path/to/rowan-20260826.tar.gz
+agent-mgr restore rowan         # repo-owned config, plugin and skills win
 agent-mgr up rowan
 ```
+
+The `mkdir` is not belt-and-braces: `tar -C` on a missing directory exits 2
+before extracting anything, and a home that is *gone* is the scenario this
+command exists for. The `restore` afterwards is what makes the archive's copy of
+`config.yaml` and the installed plugin lose to whatever the repo says today —
+those are the reproducible half, and the archive's copy is as old as the archive.
 
 The archive is **contents-rooted** — it holds `./` entries, not a
 `.hermes-rowan/` prefix — so it unpacks into a directory you name rather than
