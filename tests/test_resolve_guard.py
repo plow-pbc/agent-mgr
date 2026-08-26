@@ -317,6 +317,13 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
      "sets pull_policy: some_future_policy"),
     ({"build": True, "pull_policy": "build"}, False,
      "`build` leaves a built image alone", ""),
+    ({"build": True, "pull_policy": "if_not_present"}, False,
+     "the spec's alias for `missing`, so it builds too -- the one allowlist "
+     "entry no row reached", ""),
+    ({"build": True, "pull_policy": "daily"}, True,
+     "the periodic policies refetch like `always`", "sets pull_policy: daily"),
+    ({"build": True, "pull_policy": "every_12h"}, True,
+     "including the parameterised one", "sets pull_policy: every_12h"),
     ({"build": True, "pull_policy": "never"}, False,
      "an explicit never is fine too, just not required", ""),
 ])

@@ -79,10 +79,14 @@ case "$got_build:$got_image" in
     #
     # An EXPLICIT refetching policy is the real hole. Stated as an ALLOWLIST,
     # for the reason COMPOSE_LEAVES_IT_RUNNING is: a list of what to refuse has
-    # to be complete to be correct, and this one was not -- `refresh` is a real
-    # Compose policy that refetches, and the spec can add more. What provably
-    # does not fetch is a short closed set; anything else is refused, named or
-    # not.
+    # to be complete to be correct, and this one was not -- `refresh` refetches
+    # and was absent from it. The full set is Compose's own, from the validator:
+    #
+    #   always|never|build|if_not_present|missing|refresh|daily|weekly|every_(...)
+    #
+    # of which never, build, if_not_present and missing leave a built image
+    # alone. Anything else is refused, named or not, so a policy the spec adds
+    # later costs a loud refusal rather than a silent fetch.
     build:*)
         case "${got_pull:--}" in
             -|missing|never|build|if_not_present) ;;
