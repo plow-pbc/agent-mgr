@@ -290,12 +290,23 @@ require_running_container_is_ours() {
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
     mounted="$(printf '%s' "$mounted" | tr -s /)"; mounted="${mounted%/}"
     [ -n "$mounted" ] && [ "$mounted" = "$AGENT_HOME" ] && return 0
-    # The escape, named: every agent-mgr route out of this state goes through
-    # compose_transition and is refused by this same check, so without it the
-    # rightful owner is locked out of their own project with no tool-supported
-    # recovery -- the same dead end `unregister` exists to remove for
-    # require_own_home's fail-closed arm.
-    die "refusing to touch the container running as $AGENT_PROJECT -- it mounts ${mounted:-<nothing>} at /opt/data, not ${AGENT_NAME}'s home ($AGENT_HOME). The compose project comes from the agent NAME, so a name that collides with a live agent reaches it however isolated this descriptor is. If that container is a stray and you own this name, remove it with: docker rm -f $cid"
+    # The escape has to DISCRIMINATE, not instruct. Every agent-mgr route out of
+    # this state goes through this same check, so saying nothing locks the
+    # rightful owner out -- but the motivating incident is a scratch checkout
+    # whose operator believes they own the name, which is why they typed the
+    # command. Handing that operator `docker rm -f` destroys the live gateway
+    # the refused restart would only have bounced.
+    #
+    # The mounted home on disk is what tells the two apart: a directory that
+    # exists belongs to whoever is running it, and this descriptor is the thing
+    # in the wrong. Only a mount with nothing behind it is a genuine stray.
+    local remedy
+    if [ -n "$mounted" ] && [ -d "$mounted" ]; then
+        remedy="That home exists, so something owns it -- this descriptor is the one in the wrong. Give this agent a name of its own, or 'agent-mgr unregister $AGENT_NAME' if it should not be registered here."
+    else
+        remedy="Nothing is behind that mount, so it looks like a stray. Confirm with 'docker inspect $cid', then: docker rm -f $cid"
+    fi
+    die "refusing to touch the container running as $AGENT_PROJECT -- it mounts ${mounted:-<nothing>} at /opt/data, not ${AGENT_NAME}'s home ($AGENT_HOME). The compose project comes from the agent NAME, so a name that collides with a live agent reaches it however isolated this descriptor is. $remedy"
 }
 
 # Every route to a container transition goes through here, so the instance's

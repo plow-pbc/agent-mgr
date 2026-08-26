@@ -223,14 +223,20 @@ def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance
     rather than the name constrained."""
     run("register", "rowan", str(instance("rowan")))
     log = tmp_path / "argv"
+    foreign = tmp_path / "someone-else" / ".hermes-rowan"
+    foreign.mkdir(parents=True)
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    mount="/home/someone-else/.hermes-rowan", log=log)
+                    mount=str(foreign), log=log)
     for cmd in ("restart", "up", "down"):
         r = run(cmd, "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
         assert r.returncode != 0, f"{cmd} touched a container mounting a different home"
         assert "not rowan's home" in r.stderr
-        assert "/home/someone-else/.hermes-rowan" in r.stderr, "the message must name what it found"
-        assert "docker rm -f" in r.stderr, "no escape named, so the owner is locked out"
+        assert str(foreign) in r.stderr, "the message must name what it found"
+        # The foreign home exists, so it belongs to a running agent: the remedy
+        # must point at THIS descriptor, never at destroying that container.
+        assert "docker rm -f" not in r.stderr, (
+            "offered to destroy a live gateway the refused command would only have bounced")
+        assert "unregister" in r.stderr, "no escape named, so the owner is locked out"
     # The ORDER is the invariant, not just the exit code: checking after the call
     # would leave every assertion above green with the restart already sent to
     # the live project.
@@ -250,3 +256,16 @@ def test_a_container_that_cannot_be_identified_is_refused(run, instance, tmp_pat
     r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, "touched a container docker could not identify"
     assert "could not say whose home it mounts" in r.stderr
+
+
+def test_a_mount_with_nothing_behind_it_is_named_as_a_stray(run, instance, tmp_path):
+    """The other side of the same message. A container mounting a path that does
+    not exist is nobody's, so removal is the right hint -- it is only wrong when
+    the home exists and the descriptor is the thing in the wrong."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    mount=str(tmp_path / "nothing-here"))
+    r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "looks like a stray" in r.stderr
+    assert "docker rm -f" in r.stderr
