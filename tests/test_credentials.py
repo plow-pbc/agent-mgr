@@ -107,9 +107,12 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
             env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     body = env_file.read_text()
-    assert "DOMO_DEVICE_UID=dev_abc" in body
-    assert "DOMO_MCP_TOKEN=tok_xyz" in body
-    assert "HOSTEX_TOKEN=keep-me" in body
+    # The whole LINE, at column 0 -- not a substring. A future edit that carried
+    # the incoming line's `export ` or indent through would satisfy a substring
+    # match and produce exactly the spelling the readers have to agree about.
+    assert "DOMO_DEVICE_UID=dev_abc" in body.splitlines()
+    assert "DOMO_MCP_TOKEN=tok_xyz" in body.splitlines()
+    assert "HOSTEX_TOKEN=keep-me" in body.splitlines()
     # One declaration each, in any spelling -- not a second appended beside the
     # one it was meant to replace, and no stale value left underneath.
     assert body.count("DOMO_MCP_TOKEN=") == 1

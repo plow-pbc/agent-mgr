@@ -266,23 +266,17 @@ case "$cmd" in
         # this agent's PMS token and lock key live in the same file.
         tmp="$(mktemp "$env_file.XXXXXX")"
         trap 'rm -f "$tmp"' EXIT
-        # Every spelling a reader of this file tolerates, collapsed to one
-        # canonical line. A bare `$1=="KEY"` match saw only `KEY=` at column 0,
-        # so a pre-existing `export KEY=` or an indented one -- both plausible,
-        # because until this commit the docs told the operator to hand-edit this
-        # file -- matched nothing and the END arm APPENDED a second declaration.
-        # That leaves the old, probably revoked, token on disk underneath the
-        # new one, and the readers then disagree about which is live:
-        # check-latch's read_key takes the first `^KEY=` line while a
-        # last-declaration-wins parser takes the other. Matching every spelling
-        # and printing the first hit only also drops any duplicate already
-        # there, so the file this command touches ends with exactly one.
-        uid="$uid" tok="$tok" awk '
-            function declares(line, key) {
-                return line ~ ("^[ \t]*(export[ \t]+)?" key "[ \t]*=")
-            }
-            declares($0, "DOMO_DEVICE_UID") { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
-            declares($0, "DOMO_MCP_TOKEN")  { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
+        # Every spelling the gateway honours, collapsed to one canonical line at
+        # column 0. Matching only `KEY=` there would leave a pre-existing
+        # `export KEY=` or an indented one in place and APPEND beside it -- a
+        # stale, probably revoked, token underneath the new one. Rewriting the
+        # first declaration and dropping the rest also collapses a file that
+        # arrived with two, so what this touches always leaves with exactly one.
+        uid="$uid" tok="$tok" \
+        uid_re="$(dotenv_declares DOMO_DEVICE_UID)" tok_re="$(dotenv_declares DOMO_MCP_TOKEN)" \
+        awk '
+            $0 ~ ENVIRON["uid_re"] { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
+            $0 ~ ENVIRON["tok_re"] { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
             { print }
             END {
                 if (!u) print "DOMO_DEVICE_UID=" ENVIRON["uid"]
@@ -300,11 +294,6 @@ case "$cmd" in
         load_agent "${1:-}"
         env_file="$AGENT_HOME/.env"
         [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
-        # `|| true` on the grep: under `set -e` a missing key exits 1 and kills
-        # the command, so the friendly branch below could never fire for the
-        # case it was written for. The sed strips surrounding quotes -- a normal
-        # dotenv line is KEY="..." and sending the quotes gets a 401.
-        read_key() { grep -m1 "^$1=" "$env_file" | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/" || true; }
         # The CONFIG is the declaration, not the dotenv. Keying off the
         # credential looked equivalent and is not: a leftover DOMO_* pair from an
         # earlier experiment sits in a dotenv long after the config stopped
@@ -318,7 +307,8 @@ case "$cmd" in
             echo "no latch configured for $AGENT_NAME -- its config declares no latch server"
             exit 0
         fi
-        uid="$(read_key DOMO_DEVICE_UID)"; tok="$(read_key DOMO_MCP_TOKEN)"
+        uid="$(dotenv_read DOMO_DEVICE_UID "$env_file")"
+        tok="$(dotenv_read DOMO_MCP_TOKEN "$env_file")"
         [ -n "$uid" ] || die "DOMO_DEVICE_UID is empty in $env_file -- mint the pair on the Mac, then: agent-mgr set-latch $AGENT_NAME"
         [ -n "$tok" ] || die "DOMO_MCP_TOKEN is empty in $env_file -- mint the pair on the Mac, then: agent-mgr set-latch $AGENT_NAME"
         require_running

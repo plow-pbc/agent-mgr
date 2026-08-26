@@ -1,5 +1,6 @@
 import os
 
+import pytest
 from conftest import fake_docker
 
 
@@ -219,3 +220,50 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
         # scaffolded repo could not discover the veto it is entitled to.
         assert hook in descriptor, (
             f"{hook} is a declared hook but templates/agent.env does not document it")
+
+
+@pytest.mark.parametrize(
+    "dotenv",
+    [
+        'DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN="tok_abc"\n',
+        "  DOMO_DEVICE_UID=dev_123\n  DOMO_MCP_TOKEN=tok_abc\n",
+        "export DOMO_DEVICE_UID=dev_123\nexport DOMO_MCP_TOKEN=tok_abc\n",
+        "DOMO_DEVICE_UID = dev_123\nDOMO_MCP_TOKEN = tok_abc\n",
+    ],
+    ids=["bare", "indented", "export", "spaced"],
+)
+def test_check_latch_reads_every_spelling_the_gateway_honours(run, instance, tmp_path, dotenv):
+    """check-latch is the command for diagnosing a hand-edited dotenv, so the
+    spellings a hand edit arrives in are exactly the ones it must not miss. Its
+    grammar is the gateway's own (hermes_cli/config.py load_env): strip the
+    line, drop `export `, strip space around the key, last declaration wins."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("restore", "property")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(dotenv)
+    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
+    assert r.returncode == 0, r.stderr
+    assert "reachable" in r.stdout
+    # Not "is empty" -- the credential is right there in a spelling the gateway
+    # loads, and reporting it missing sends the operator to re-mint a live pair.
+    assert "is empty" not in r.stderr
+
+
+def test_check_latch_probes_the_declaration_the_gateway_actually_loaded(run, instance, tmp_path):
+    """With two declarations of one key the gateway takes the LAST -- it assigns
+    into a dict as it reads (hermes_cli/config.py load_env). Probing the first
+    tests a token nothing is using: a stale credential reports REVOKED and sends
+    the operator to replace a live one, or answers 200 for a token the gateway
+    never loaded. Asserted on what reached curl, not on the exit code, because
+    both tokens produce the same 200 from the fake relay."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("restore", "property")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
+        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=stale_first\nexport DOMO_MCP_TOKEN=live_last\n")
+    log = tmp_path / "docker.log"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-property",
+                    name="property", exec_output="200", log=log)
+    r = run("check-latch", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    stdin = (tmp_path / "docker.log.stdin").read_text()
+    assert 'header = "Authorization: Bearer live_last"' in stdin
+    assert "stale_first" not in stdin

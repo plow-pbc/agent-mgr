@@ -662,6 +662,36 @@ require_running() {
     require_running_container_is_ours
 }
 
+# What counts as a declaration of KEY in an agent's dotenv, in ONE place --
+# set-latch writes through it and check-latch reads through it, and two readers
+# of one file disagreeing about which line is live is the whole failure class
+# these two commands exist to end.
+#
+# The grammar is the GATEWAY's, read off its parser rather than guessed
+# (hermes_cli/config.py, load_env): it strips the line, drops an `export `
+# prefix, strips space around the key, and assigns into a dict. So leading
+# whitespace and `export ` are declarations, and the LAST one wins.
+dotenv_declares() {
+    printf '^[[:space:]]*(export[[:space:]]+)?%s[[:space:]]*=' "$1"
+}
+
+# The value the gateway would load for KEY. `grep -m1 "^KEY="` -- what this
+# replaces -- disagreed with it in both directions at once: bare spelling only,
+# and first match rather than last. An indented but perfectly good credential
+# read as absent, and a stale bare line above a newer `export` one got probed in
+# place of the token actually in use.
+dotenv_read() {
+    local key="$1" file="$2" line
+    # `|| true` is load-bearing under `set -o pipefail`: no match is an ordinary
+    # answer here, and grep's exit 1 would otherwise kill the caller.
+    line="$(grep -E "$(dotenv_declares "$key")" "$file" | tail -n 1)" || true
+    [ -n "$line" ] || return 0
+    # A normal dotenv line is KEY="..." and sending the quotes on gets a 401.
+    printf '%s' "$line" \
+        | sed -E "s/^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=//" \
+        | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+}
+
 # Does the INSTALLED config declare a latch server? The config is the
 # declaration, not the dotenv: a leftover DOMO_* pair from an earlier experiment
 # sits in a dotenv long after the config stopped declaring a latch, and keying
