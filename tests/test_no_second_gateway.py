@@ -544,6 +544,10 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
                  # The flag AFTER the service: only run and exec hand later
                  # words to the container, so only they may stop scanning there.
                  ("up", "hermes", "--pull", "always"),
+                 # The CLI flag overrides a safe file-level policy, so it gets
+                 # the same allowlist: `missing` fetches when the tag is absent.
+                 ("up", "-d", "--pull", "missing"),
+                 ("up", "-d", "--pull=missing"),
                  ("create", "hermes", "--pull=always"),
                  ("run", "--entrypoint", "bash", "--rm", "--pull", "always", "hermes")):
         r = run("compose", "rowan", *args, env=env)
@@ -552,6 +556,9 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
 
     assert run("compose", "rowan", "pull", "--ignore-buildable",
                env=env).returncode == 0, "the safe form was refused too"
+    for safe in (("up", "-d", "--pull", "never"), ("up", "-d", "--pull=build")):
+        assert run("compose", "rowan", *safe, env=env).returncode == 0, (
+            f"{safe} names a policy that does not fetch and was refused")
 
     # Keyed on the SUBCOMMAND and on flags before the service, per this file's
     # own rule -- scanning the whole argv made a container's own command line

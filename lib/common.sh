@@ -259,8 +259,15 @@ compose_fetch_is_safe() {
     # which is keyed on $1 above and stays fixed.
     while [ $# -gt 0 ]; do
         case "$1" in
-            --pull=always) return 1 ;;
-            --pull) [ "${2:-}" = always ] && return 1 ;;
+            # The SAME allowlist the file-level policy gets, because the CLI
+            # flag overrides the file: `--pull missing` beats a safe
+            # `pull_policy: never` and fetches when the local tag is absent,
+            # which the marker test showed is a real substitution. Rejecting
+            # only `always` left that door open.
+            --pull=never|--pull=build) ;;
+            --pull=*) return 1 ;;
+            --pull)
+                case "${2:-}" in never|build) ;; *) return 1 ;; esac ;;
         esac
         shift
     done

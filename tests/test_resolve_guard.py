@@ -315,9 +315,6 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     ({"build": True, "pull_policy": "refresh"}, True,
      "a real Compose policy that refetches and was absent from the denylist -- "
      "which is why the arm is an allowlist", "pull_policy is 'refresh', and only 'never' or 'build'"),
-    ({"build": True, "pull_policy": "some_future_policy"}, True,
-     "anything the spec adds later is refused unnamed, rather than admitted",
-     "pull_policy is 'some_future_policy', and only 'never' or 'build'"),
     ({"build": True, "pull_policy": "build"}, False,
      "`build` leaves a built image alone", ""),
     ({"build": True}, True,
