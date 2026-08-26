@@ -51,8 +51,11 @@ def test_new_refuses_a_directory_holding_only_a_config(run, tmp_path):
 
 def test_new_prints_the_bring_up_sequence(run, tmp_path):
     r = run("new", "acme", str(tmp_path / "acme-hermes-agent"))
-    for step in ("restore", "install-plugin", "activate", "up", "sign-in", "check-latch"):
+    # No install-plugin: restore does it, and listing it as a separate step is
+    # the workflow re-running the installer over the config restore just laid down.
+    for step in ("restore", "activate", "up", "sign-in", "check-latch"):
         assert step in r.stdout
+    assert "install-plugin" not in r.stdout
 
 
 def test_new_refuses_to_overwrite_an_existing_instance(run, tmp_path):

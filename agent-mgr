@@ -71,8 +71,6 @@ case "$cmd" in
         # rather than depending on the installer staying idempotent.
         install_plow_plugin
 
-        # Compared before the copy, because after it they are always identical.
-        if cmp -s "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"; then changed=; else changed=1; fi
         install -m 600 "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"
         echo "restored config.yaml to $AGENT_HOME"
 
@@ -285,8 +283,8 @@ scaffolded $name at $dir
   home:     $AGENT_HOME (created by restore)
 
 bring it up:
-  agent-mgr restore $name          # config.yaml + a .env skeleton into its home
-  agent-mgr install-plugin $name   # the Plow Chat plugin, from the pinned SHA
+  agent-mgr restore $name          # the whole deploy: config, plugin, and this
+                                   # agent's own restore hook if it declares one
   agent-mgr activate $name         # prints a code; text it from the agent's phone
   agent-mgr up $name
   agent-mgr sign-in $name          # model OAuth, in a browser

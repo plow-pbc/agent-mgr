@@ -6,8 +6,7 @@ command rather than a copy-paste of the last one.
 
 ```sh
 agent-mgr new rowan          # scaffold an instance repo, both platforms wired
-agent-mgr restore rowan      # config + a dotenv skeleton into its home
-agent-mgr install-plugin rowan
+agent-mgr restore rowan      # the whole deploy: config, plugin, restore hook
 agent-mgr activate rowan     # prints a code; text it from the agent's phone
 agent-mgr up rowan
 agent-mgr sign-in rowan

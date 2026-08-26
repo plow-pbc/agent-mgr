@@ -20,7 +20,6 @@ instance repo, so every command works from any directory.
 ```sh
 agent-mgr new rowan ~/services/rowans-life-hermes-agent
 agent-mgr restore rowan
-agent-mgr install-plugin rowan
 agent-mgr activate rowan      # prints a code -- text it from THAT agent's phone
 agent-mgr up rowan
 agent-mgr sign-in rowan       # device-code OAuth; hand the URL to whoever owns it
@@ -144,3 +143,11 @@ single day, and 6 sqlite errors from two gateways racing one session database.
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |
 | a skill behaves oddly | compare the container's pinned SHA against the Mac's ClawHub version |
+
+## Bumping the plugin pin
+
+`agent-mgr restore <name>` installs the plugin as part of the whole deploy, and
+that is the normal path. After bumping `runtime/plow-chat-plugin.ref` alone,
+`agent-mgr install-plugin <name>` does just that step — useful when an agent's
+restore hook is expensive (the rentals agent re-seeds a vault and rebuilds its
+property hubs) and nothing else changed.
