@@ -241,6 +241,12 @@ compose_fetch_is_safe() {
     # rather than only at the passthrough, so the invariant travels with the
     # code that depends on it.
     case "$sub" in -*) return 1 ;; esac
+    # `build --pull` is a BOOLEAN flag -- "always attempt to pull a newer
+    # version of the base image" -- not the value-taking `--pull` that `up` and
+    # `run` take. It re-pulls the FROM image and rebuilds, so the output is
+    # still what this host built, and reading its next word as a policy refused
+    # a safe command.
+    case "$sub" in build) return 0 ;; esac
     case "$sub" in
         pull)
             case " $* " in *" --ignore-buildable "*) return 0 ;; esac
@@ -252,7 +258,7 @@ compose_fetch_is_safe() {
     # a silent failure, on the one subcommand (`run`) that both stops and
     # fetches. Scanning everything cannot miss one.
     #
-    # The cost is a container command containing literally `--pull always`
+    # The cost is a container command containing literally `--pull <policy>`
     # being refused. That is loud rather than silent, and far rarer than a flag
     # this list had not heard of: the `git pull` false positive that prompted
     # the boundary came from matching the SUBCOMMAND anywhere in the argv,
@@ -283,7 +289,7 @@ compose() {
     # not -- they disagreed on wording and the passthrough's was redundant for
     # anything reaching compose_transition.
     compose_fetch_is_safe "$@" \
-        || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull always' has no such escape. this closes the fetch agent-mgr could issue; resolve-guard separately requires a built service to set 'pull_policy: never' (or 'build'), which closes the one Compose issues on its own."
+        || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull' accepts only 'never' or 'build' -- every other value fetches when the local tag is absent. this closes the fetch agent-mgr could issue; resolve-guard separately requires a built service to set 'pull_policy: never' (or 'build'), which closes the one Compose issues on its own."
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"

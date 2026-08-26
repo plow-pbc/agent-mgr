@@ -556,7 +556,10 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
 
     assert run("compose", "rowan", "pull", "--ignore-buildable",
                env=env).returncode == 0, "the safe form was refused too"
-    for safe in (("up", "-d", "--pull", "never"), ("up", "-d", "--pull=build")):
+    for safe in (("up", "-d", "--pull", "never"), ("up", "-d", "--pull=build"),
+                 # boolean flag: re-pulls the FROM image and rebuilds, so the
+                 # output is still what this host built
+                 ("build", "--pull")):
         assert run("compose", "rowan", *safe, env=env).returncode == 0, (
             f"{safe} names a policy that does not fetch and was refused")
 
