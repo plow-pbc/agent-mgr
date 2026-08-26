@@ -189,7 +189,7 @@ _refuse() {
 }
 
 parse_env_file() {
-    local file="$1" allow="$2" role="${3:-dotenv}" collect="" _lineno=0
+    local file="$1" allow="$2" role="$3" collect="" _lineno=0
     [ "$role" = descriptor ] && collect=hooks
     local line key value _rest
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
@@ -316,6 +316,13 @@ parse_env_file() {
         # because loosening that check must not silently re-open the sink.
         # `--` for uniformity with the other guarded greps.
         if printf '%s' "$allow" | grep -Fqw -- "$key"; then
+            # Recorded by the parser that accepted it, so require_own_home needs
+            # no second opinion about the same file. Its raw
+            # `grep '^[[:space:]]*AGENT_HOME='` could not see `export AGENT_HOME=`
+            # or `AGENT_HOME = `, both of which this parser accepts -- so a
+            # descriptor resolved fine and every direct-write command then
+            # refused it as undeclared.
+            [ "$key" = AGENT_HOME ] && AGENT_HOME_DECLARED=1
             printf -v "$key" '%s' "$value"
         elif [ "$collect" = "hooks" ]; then
             # An instance's own variables -- STR_VAULT and friends -- which its
@@ -339,6 +346,7 @@ load_agent() {
 
     # shellcheck disable=SC2086
     unset $AGENT_KEYS $COMPOSE_KEYS
+    AGENT_HOME_DECLARED=0
 
     # Read, never execute. This used to dot-source the descriptor, which made a
     # file documented as declarative into host shell code: any repo registered
@@ -848,7 +856,7 @@ require_own_home() {
             # convention can never produce a bare `.hermes`, so this is always a
             # deliberate declaration, and the collision check above is what
             # stops a second agent from making the same one.
-            grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
+            [ "${AGENT_HOME_DECLARED:-0}" = 1 ] && return 0
             die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
     die "refusing to write to $AGENT_HOME -- that is not ${AGENT_NAME}'s own home"
