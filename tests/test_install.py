@@ -449,23 +449,31 @@ def test_each_pin_is_read_only_where_its_command_fetches():
     assert "plow-chat-plugin.ref" not in activate, "activate must not read the plugin pin"
 
 
-def test_the_two_pins_are_not_the_same_commit():
-    """Catches the COLLISION only -- an edit that wrote one SHA into both files.
+def test_the_activate_pin_is_frozen_and_distinct():
+    """The activate ref may not be bumped at all, and this is what enforces it.
 
-    Worth keeping: both pins now name one repo, so a bump that rewrites both
-    (a sed over runtime/, a copy-paste) produces a state that no longer looks
-    obviously wrong, and it installs the pre-strip layout as a plugin.
+    `Strip the SEED ceremony` deleted ref/scripts/, so the plugin pin moves
+    forward past it while create_plow_chat_curl.sh exists only before it. The
+    realistic slip is reaching for "latest in hermes-plow-chat" and landing on
+    HEAD, which 404s `activate` -- a one-time irreversible spend.
 
-    What it does NOT catch, stated because the old two-repo docstring implied
-    otherwise: bumping plow-chat-activate.ref to any OTHER post-strip commit --
-    the realistic slip, since "latest in hermes-plow-chat" is HEAD, not the
-    plugin's pin. That 404s `activate` at runtime and passes here. Proving it
-    would mean asserting ancestry against the real repo, which is a network call
-    in a suite that is hermetic by design. The README owns the rule instead, and
-    test_probes.py pins that it still states it.
+    Proving the ref is an ANCESTOR of the strip would need that repo's history,
+    which is a network call this suite will not make. Pinning the SHA itself
+    needs nothing: any forward bump reddens this test, so moving that ref has to
+    be deliberate enough to edit this line. Three review rounds hardened prose
+    around this before someone pointed out the one-line version.
+
+    The inequality stays for the other direction -- an edit that writes one SHA
+    into both files (a sed over runtime/, a copy-paste) installs the pre-strip
+    layout as a plugin, and would satisfy the equality above on its own.
     """
     plugin = (ROOT / "runtime" / "plow-chat-plugin.ref").read_text().strip()
     activate = (ROOT / "runtime" / "plow-chat-activate.ref").read_text().strip()
+    assert activate == "98ddb2e7f0ce563a7ed6c9af43802d15b5ff62d3", (
+        "the activate pin moved. It is frozen behind `Strip the SEED ceremony`, "
+        "which deleted the ref/scripts/ path it names -- a later SHA 404s on "
+        "activate. If this is deliberate, the new SHA must still predate that "
+        "commit, and the README's builds-on section says why.")
     assert plugin != activate
 
 

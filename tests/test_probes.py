@@ -222,15 +222,17 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
 
 
 def test_the_readme_still_states_which_pin_may_move():
-    """Only one of the two hermes-plow-chat pins may be bumped, and no assertion
-    can prove it: the activate ref must stay behind a commit in someone else's
-    history, which is a network call this suite will not make.
+    """The freeze itself is enforced by the SHA pin in test_install.py; this
+    pins the paragraph that says WHY, which is a different job.
 
-    So the README is the enforcement, and this pins the README. It earned that:
-    docs/HOWTO.md restated the same rule, went stale for a commit, and told an
-    operator to source the activate SHA from a repo the command never contacts --
-    a 404 on the one command that is a one-time irreversible spend. The HOWTO
-    now back-references this section rather than carrying a second copy.
+    A red SHA assertion tells whoever tripped it that the ref moved, not that
+    moving it 404s `activate`, and the obvious repair to a test blocking your
+    bump is to update the expected value. This keeps the explanation reachable
+    from the file they will be sent to.
+
+    It earned its keep: docs/HOWTO.md restated the same rule, went stale for a
+    commit, and told an operator to source that SHA from a repo the command
+    never contacts. The HOWTO now back-references this section instead.
     """
     import pathlib
     import re
@@ -246,13 +248,18 @@ def test_the_readme_still_states_which_pin_may_move():
     # rule itself is deleted -- which is the state this probe first shipped in.
     body = re.sub(r"```.*?```", "", body, flags=re.S)
     body = "\n".join(l for l in body.splitlines() if not l.startswith("|"))
+    # Whitespace-normalised before matching, so a claim spans a markdown hard
+    # wrap. Matching raw pinned the WRAP COLUMN: adding a word earlier in the
+    # paragraph reddened an intact README, and the natural repair under time
+    # pressure is to loosen the claim back to a bare substring -- reopening the
+    # hole this narrowing closed.
+    prose = " ".join(body.split())
     # Phrases that appear ONLY in the normative sentences. A bare "must not be"
     # also matched the adjacent do-not-collapse rule, so losing the freeze rule
     # -- the one an operator bumping a pin actually trips -- read as green.
     for claim in ("frozen at a pre-strip commit",
-                  "must not be\nbumped forward at all",
-                  "Only `runtime/plow-chat-plugin.ref` may be bumped",
-                  "Strip the SEED ceremony"):
-        assert claim in body, (
-            f"the builds-on prose no longer states {claim!r} -- that paragraph is "
-            "the only thing keeping the activate pin from being bumped past the strip")
+                  "must not be bumped forward at all",
+                  "Only `runtime/plow-chat-plugin.ref` may be bumped"):
+        assert claim in prose, (
+            f"the builds-on prose no longer states {claim!r} -- it is where an "
+            "operator bumping a pin learns which of the two may move")

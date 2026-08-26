@@ -198,9 +198,9 @@ one-time irreversible spend. `tests/test_install.py` pins the pairing.
 bumped forward at all — not to `HEAD`, not to any later SHA. That is the
 realistic slip rather than the collapse above: someone reaching for "latest in
 `hermes-plow-chat`" lands on `HEAD`, where the path this ref names no longer
-exists. Nothing in the suite can catch it — proving it needs ancestry against
-another repo's history, which is a network call — so this paragraph is the
-enforcement, and `tests/test_probes.py` pins that it still says so.
+exists. No test can prove the *ancestry* — that needs another repo's history —
+so the suite pins the SHA itself, which reddens on any bump and makes moving
+that ref deliberate.
 
 ## Sharing with `plow-pbc/plow`
 
