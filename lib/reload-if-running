@@ -32,6 +32,20 @@ if ! running="$(compose ps --status running --quiet hermes)"; then
 fi
 # No running gateway is the normal case during first bring-up: nothing to do.
 [ -n "$running" ] || exit 0
+
+# The instance's veto. install-plugin, activate, sign-in and add-skill all reach
+# a restart through here without passing agent-mgr's own transition gate, so
+# without this a declared guard cannot stop them -- and an agent whose guard
+# exists to protect an in-progress ingest would be bounced mid-run by an
+# add-skill. Asked NON-fatally, unlike a transition the operator asked for: the
+# write has already landed by this line (activate has already spent a one-time
+# activation), so a refusal means "not now, leave it running", not "the command
+# failed".
+if ! transition_allowed; then
+    echo "${what} is written, but ${AGENT_NAME}'s pre-transition guard refused -- the gateway was NOT restarted, so it is still running the previous ${what}. Run 'agent-mgr restart ${AGENT_NAME}' once the guard allows it." >&2
+    exit 0
+fi
+
 echo "restarting ${AGENT_NAME}'s gateway so it loads ${what}..."
 compose restart hermes \
   || echo "${what} is written, but the gateway did not restart -- run 'agent-mgr restart ${AGENT_NAME}'." >&2

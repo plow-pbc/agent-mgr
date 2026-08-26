@@ -274,11 +274,19 @@ require_own_home() {
 # see a table cell, a justfile recipe, or an imperative in prose. A hook the
 # tool calls has none of those blind spots -- there is nothing left to restate.
 #
-# Fatal by design: a guard that says "not now" and is overridden is not a guard.
-require_transition_allowed() {
+# Asking is separate from dying because the two callers need different answers.
+# A declared-but-broken guard is fatal to both: that is a misconfiguration, not
+# a veto.
+transition_allowed() {
     [ -n "$AGENT_PRE_TRANSITION" ] || return 0
     [ -x "$AGENT_PRE_TRANSITION" ] \
         || die "$AGENT_NAME declares a pre-transition guard at $AGENT_PRE_TRANSITION, which is missing or not executable"
-    ( cd "$AGENT_DIR" && "$AGENT_PRE_TRANSITION" ) \
+    ( cd "$AGENT_DIR" && "$AGENT_PRE_TRANSITION" )
+}
+
+# Fatal by design: a guard that says "not now" and is overridden is not a guard.
+# For a command the operator asked for, a refusal refuses the command.
+require_transition_allowed() {
+    transition_allowed \
         || die "${AGENT_NAME}'s pre-transition guard refused -- not transitioning the container"
 }

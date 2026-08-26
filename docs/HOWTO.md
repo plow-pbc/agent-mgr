@@ -105,9 +105,9 @@ a skill misbehaves, compare the two versions before debugging the code.
 
 ## What an instance repo contains
 
-The file list, and why each one is or is not there, is the README's
-[What belongs in an instance repo](../README.md#what-belongs-in-an-instance-repo).
-Two things that only matter once you are editing one:
+The file list, and why each one is or is not there, is the *What belongs in an
+instance repo* section of the [README](../README.md). Two things that only
+matter once you are editing one:
 
 `agent.env` can be empty. `AGENT_HOME` defaults to `~/.hermes-<name>`,
 `AGENT_CONTAINER` and `AGENT_PROJECT` to `hermes-<name>`, and the image to the

@@ -165,31 +165,6 @@ def test_the_scaffold_and_the_docs_agree_on_what_declares_latch(run, tmp_path):
             f"{doc} does not say how to opt out")
 
 
-def test_the_howto_still_reaches_the_readmes_instance_repo_contract():
-    """The HOWTO defers the file list to the README rather than keeping a second
-    copy, so a reworded heading there leaves the only path to the contract
-    pointing at nothing -- and 'one owner' is what makes that total."""
-    import pathlib
-    import re
-    root = pathlib.Path(__file__).resolve().parent.parent
-    # GitHub's slugger keeps underscores, and a `# comment` line inside a fenced
-    # block is not a heading -- a slug set that disagrees on either blesses a
-    # dangling anchor or reddens a working one, which is worse than no guard.
-    body, fenced = [], False
-    for line in (root / "README.md").read_text().splitlines():
-        if line.startswith("```"):
-            fenced = not fenced
-        elif not fenced:
-            body.append(line)
-    slugs = {re.sub(r"[^a-z0-9 _-]", "", h.lower()).replace(" ", "-")
-             for h in re.findall(r"^#+ (.+)$", "\n".join(body), re.M)}
-    targets = re.findall(r"\]\(\.\./README\.md#([a-z0-9_-]+)\)",
-                         (root / "docs" / "HOWTO.md").read_text())
-    assert targets, "the HOWTO should still defer the file list to the README"
-    for t in targets:
-        assert t in slugs, f"docs/HOWTO.md links to README.md#{t}, which no heading produces"
-
-
 def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     """AGENT_PRE_TRANSITION reached AGENT_KEYS one commit before the README
     table learned about it. That table is the single owner of the instance-repo
@@ -209,6 +184,12 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     assert len(section) == 2, "the instance-repo section moved -- this probe reads its table"
     rows = "\n".join(l for l in section[1].splitlines() if l.startswith("|"))
     assert rows, "the instance-repo section no longer has a table"
+    descriptor = (root / "templates" / "agent.env").read_text()
     for hook in loop.group(1).split():
         assert f"`{hook}`" in rows, (
             f"{hook} is a declared hook but the instance-repo table does not name it")
+        # The descriptor is where an author actually meets the hook: AGENT_PRE_TRANSITION
+        # reached the resolver while this template still documented one hook, so a
+        # scaffolded repo could not discover the veto it is entitled to.
+        assert hook in descriptor, (
+            f"{hook} is a declared hook but templates/agent.env does not document it")

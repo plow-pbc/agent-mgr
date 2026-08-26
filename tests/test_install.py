@@ -227,6 +227,31 @@ def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
         assert "refused" in r.stderr
 
 
+def test_a_refusing_guard_stops_the_reload_a_write_triggers_without_failing_it(
+        run, instance, tmp_path):
+    """install-plugin, activate, sign-in and add-skill reach a restart through
+    reload-if-running rather than agent-mgr's own gate, so without asking here a
+    declared guard cannot stop them -- an add-skill would bounce the very ingest
+    the guard exists to protect.
+
+    Non-fatal, unlike a transition the operator asked for: the write has already
+    landed by then (activate has spent a one-time activation), so a red exit
+    would read as "the write failed" and invite the re-run that costs another.
+    """
+    import os
+    _guarded(instance, run, tmp_path, refuses=True)
+    from conftest import fake_docker
+    log = tmp_path / "docker.log"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan", log=log)
+    env = {"PATH": f"{b}:{os.environ['PATH']}"}
+    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
+
+    r = run("install-plugin", "rowan", env=env)
+    assert r.returncode == 0, f"the guard failed a write that had already landed: {r.stderr}"
+    assert "restart" not in log.read_text(), "the reload restarted past a refusing guard"
+    assert "was NOT restarted" in r.stderr, "the skipped restart was not reported"
+
+
 def test_the_guard_runs_before_a_transition_and_not_before_a_read(run, instance, tmp_path):
     import os
     _guarded(instance, run, tmp_path, refuses=False)
