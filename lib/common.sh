@@ -183,7 +183,12 @@ load_agent() {
     # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
     AGENT_HOOK_ENV=()
     while IFS= read -r line; do
-        case "$line" in \#*|'') continue ;; esac
+        # Comment and blank tests see the line without its indentation. A
+        # comment indented inside a block is ordinary, Compose skips it, and
+        # this parser is documented to skip it -- but it often contains an `=`
+        # (commented-out settings usually do), so without the strip it would
+        # reach the identifier check below and be refused as a malformed key.
+        case "${line#"${line%%[![:space:]]*}"}" in \#*|'') continue ;; esac
         key="${line%%=*}"
         value="${line#*=}"
 

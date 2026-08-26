@@ -242,3 +242,44 @@ def test_a_malformed_declaration_is_refused(run, instance, line):
     r = run("resolve", "rowan")
     assert r.returncode != 0, f"accepted a malformed declaration: {line!r}"
     assert "malformed key" in r.stderr
+
+
+@pytest.mark.parametrize("line", [
+    "# AGENT_TZ=America/Chicago is the default",
+    "  # AGENT_TZ=America/Chicago is the default",   # indented, and carries an =
+    "\t# commented out: AGENT_IMAGE=pinned",
+    "   ",
+])
+def test_comments_and_blanks_are_skipped_however_indented(run, instance, line):
+    """A commented-out setting usually carries an `=`, and a comment indented
+    inside a block is ordinary -- Compose skips both. Refusing one as a
+    malformed key would make a descriptor agent-mgr's own template could contain
+    unreadable."""
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\nAGENT_TZ=UTC\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_TZ=UTC" in r.stdout
+
+
+def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instance, tmp_path):
+    """The amplification, pinned so the trade-off is deliberate rather than
+    discovered.
+
+    `require_own_home` is fail-closed by design: it refuses when it cannot prove
+    no sibling claims this home, and a descriptor it cannot parse is exactly
+    that case. Refusing a malformed key therefore reaches past the repo that
+    contains it -- a stray space in agent B blocks direct-write commands on
+    agent A.
+
+    Kept rather than softened: the alternative is guessing a home out of a
+    descriptor that could not be read, which is the fail-open this guard exists
+    to prevent. The refusal names the sibling, the reason and the remedy, which
+    is what makes it survivable.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "broken", str(instance("broken", descriptor="AGENT_TZ = x\n")))
+    r = run("restore", "rowan")
+    assert r.returncode != 0
+    assert "could not resolve broken" in r.stderr
+    assert "malformed key" in r.stderr
+    assert "unregister broken" in r.stderr, "the refusal must name the way out"
