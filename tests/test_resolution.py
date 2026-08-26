@@ -312,3 +312,17 @@ def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line, ex
     # value from one carrying trailing whitespace, which is the half that was
     # unpinned when this test was written.
     assert f"AGENT_TZ={expected}\n" in r.stdout
+
+
+@pytest.mark.parametrize("line", [
+    'AGENT_TZ="America/Chicago',
+    "AGENT_TZ='America/Chicago",
+    'AGENT_TZ="America/Chicago\'',
+])
+def test_an_unterminated_quote_is_refused(run, instance, line):
+    """Compose refuses these, so accepting them is the dangerous direction:
+    the descriptor would resolve here and break the deploy that reads it."""
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode != 0, f"accepted an unterminated quote: {line!r}"
+    assert "unterminated quote" in r.stderr

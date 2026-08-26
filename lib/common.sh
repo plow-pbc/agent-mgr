@@ -175,7 +175,7 @@ load_agent() {
     # $HOME is the one expansion, because it is the one the template documents.
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
-    local line key value
+    local line key value _rest
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
     # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
     # this empty, and bash treats an empty array as unset under `set -u` until
@@ -235,16 +235,32 @@ load_agent() {
         #   VAL␠␠          -> VAL          (unquoted trailing space trimmed)
         #   "VAL␠␠"        -> VAL␠␠        (quoted trailing space kept)
         #
-        # Escape processing inside double quotes ("a\nb" -> a<newline>b) is
-        # NOT ported. It is the one rule where a divergence is inert: every
-        # AGENT_* value is a zone, a path or an image digest, so a value that
-        # needs an escape is not a value this parser has a use for -- and it is
-        # measured, not assumed, so a future need has a place to start.
+        # An unterminated quote is refused, because Compose refuses it -- and
+        # accepting what Compose rejects is the dangerous direction: the
+        # descriptor would resolve here and break the deploy that reads it.
+        #
+        # Single-quote literalness ('a\nb' stays literal) already agrees; that
+        # was measured, not assumed.
+        #
+        # ONE rule is deliberately not ported: escape processing inside DOUBLE
+        # quotes ("a\nb" -> a<newline>b). It is the only divergence left and the
+        # only inert one -- every AGENT_* value is a zone, a path or an image
+        # digest, so a value needing an escape is not one this parser has a use
+        # for. Recorded rather than discovered, so a future need starts from
+        # fact.
         case "$value" in
             \"*)
-                value="${value#\"}"; value="${value%%\"*}" ;;
+                _rest="${value#\"}"
+                case "$_rest" in
+                    *\"*) value="${_rest%%\"*}" ;;
+                    *) die "$descriptor: unterminated quote in value for $key" ;;
+                esac ;;
             "'"*)
-                value="${value#\'}"; value="${value%%\'*}" ;;
+                _rest="${value#\'}"
+                case "$_rest" in
+                    *"'"*) value="${_rest%%\'*}" ;;
+                    *) die "$descriptor: unterminated quote in value for $key" ;;
+                esac ;;
             *)
                 case "$value" in *" #"*) value="${value%%" #"*}" ;; esac
                 value="${value%"${value##*[![:space:]]}"}" ;;
