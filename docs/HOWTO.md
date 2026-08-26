@@ -105,13 +105,9 @@ a skill misbehaves, compare the two versions before debugging the code.
 
 ## What an instance repo contains
 
-```
-rowans-life-hermes-agent/
-  agent.env               overrides only; every key is optional
-  config.yaml             model, plugins, mcp_servers
-  skills.tsv              pinned domain skills, if any
-  compose.override.yml    only if it needs a derived image or extra mounts
-```
+The file list, and why each one is or is not there, is the README's
+[What belongs in an instance repo](../README.md#what-belongs-in-an-instance-repo).
+Two things that only matter once you are editing one:
 
 `agent.env` can be empty. `AGENT_HOME` defaults to `~/.hermes-<name>`,
 `AGENT_CONTAINER` and `AGENT_PROJECT` to `hermes-<name>`, and the image to the
