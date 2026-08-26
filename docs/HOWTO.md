@@ -125,10 +125,15 @@ the link **and its target directory** first, and let the `mkdir -p` below be the
 no-op it should be:
 
 ```sh
-# Nothing may already be at the link path. If you have already run the block
-# below once, `mkdir -p` will have created a plain directory there — move it
-# aside and check whether a restore was extracted into it before going on.
-[ -e ~/.hermes-rowan ] && { echo "something is already at ~/.hermes-rowan — move it aside first"; }
+# Nothing may already be at the link path. -L as well as -e: -e DEREFERENCES,
+# so a symlink whose target is gone tests false — and a half-done first pass
+# through this block is the most likely way to be holding exactly that.
+if [ -e ~/.hermes-rowan ] || [ -L ~/.hermes-rowan ]; then
+  echo "something is already at ~/.hermes-rowan." >&2
+  echo "If it is the live symlink, this step is already done — skip to the block below." >&2
+  echo "Otherwise move it aside and check what is in it before going on." >&2
+  exit 1    # stop here; do not run the mkdir/ln below
+fi
 
 mkdir -p /big/disk/rowan
 ln -sT /big/disk/rowan ~/.hermes-rowan
@@ -141,8 +146,16 @@ directory in place — so the following `mkdir -p`, `tar -C` and `up` all still
 land on the wrong volume, silently. That is the state an operator who already
 ran the block once is in, which is exactly who reads this. `-T` refuses it with
 `File exists`. (`-n` does **not** — measured; it only helps when the path is a
-symlink to a directory, not when it is a real one. `-T` is GNU; on macOS remove
-the offending path first and use a plain `ln -s`.)
+symlink to a directory, not when it is a real one.)
+
+`-T` is GNU. **On macOS, move the path aside — do not remove it:**
+`mv ~/.hermes-rowan ~/.hermes-rowan.bak`, confirm the path is gone, and only
+then `ln -s`. Move rather than delete because what is sitting there is not
+reliably a discardable half-restore: it is equally a home that was never a
+symlink at all, in which case that directory *is* the live agent — auth,
+memories, session database — and the tarball would be the only remaining copy,
+if one was ever taken. Whether its contents matter is the same human decision
+the guard above refuses to let a flag make.
 
 Both halves, because in the total-loss variant — the big disk replaced or
 reformatted, so link *and* target are gone — recreating only the link leaves a
