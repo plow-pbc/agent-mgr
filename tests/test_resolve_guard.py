@@ -437,6 +437,7 @@ def test_a_resolver_that_fails_refuses_and_says_which_path(
     # regression this pins is a path going missing from between the others.
     assert refusal.format(home=tmp_path / "home" / ".hermes-rowan") in r.stderr
 
+
 def test_the_mismatch_names_the_path_docker_reported(run, instance, tmp_path):
     """Docker's raw `.Source`, not the normalised spelling of it. The guard
     normalises to compare, and while it assigned that result back over
