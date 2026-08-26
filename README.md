@@ -126,7 +126,9 @@ image then runs with the agent's credentials. With that set, there is nothing
 mutable to substitute. A `pull`, or a `--pull` naming anything but
 `never`/`build`, is refused through this tool for the same reason — `pull` with
 no admitted form, because which spellings of `--ignore-buildable` Compose
-honours is a fact about its flag parser, and every miss fails open. `resolve-guard` checks what Compose **resolves**, so an override cannot
+honours is a fact about its flag parser, and every miss fails open. (`build
+--pull` is the exception: there it is a boolean that re-pulls the base image and
+rebuilds, so the output is still what this host built.) `resolve-guard` checks what Compose **resolves**, so an override cannot
 slip a pulled tag past it.) A moving ref re-points a running
 agent on the next upstream push, and these carry the chat token and drive a
 filesystem. Copying the artifact in instead makes the agent's repo a fork of it
