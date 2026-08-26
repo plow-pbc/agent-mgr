@@ -114,6 +114,30 @@ Relative paths do **not** work in `compose.override.yml`: Compose resolves them
 against `agent-mgr`'s directory, not the agent's. Name paths through a variable
 set in `agent.env`.
 
+A `build:` must carry `pull_policy: never` beside it. Without it Compose
+**pulls** the tag when it is absent locally -- the default and `missing` both do
+-- so a registry image can land on top of what this host built and then run with
+the agent's credentials. `resolve-guard` wants either the line or a digest
+`image:`, and until it has one it refuses every command that resolves Compose
+for this agent -- all of them but the registry bookkeeping (`ls`, `register`,
+`unregister`, `new`, `resolve`). `activate` is the one that neither refuses nor
+works: it reaches the guard through `reload-if-running`, whose refusal it
+deliberately swallows so a spent activation is never re-spent, so it writes the
+credential, skips the reload and tells you to `restart` -- which then refuses.
+
+A container already up keeps running and answering its chat traffic: the guard
+stops nothing. What you lose is the agent-mgr surface over it -- you cannot
+prompt it, sign it in, probe it, read its logs, restart it or deploy to it until
+the line is there.
+
+```yaml
+services:
+  hermes:
+    build: { context: "${AGENT_BUILD_CONTEXT}" }
+    image: my-agent:local
+    pull_policy: never
+```
+
 ## Running a one-off container
 
 ```sh
@@ -144,7 +168,7 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 | `refusing to act: compose resolved ...` | the descriptor or override disagrees with the agent you named — this is the guard working |
 | `HERMES_UID ... must be set` | you ran `docker compose` directly; go through `agent-mgr` |
 | `... builds its image but its pull_policy is ...` | a service that builds must set `pull_policy: never` (or `build`). The default and `missing` both **pull** when the local tag is absent, replacing what this host built |
-| `refusing a fetch that could replace a built image` | `pull` has no accepted form — use `up`, which fetches under the file's `pull_policy` that `resolve-guard` checks. A `--pull` on any subcommand takes only `never` or `build` |
+| `refusing a fetch that could replace a built image` | `pull` has no accepted form — use `up`, which fetches under the file's `pull_policy` that `resolve-guard` checks. A `--pull` takes only `never` or `build`, except on `build`, where it is a boolean that re-pulls the base image and rebuilds |
 | `refusing 'compose run'...` | `--entrypoint` must be the **first** argument after `run` and carry a non-empty value — see § Running a one-off container |
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |

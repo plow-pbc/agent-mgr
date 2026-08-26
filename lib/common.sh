@@ -298,7 +298,7 @@ compose_fetch_is_safe() {
 # told THAT, not sent through an identification whose remedies -- rename the
 # descriptor, unregister the agent -- are doors that do not open for it.
 require_fetch_is_safe() {
-    compose_fetch_is_safe "$@" || die "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: 'pull' has no accepted form -- use 'up', which fetches under the file's pull_policy that resolve-guard has already checked -- and '--pull' takes only 'never' or 'build', because the flag overrides whatever the file says -- editing pull_policy will not clear this one. (resolve-guard enforces the same pair on the file, which is the other door.) If that --pull belongs to a command you are running INSIDE the container, this scan cannot tell -- wrap it so the flag is not a word on this argv, e.g. exec ... sh -c 'docker build --pull ...'."
+    compose_fetch_is_safe "$@" || die "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: 'pull' has no accepted form -- use 'up', which fetches under the file's pull_policy that resolve-guard has already checked -- and '--pull' takes only 'never' or 'build' (except on 'build', where it is a boolean that re-pulls the base image and rebuilds), because the flag overrides whatever the file says -- editing pull_policy will not clear this one. (resolve-guard enforces the same pair on the file, which is the other door.) If that --pull belongs to a command you are running INSIDE the container, this scan cannot tell -- wrap it so the flag is not a word on this argv, e.g. exec ... sh -c 'docker build --pull ...'."
 }
 
 # Every Compose invocation goes through here so the file list, the override
@@ -338,7 +338,7 @@ compose() {
 # wanted. An entry missing from the old list skipped the veto silently. Refusing
 # loudly is the better failure, which is why the list is this way round, but it
 # is a trade rather than a free win.
-COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec run cp pull build push"
+COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec run cp build push"
 
 # The subset that needs NO identification, stated that way round for the same
 # reason COMPOSE_LEAVES_IT_RUNNING is: a list of things that must be gated has
@@ -355,15 +355,12 @@ COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec
 # never re-enters this dispatch, so gating `ps` later is possible if a reason
 # appears.
 #
-# `pull` is deliberately NOT named here, and the removal is inert: the dispatch
-# refuses it before it classifies anything. The entry is the half that would
-# take effect SILENTLY if any `pull` form were ever re-admitted, skipping the
-# ownership check by inheritance rather than by decision -- the by-omission
-# failure this list exists to prevent. Whoever re-admits it decides.
-#
-# It stays in COMPOSE_LEAVES_IT_RUNNING so that if it ever is re-admitted it
-# does not also acquire the veto, which would ask an operator to confirm a
-# transition on the live agent for a command that fetches.
+# `pull` is named in NEITHER list. `compose` refuses it and the dispatch refuses
+# it before classifying anything, so an entry in either is a contract for a
+# command that cannot run -- and an exemption entry in particular would take
+# effect SILENTLY on a future re-admission, skipping the ownership check by
+# inheritance rather than by decision, which is the by-omission failure this
+# list exists to prevent. Whoever re-admits it classifies it.
 #
 # Anything not named here is gated, heard of or not. Missing an entry costs a
 # needless `compose ps`; missing one from a gate-these list skipped the check.
