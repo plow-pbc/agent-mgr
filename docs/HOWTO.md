@@ -120,17 +120,26 @@ target.
 
 Four states at the link path. Only one means "carry on":
 
-Which of the four you have, before anything is bound or created — the literal
-path, because `$home` is not set until the restore block further down:
+Bind the path once, here, and use it for everything below — the home may not be
+at `~/.hermes-<name>` at all, which is the other reason not to type it:
 
 ```sh
-ls -ld ~/.hermes-rowan   # prints the link and its target, without following it
-[ -e ~/.hermes-rowan ] && echo "target reachable" || echo "no target: dangling, or nothing there"
+home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
+ls -ld "$home"                     # the link and its target, without following it
+[ -e "$home" ] && echo "resolves"  || echo "does not resolve"
 ```
 
-`ls -ld` distinguishes a symlink from a plain directory and shows where it
-points; the `-e` test then separates a **live** symlink from a **dangling** one,
-because `-e` dereferences. Together they name the row.
+`ls -ld` distinguishes a symlink (`l…`, and it prints the target) from a plain
+directory (`d…`) from nothing at all (no output); `-e` then separates a **live**
+symlink from a **dangling** one, because it dereferences. Together they name the
+row:
+
+| `ls -ld` | `-e` | row |
+|---|---|---|
+| `l…` → target | resolves | live symlink |
+| `l…` → target | does not resolve | dangling symlink |
+| `d…` | resolves | plain directory |
+| no output | does not resolve | nothing at all |
 
 | what is there | what it tells you | what to do |
 |---|---|---|
@@ -148,7 +157,7 @@ Recreating link and target, once you know you need to (GNU):
 
 ```sh
 mkdir -p /big/disk/rowan
-ln -sT /big/disk/rowan ~/.hermes-rowan
+ln -sT /big/disk/rowan "$home"
 ```
 
 `ln -sT`, not a bare `ln -s`: onto a path that is already a plain directory a
@@ -172,8 +181,7 @@ the tarball is the only remaining copy, if one was ever taken.
 
 ```sh
 agent-mgr down rowan
-home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
-mkdir -p "$home"        # a no-op if the home is a live symlink — see the note above
+mkdir -p "$home"        # $home from above; a no-op if the home is a live symlink
 tar -C "$home" -xzf /path/to/rowan-20260826.tar.gz
 agent-mgr restore rowan # repo-owned config, plugin and skills win
 agent-mgr up rowan
@@ -181,9 +189,8 @@ agent-mgr up rowan
 
 The `mkdir` is not belt-and-braces: `tar -C` on a missing directory exits 2
 before extracting anything, and a home that is *gone* is the scenario this
-command exists for. Reading the path from `resolve` rather than typing
-`~/.hermes-rowan` covers the other case — a home that simply lives somewhere
-else. The `restore` afterwards is what makes the archive's copy of `config.yaml`
+command exists for. `$home` comes from `resolve` rather than being typed, which covers the other
+case — a home that simply lives somewhere else. The `restore` afterwards is what makes the archive's copy of `config.yaml`
 and the installed plugin lose to whatever the repo says today: those are the
 reproducible half, and the archive's copy is as old as the archive.
 
