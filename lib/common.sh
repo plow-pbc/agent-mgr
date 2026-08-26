@@ -149,7 +149,7 @@ AGENT_IDENTITY_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJE
 # may not set is dropped rather than smuggled through to the hooks.
 parse_env_file() {
     local file="$1" allow="$2" collect="${3:-}"
-    local line key value
+    local line key value _k
     while IFS= read -r line; do
         case "$line" in
             \#*|'') continue ;;
@@ -162,7 +162,26 @@ parse_env_file() {
             # whole process down under set -e with a raw bash error instead of
             # the refusal this parser is documented to give.
             [A-Za-z_]*=*)
-                case "${line%%=*}" in *[!A-Za-z0-9_]*) continue ;; esac
+                case "${line%%=*}" in
+                    *[!A-Za-z0-9_]*)
+                        # Dropping silently is only safe for a key this tool does
+                        # not own. A near-miss spelling of one it does -- the
+                        # hand-written `AGENT_TZ = x` -- has to say so, for the
+                        # same reason the refusal branch below exists: a zone
+                        # that did not change looks identical to one never set,
+                        # so the operator believes the file took effect.
+                        #
+                        # Not accepted-with-a-trim on purpose. Compose reads this
+                        # same file through --env-file with its own parser, which
+                        # does not accept spaces either, so tolerating the
+                        # spelling here would make the two disagree about one
+                        # file -- a worse failure than refusing it.
+                        _k="${line%%=*}"; _k="${_k//[[:space:]]/}"
+                        if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$_k"; then
+                            echo "agent-mgr: $file: ignoring malformed '${line%%=*}' -- write it as $_k=<value>, no spaces around the =" >&2
+                        fi
+                        continue ;;
+                esac
                 ;;
             *) continue ;;
         esac

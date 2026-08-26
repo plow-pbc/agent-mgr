@@ -372,8 +372,14 @@ def test_only_a_declared_key_reaches_the_assignment(run, instance):
     the name, and under set -e that killed load_agent, so every subcommand for
     the agent died on a raw bash error instead of the refusal path.
 
-    Asserting the shape rather than the input keeps this honest: it also fails a
-    future fix that drops -F for a bracket denylist.
+    Asserting the shape rather than the input keeps this honest.
+
+    What it does NOT pin is -F on its own: with the source filter in place a
+    bracket key never reaches a pattern position, so removing -F changes nothing
+    observable here. The layered guarantee is still covered, because loosening
+    the filter AND dropping -F is what the two injection tests catch -- and that
+    is the combination that bites. -F alone is unobservable from outside and
+    rests on the comment at its site.
     """
     repo = instance("rowan", descriptor="AGENT_TZ AGENT_IMAGE=x\n")
     run("register", "rowan", str(repo))
@@ -391,3 +397,30 @@ def test_an_overlay_key_cannot_execute_host_code(run, instance, registry, inject
     r = run("resolve", "rowan")
     assert not injection_marker.exists(), "an overlay key executed host code"
     assert r.returncode == 0, r.stderr
+
+
+def test_a_malformed_spelling_of_an_owned_key_is_reported(run, instance, registry):
+    """`AGENT_TZ = x` is the common hand-written form and it is not valid dotenv.
+
+    Refusing it is right -- Compose reads the same file through --env-file with
+    a parser that rejects it too, so tolerating it here would make the two
+    disagree about one file. Refusing it *silently* is not: the zone falls back
+    to the fleet default and looks exactly like an overlay that was never
+    written.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan", "AGENT_TZ = America/Chicago\n")
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "malformed" in r.stderr and "AGENT_TZ" in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+
+
+def test_an_unowned_malformed_key_stays_quiet(run, instance, registry):
+    """The other half: this tool does not own STR_VAULT, so it has no standing
+    to comment on how that repo spells it."""
+    run("register", "rowan", str(instance("rowan")))
+    _overlay(registry, "rowan", "STR VAULT=x\n")
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert r.stderr.strip() == ""
