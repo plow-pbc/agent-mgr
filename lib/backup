@@ -30,6 +30,20 @@ umask 077
 stamp="$(date -u +%Y%m%d)"
 archive="$dest/$name-$stamp.tar.gz"
 
+# A directory at the archive's name turns `mv` into a move INTO it: exit 0, the
+# stage lands as `<archive>/<stage-name>`, and `du -h "$archive"` then sizes the
+# directory happily -- so the run prints a path and reports success for
+# something no `tar -xzf` can read. Measured. Refused rather than handled: there
+# is no sensible way to promote into a directory, and this is the tool whose
+# whole job is that a reported backup is a real one.
+#
+# Checked HERE, not beside the `mv`, because $archive is fully determined at the
+# line above: down there the run has already streamed a full tar of the home --
+# 359 MB for the rentals agent -- into $dest before discovering it must throw it
+# away, once per nightly, on the very volume the archives live on. The check can
+# never be atomic with the mv either way, so moving it up widens no window.
+[ -d "$archive" ] && { echo "backup: $archive is a directory -- move it aside; a backup cannot be promoted into it" >&2; exit 1; }
+
 # Staged under a name unique to THIS invocation, then promoted. Written straight
 # at its final name, `-czf` truncates on open: a run that dies partway -- disk
 # full, SIGINT -- would destroy the morning's good archive AND leave a truncated
@@ -75,13 +89,6 @@ tar --exclude=./logs \
     --exclude=./lazy-packages \
     -C "$home" -czf "$stage" . || [ $? -eq 1 ]
 
-# A directory at the archive's name turns `mv` into a move INTO it: exit 0, the
-# stage lands as `<archive>/<stage-name>`, and `du -h "$archive"` then sizes the
-# directory happily -- so the run prints a path and reports success for
-# something no `tar -xzf` can read. Measured. Refused rather than handled: there
-# is no sensible way to promote into a directory, and this is the tool whose
-# whole job is that a reported backup is a real one.
-[ -d "$archive" ] && { echo "backup: $archive is a directory -- move it aside; a backup cannot be promoted into it" >&2; exit 1; }
 mv "$stage" "$archive"
 trap - EXIT
 

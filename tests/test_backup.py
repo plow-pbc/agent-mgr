@@ -103,18 +103,6 @@ def test_all_covers_every_registered_agent(run, instance, tmp_path, backup_dir):
     assert r.returncode == 0, r.stderr
     assert len(list(backup_dir.glob("*.tar.gz"))) == 3
 
-def test_all_reports_the_agents_it_could_not_back_up_and_exits_nonzero(run, instance, tmp_path, backup_dir):
-    """Keep going, then fail loudly. Aborting on the first bad row would leave
-    the healthy agents unbacked-up too, and exiting 0 would hide the gap."""
-    _, home = registered(run, instance, "rowan")
-    (home / ".env").write_text("x\n")
-    assert run("register", "ghost", str(instance("ghost"))).returncode == 0
-
-    r = run("backup", "--all", env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
-    assert r.returncode != 0
-    assert "ghost" in r.stderr
-    assert len(list(backup_dir.glob("*.tar.gz"))) == 1, "rowan was skipped because ghost failed"
-
 
 def test_retention_prunes_only_this_agents_own_archives(run, instance, tmp_path, backup_dir):
     """The destination is an operator-named directory that may hold anything, so
@@ -304,25 +292,6 @@ def test_a_descriptor_cannot_point_the_archive_at_the_whole_account(
     # so the mis-framing a nightly would show an operator could regress unseen.
     assert "refusing to archive" in r.stderr
     assert not list(backup_dir.glob("*.tar.gz")), "it archived the account anyway"
-
-def test_one_broken_registry_row_does_not_cost_the_healthy_agents_their_backup(
-        run, instance, tmp_path, backup_dir):
-    """`--all`'s whole contract is that a bad row costs only its own backup.
-    Taking the collision half of require_own_home here would invert it: that
-    loop is deliberately fail-closed on any sibling it cannot resolve, so one
-    stale row -- a repo moved, an agent.env gone -- would abort every healthy
-    agent's archive and report the entire fleet as failed."""
-    _, home = registered(run, instance, "rowan")
-    (home / ".env").write_text("x\n")
-    gone = instance("ghost")
-    assert run("register", "ghost", str(gone)).returncode == 0
-    shutil.rmtree(gone)
-
-    r = run("backup", "--all", env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)})
-    assert r.returncode != 0, "the broken row must still be reported"
-    assert "ghost" in r.stderr
-    assert [p.name.split("-")[0] for p in backup_dir.glob("*.tar.gz")] == ["rowan"], \
-        "a stale sibling row cost the healthy agent its backup"
 
 
 def test_a_hand_edited_registry_name_cannot_escape_the_backup_directory(

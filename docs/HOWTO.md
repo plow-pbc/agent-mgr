@@ -115,9 +115,10 @@ writers to one session database:
 
 ```sh
 agent-mgr down rowan
-mkdir -p ~/.hermes-rowan        # tar will not create it, and total loss is the case
-tar -C ~/.hermes-rowan -xzf /path/to/rowan-20260826.tar.gz
-agent-mgr restore rowan         # repo-owned config, plugin and skills win
+home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
+mkdir -p "$home"        # tar will not create it, and total loss is the case
+tar -C "$home" -xzf /path/to/rowan-20260826.tar.gz
+agent-mgr restore rowan # repo-owned config, plugin and skills win
 agent-mgr up rowan
 ```
 
@@ -126,6 +127,14 @@ before extracting anything, and a home that is *gone* is the scenario this
 command exists for. The `restore` afterwards is what makes the archive's copy of
 `config.yaml` and the installed plugin lose to whatever the repo says today —
 those are the reproducible half, and the archive's copy is as old as the archive.
+
+**Read the path from the descriptor rather than typing `~/.hermes-rowan`.** A
+home symlinked onto a bigger disk is supported, and in the partial-loss case —
+the symlink gone, its target intact — a hardcoded `mkdir -p` silently creates a
+plain directory where the link was, lands the whole restore on the wrong volume
+with no error, and brings the agent up on a home it was never configured with.
+If the home is a symlink, recreate the link (or its target) before extracting;
+`mkdir -p` on the link path is what you do *not* want.
 
 The archive is **contents-rooted** — it holds `./` entries, not a
 `.hermes-rowan/` prefix — so it unpacks into a directory you name rather than
