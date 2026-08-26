@@ -224,6 +224,7 @@ def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_mark
 @pytest.mark.parametrize("line", [
     "STR VAULT=x",             # a key this tool does not own, with a space in it
     "AGENT_TZ AGENT_IMAGE=x",  # multi-token: matched the allowlist as a substring
+    "PLOW_CHAT_TOKEN-sk-notreal=x",  # the malformed "key" IS a secret
 ])
 def test_a_malformed_declaration_is_refused(run, instance, line):
     """Refused, not classified.
@@ -234,11 +235,20 @@ def test_a_malformed_declaration_is_refused(run, instance, line):
     wrong quietly; the alternative was a second partial grammar here, sorting
     near-misses of an owned key from malformed unowned lines, to write a better
     message for a line nobody should have written.
+
+    The third row is the reason the message carries a line number instead of the
+    key: parsing failed, so "the key" is whatever span preceded the `=`, and here
+    that span is a token. Echoing it back would put it on stderr and into every
+    log that catches stderr.
     """
     run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
     r = run("resolve", "rowan")
     assert r.returncode != 0, f"accepted a malformed declaration: {line!r}"
-    assert "malformed key" in r.stderr
+    assert "line 1: malformed key" in r.stderr
+    # Locator, never content. A key that failed to parse is an arbitrary span of
+    # somebody's file, and in a file that holds credentials that span can BE the
+    # credential -- so the message locates the line and says nothing about it.
+    assert "sk-notreal" not in r.stderr
 
 
 def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instance, tmp_path):
