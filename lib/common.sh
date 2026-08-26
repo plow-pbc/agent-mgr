@@ -7,13 +7,8 @@
 
 die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 
-# Overridable so tests never touch the operator's real registry. EXPORTED for
-# the same reason: lib/fetch-tree is a separate process and puts its lock beside
-# this file, so an override that stopped here would isolate the registry and
-# leave the lock on the operator's real path -- under a name derived from the
-# fixture's home, which is the production agent's name.
+# Overridable so tests never touch the operator's real registry.
 : "${AGENT_MGR_REGISTRY:=${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/agents}"
-export AGENT_MGR_REGISTRY
 
 
 # The name column is compared as a FIELD, by awk, never interpolated into a

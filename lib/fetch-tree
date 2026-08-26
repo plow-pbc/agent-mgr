@@ -105,61 +105,29 @@ target="$home/$root/$dest"
 # INSIDE it, and the manifest check above already ran against $src -- so the
 # swap would publish a tree with its plugin.yaml one level down and exit 0
 # saying "installed". Reproduced against the live repo.
-# One lock over this target, held from here through the publish.
+# Fixed staging and backup names, and one unconditional sweep below.
 #
-# Fixed names and per-run isolation cannot both come from the NAME. Pid-suffixed
-# names isolated concurrent runs but meant each could only ever sweep its own
-# pid-twin's orphan, so every other killed run's tree accumulated forever. Fixed
-# names sweep all of them -- and, unlocked, let a second run `rm -rf` the first
-# run's live rollback copy during the window when $target.previous IS the
-# agent's only installed tree. Either way round, one of the two failures stays.
+# Pid-suffixed names were the first shape and they leak: a run can only ever
+# clean up after its own pid-twin, so every other killed run's tree accumulates
+# forever -- and $target.previous is a COMPLETE, valid tree carrying
+# `name: plow-chat-platform`, sitting in the directory the gateway enumerates.
+# Fixed names let one sweep clear all of them.
 #
-# The lock gives both, and closes a race that predates all of this: the publish
-# `mv` moves the staging tree INSIDE a target another run just created.
-#
-# flock, not a mkdir lock, for the property that matters here -- the kernel
-# releases it when the holder dies, so a run killed mid-install cannot leave a
-# lock nobody can clear. Held on fd 9 for the rest of the script, so the rollback
-# in cleanup() runs inside it too.
+# Deliberately NOT locked. Fixed names are unsafe only against a SECOND
+# fetch-tree run racing this same target, which means two simultaneous
+# `agent-mgr restore <same-agent>` invocations by the one operator this fleet
+# has -- the concurrency REVIEW.md names as a false finding. A lock lived here
+# for two rounds and cost more than it bought: it needs util-linux `flock`,
+# which macOS does not ship, so it broke `restore`, `install-plugin` and
+# `add-skill` on the Mac this repo supports -- reintroducing, one merge later,
+# exactly the class #19 closed. `main` has never had one.
 mkdir -p "$(dirname "$target")"
-# OUTSIDE the agent's home, and that placement is load-bearing rather than tidy.
-# The home is bind-mounted into the container at /opt/data and the gateway runs
-# as the operator's uid, so everything in it is writable by a compromised agent.
-# `exec 9>` truncates, follows symlinks, and runs BEFORE flock -- so a lock
-# planted as `../.ssh/authorized_keys` turns the next host-side restore into a
-# truncation primitive aimed at the operator. This fleet has met that exact
-# crossing: the rentals agent's restore hook copies with --remove-destination
-# because a planted relative symlink resolves differently on each side of the
-# mount. fetch-tree runs host-side only, so the lock has no reason to sit
-# anywhere the agent can reach; beside the registry, nothing mounts it.
-#
-# Keyed on the home's BASENAME, which is unique per agent -- require_own_home
-# refuses two registered agents resolving to one home -- so distinct callers
-# cannot collide on one lock.
-# Off the REGISTRY, not a second copy of its default. The registry is overridable
-# precisely so tests never touch the operator's real one, and re-deriving the
-# default honoured that override only when XDG_CONFIG_HOME happened to be unset:
-# with it exported, the suite would flock a path in the operator's real config
-# dir named for the fixture's home -- `.hermes-rowan`, which is also production's
-# -- so a test run and a live `install-plugin rowan` would block on each other.
-lockdir="$(dirname "${AGENT_MGR_REGISTRY:-${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/agents}")/locks"
-mkdir -p "$lockdir"
-lockfile="$lockdir/${home##*/}.$root.$tree_name.lock"
-command -v flock >/dev/null || { echo "fetch-tree needs flock (util-linux)" >&2; exit 1; }
-exec 9>"$lockfile" || { echo "could not open $lockfile" >&2; exit 1; }
-flock 9 || { echo "could not lock $lockfile" >&2; exit 1; }
 
-# Every orphan, not only this run's: under the lock there is no other run's
-# staging or rollback tree to destroy. Without this an orphaned .previous is a
-# complete, valid tree carrying `name: plow-chat-platform` sitting beside the
-# real one in the directory the gateway enumerates -- and the in-branch rm below
-# never reaches it, because on a first install that branch is skipped entirely.
-# Bound HERE, after the lock, not before it. cleanup() removes $staging
-# unconditionally, so a second run that dies before acquiring the lock -- killed
-# while blocked in flock, or exiting on the two failure branches above -- would
-# delete the LOCK HOLDER's live staging tree from outside the lock, leaving it
-# mid-`cp -a` into an unlinked directory. Empty until then, so cleanup has
-# nothing to remove.
+# Every orphan, not only this run's. Without the sweep below an orphaned
+# .previous is a complete, valid tree carrying `name: plow-chat-platform` sitting
+# beside the real one in the directory the gateway enumerates -- and the
+# in-branch rm further down never reaches it, because on a first install that
+# branch is skipped entirely.
 staging="$target.incoming"
 backup_path="$target.previous"
 # Recover before clearing. A run killed between the two `mv`s below -- SIGKILL,
