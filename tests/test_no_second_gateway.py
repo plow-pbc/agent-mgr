@@ -242,8 +242,8 @@ def test_an_explicit_env_with_no_path_is_refused():
     an env lacking the key -- this has to be spawned directly.
 
     The guard treats a missing key and an empty one identically. What this pins
-    is the CHILD's behaviour, which does not: with no PATH, CPython falls back
-    to os.defpath (/bin:/usr/bin) and finds the operator's docker, so an env
+    is the CHILD's behaviour, which does not: started with PATH unset, it falls
+    back to the shell's own default and finds the operator's docker -- so an env
     that looks inert is the opposite.
     """
     with pytest.raises(AssertionError, match="carries no PATH"):

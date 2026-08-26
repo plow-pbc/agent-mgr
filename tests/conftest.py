@@ -127,18 +127,18 @@ def _no_real_docker_on_path(tmp_path_factory):
     def guarded_popen(*a, **kw):
         env = kw.get("env")
         # `is not None`, not `and "PATH" in env`: an env with no PATH key is not
-        # inert. CPython falls back to os.defpath -- /bin:/usr/bin -- and the
-        # child finds the operator's docker there. It can never be shown to be
-        # suite-owned either, since shutil.which on the empty string returns
-        # None, so it is refused rather than exempted.
+        # inert. The child starts with PATH unset and falls back to the shell's
+        # own default (/usr/local/bin:/usr/bin:...), finding the operator's
+        # docker there. And it can never be shown to be suite-owned, since
+        # shutil.which on the empty string returns None -- so it is refused
+        # rather than exempted.
         if env is not None and not _ALLOW_REAL_DOCKER:
             path = env.get("PATH")
             if path is None:
                 raise AssertionError(
-                    "this env carries no PATH, so the child would resolve docker "
-                    "through os.defpath (/bin:/usr/bin) and find the operator's; "
-                    "pass os.environ['PATH'] to inherit the suite's stub, which "
-                    "the suite did not create otherwise")
+                    "this env carries no PATH, so the child would fall back to "
+                    "the shell's own default and find the operator's docker. "
+                    "Pass os.environ['PATH'] to inherit the suite's stub.")
             assert _docker_the_suite_owns(path), (
                 f"this env resolves docker to {shutil.which('docker', path=path)}, "
                 "which the suite did not create; build PATH as "
