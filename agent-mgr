@@ -111,7 +111,7 @@ case "$cmd" in
         # point. Its existence was checked in the preflight above; a refusal
         # here is a runtime one, so the message says what already landed.
         if [ -n "$AGENT_RESTORE_HOOK" ]; then
-            ( cd "$AGENT_DIR" && env "${AGENT_HOOK_ENV[@]}" "$AGENT_RESTORE_HOOK" ) \
+            ( cd "$AGENT_DIR" && env ${AGENT_HOOK_ENV[@]+"${AGENT_HOOK_ENV[@]}"} "$AGENT_RESTORE_HOOK" ) \
                 || die "${AGENT_NAME}'s restore hook failed. The config, plugin and pinned skills ARE installed; the hook's own work is NOT. Fix the cause and re-run 'agent-mgr restore $AGENT_NAME' before restarting."
         fi
 

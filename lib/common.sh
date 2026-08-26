@@ -25,6 +25,39 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # Through ENVIRON rather than -v, which processes backslash escapes in the value,
 # and concatenated with "" on both sides because awk compares NUMERICALLY when
 # both operands look numeric -- so `007` and `7` would be the same row.
+# `realpath -m` and `realpath -m -s` are GNU-only: BSD/macOS realpath has
+# neither flag, so on a Mac every command that loads an agent died at the first
+# call with "illegal option -- m" -- 178 of 220 tests with it. python3 is
+# already a host dependency here (lib/resolve-guard parses compose config with
+# it) and answers for a path that does not exist yet, which `-m` is for and
+# which a first restore needs. Both forms take the path as an argument, so a
+# leading dash is data rather than an option and no `--` is needed.
+#
+# Two functions because the two GNU forms mean different things, and the callers
+# below depend on the difference: normalized_path leaves symlinks intact
+# (`-m -s`), canonical_path follows them (`-m`).
+#
+# `-I` on both, and on lib/resolve-guard's parser -- every python3 this tool
+# runs on the host. It drops PYTHONPATH and the user site directory, so none of
+# them can be handed a `sitecustomize` to import. No test pins the flag, so this
+# line is what keeps it. `os.path.abspath(` and `os.path.realpath(` each appear
+# exactly once in anything this tool runs, which is what lets a test break one
+# helper and not the other; a second caller of either moves which call that is.
+#
+# And the rule every caller of these two follows, stated once here because
+# stating it at each site is what let one site be fixed and another missed:
+# NEVER assign either one's output to the variable its refusal names. A failed
+# substitution stores its empty output before the `||` arm runs, so such a
+# refusal names the value it just erased -- "cannot resolve rowan's home ()".
+# Resolve into a second variable and name the original.
+normalized_path() {
+    python3 -I -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
+}
+
+canonical_path() {
+    python3 -I -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
+
 registry_valid_name() {
     case "${1:-}" in
         ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: ${1:-}" ;;
@@ -143,6 +176,11 @@ load_agent() {
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
     local line key value
+    # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
+    # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
+    # this empty, and bash treats an empty array as unset under `set -u` until
+    # 4.4 -- so on the 3.2 that macOS still ships, `restore` and every guarded
+    # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
     AGENT_HOOK_ENV=()
     while IFS= read -r line; do
         case "$line" in
@@ -185,10 +223,17 @@ load_agent() {
     # Canonicalised once, here, because two spellings of one directory defeat
     # every check downstream: they address the same home and compare unequal, so
     # the collision loop clears a copycat and restore overwrites the live
-    # sibling. `realpath -m --` rather than collapsing slashes by hand, which
-    # left `$HOME/foo/../.hermes` intact and evading the check -- `-m` because a
-    # home need not exist yet, `--` because a path may begin with a dash.
-    AGENT_HOME="$(realpath -m -s -- "$AGENT_HOME")"
+    # sibling. Resolved rather than collapsing slashes by hand, which left
+    # `$HOME/foo/../.hermes` intact and evading the check. normalized_path, not
+    # canonical_path: a home symlinked onto a bigger disk is ordinary, and the
+    # shape rule below reads this value and must still see the declared name.
+    #
+    # Resolved into `home`, not into AGENT_HOME: the never-assign rule beside
+    # normalized_path.
+    local home
+    home="$(normalized_path "$AGENT_HOME")" \
+        || die "cannot resolve ${name}'s home ($AGENT_HOME)"
+    AGENT_HOME="$home"
     : "${AGENT_CONTAINER:=hermes-$name}"
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"
@@ -382,7 +427,7 @@ COMPOSE_NEEDS_NO_IDENTIFICATION="config version ls images build push run ps"
 # which is how one repo serves two people -- so the fix identifies the
 # container rather than constraining the name.
 require_running_container_is_ours() {
-    local cid mounted
+    local cid cids mounted self m
     # A compose that REFUSED to run is not "no container" -- conflating them is
     # exactly what reload-if-running's own comment rejects, and it would silently
     # disable this check on, say, a Compose too old for `--status`. The
@@ -401,19 +446,38 @@ require_running_container_is_ours() {
     # deliberately supports -- so picking one and trusting it identified an
     # arbitrary member of the set and ignored the rest. Any foreign mount
     # refuses; this agent's own one-offs mount its own home and pass.
-    local cid
+    # Once, above the loop, and refused with `|| die` rather than left to
+    # `set -e` -- which is suspended for everything on the left of a `||`,
+    # function bodies included, and lib/reload-if-running calls this whole path
+    # that way. Resolved inline in the `if` below instead, a failed call
+    # compared "" to "" and `continue`d past the refusal for a container
+    # mounting a FOREIGN home.
+    # Shadowed, deliberately: require_own_home resolves this same path with this
+    # same helper on every route in, so this fires only when the SECOND call
+    # fails where the first succeeded. That is also why it has no test -- a stub
+    # matching this path trips require_own_home's refusal, one process earlier.
+    self="$(canonical_path "$AGENT_HOME")" \
+        || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve $AGENT_HOME. Anything already written is written; re-run once that is fixed."
     for cid in $cids; do
     mounted="$(docker inspect --format \
         '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
         "$cid")" \
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
-    # Same canonicalisation as AGENT_HOME, or the comparison is between two
-    # spellings again -- one of them from a source we do not control.
-    [ -z "$mounted" ] || mounted="$(realpath -m -s -- "$mounted")"
-    # Same-directory question, so resolved on both sides like the collision loop.
-    if [ -n "$mounted" ] \
-        && [ "$(realpath -m -- "$mounted")" = "$(realpath -m -- "$AGENT_HOME")" ]; then
-        continue
+    # Resolved before comparing, or this is a comparison between two spellings
+    # again -- one of them from a source we do not control.
+    if [ -n "$mounted" ]; then
+        # Both sides end at realpath, so a match IS the same directory. Only
+        # AGENT_HOME also arrives abspath'd, from load_agent, so a source
+        # spelled with a `..` after a symlink can cost a false refusal and
+        # nothing worse.
+        #
+        # `mounted` itself is never assigned from the substitution -- the
+        # never-assign rule beside normalized_path -- which is what keeps
+        # docker's raw .Source for this refusal and for the mismatch die below,
+        # where an operator matches it against `docker inspect`.
+        m="$(canonical_path "$mounted")" \
+            || die "refusing to touch the container under $AGENT_PROJECT -- could not resolve the home it mounts ($mounted). Anything already written is written; re-run once that is fixed."
+        [ "$m" = "$self" ] && continue
     fi
     # No removal command here, deliberately, and no branch that could produce
     # one. The obvious discriminator -- does the foreign home exist? -- is
@@ -553,7 +617,13 @@ require_own_home() {
     # the rentals agent's repo would stop `str` resolving, and a copycat
     # declaring the same bare `.hermes` would then pass and write config and
     # credentials into a live agent's mounted home.
-    local other odir ohome skipped=0 skipped_named=
+    # Once, before any row is read, and unconditionally -- invariant across the
+    # loop (the sibling load_agent below runs in a subshell), and this is the
+    # fail-closed side, so a resolver that cannot run should stop every
+    # direct-write command rather than only those with a sibling to compare.
+    local other odir ohome o err why skipped=0 skipped_named= self
+    self="$(canonical_path "$AGENT_HOME")" \
+        || die "refusing to write to $AGENT_HOME -- could not resolve it"
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
         # `|| true` is load-bearing under set -e: a bare assignment carries the
@@ -569,7 +639,7 @@ require_own_home() {
         # for the refusal. The previous shape ran load_agent twice per row on
         # every direct-write command and threw the second result away for every
         # row that resolves, which is the common case.
-        local err; err="$(mktemp)"
+        err="$(mktemp)"
         ohome="$( load_agent "$other" >/dev/null 2>"$err" && printf '%s' "$AGENT_HOME" )" || true
         why="$(cat "$err")"; rm -f "$err"
         if [ -z "$ohome" ]; then
@@ -588,7 +658,12 @@ require_own_home() {
         # match neither accepted shape. This one asks "is it the same
         # directory", and two spellings reaching one directory through a symlink
         # is exactly the aliasing this loop exists to catch.
-        [ "$(realpath -m -- "$ohome")" = "$(realpath -m -- "$AGENT_HOME")" ] \
+        # Into a local for the same reason `self` is: inline in this `&&` list a
+        # failure for THIS path alone would compare unequal, skip the die, and
+        # open the very collision the loop exists to close.
+        o="$(canonical_path "$ohome")" \
+            || die "refusing to write to $AGENT_HOME -- could not resolve ${other}'s home ($ohome)"
+        [ "$o" = "$self" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
@@ -633,6 +708,6 @@ require_transition_allowed() {
     [ -n "$AGENT_PRE_TRANSITION" ] || return 0
     [ -x "$AGENT_PRE_TRANSITION" ] \
         || die "$AGENT_NAME declares a pre-transition guard at $AGENT_PRE_TRANSITION, which is missing or not executable"
-    ( cd "$AGENT_DIR" && env "${AGENT_HOOK_ENV[@]}" "$AGENT_PRE_TRANSITION" ) \
+    ( cd "$AGENT_DIR" && env ${AGENT_HOOK_ENV[@]+"${AGENT_HOOK_ENV[@]}"} "$AGENT_PRE_TRANSITION" ) \
         || die "${AGENT_NAME}'s pre-transition guard refused -- not transitioning the container"
 }
