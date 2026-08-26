@@ -63,20 +63,11 @@ print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
 # implicit library/ namespace, which is why `docker pull ubuntu:22.04` works.
 #
 # No property of the string can settle it, so this stops asking the string. The
-# passthrough forces --ignore-buildable on `pull` (lib/common.sh), so a service
-# this host builds cannot be replaced by a fetch through this tool, whatever it
-# is named.
+# passthrough forces --ignore-buildable on `pull` (lib/common.sh). That closes
+# the fetch this tool could issue; the build arm below closes the one Compose
+# issues on its own.
 case "$got_build:$got_image" in
     *@sha256:[0-9a-f][0-9a-f]*) ;;
-    # A build does NOT fetch a missing image -- verified, not reasoned: a
-    # service with `build:` and `image: <unresolvable-registry>/x:1` reports
-    # "Built" under both the default policy and an explicit `missing`. The
-    # compose-spec says as much ("missing ... if you are not also using the
-    # Build subsection"), and requiring `pull_policy: never` here refused a
-    # legitimate config -- the rentals agent's -- for a fetch that cannot
-    # happen. Third wrong premise about pull behaviour on this rule, and the
-    # only one caught by running it.
-    #
     # A build service fetches unless it says otherwise, and I got this wrong
     # twice before measuring it properly. Marker test -- Dockerfile touches
     # /BUILT_HERE, `image:` names a real registry tag, then check which one the
@@ -94,9 +85,15 @@ case "$got_build:$got_image" in
     # `if_not_present` is absent because `compose config` normalises it to
     # `missing` before this guard sees it -- measured, not assumed.
     build:*)
-        case "${got_pull:--}" in
+        # The helper prints "-" for an absent policy, so name that case rather
+        # than describing the operator's file as containing a dash.
+        case "$got_pull" in
+            -) pull_desc="unset (the default, which pulls)" ;;
+            *) pull_desc="'$got_pull'" ;;
+        esac
+        case "$got_pull" in
             never|build) ;;
-            *) die "refusing to act: ${AGENT_NAME}'s service builds its image but its pull_policy is '${got_pull:-unset}', and only 'never' or 'build' keep Compose from fetching '$got_image' over the top of what this host built -- the default and 'missing' both pull when the local tag is absent, and the result runs with this agent's credentials. Add 'pull_policy: never' beside the build." ;;
+            *) die "refusing to act: ${AGENT_NAME}'s service builds its image but its pull_policy is ${pull_desc}, and only 'never' or 'build' keep Compose from fetching '$got_image' over the top of what this host built -- the default and 'missing' both pull when the local tag is absent, and the result runs with this agent's credentials. Add 'pull_policy: never' beside the build." ;;
         esac ;;
     *) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which is neither a digest nor built here. A pulled tag re-resolves on the next pull and this container holds the agent's credentials -- pin it as ...@sha256:..., or give the service a build." ;;
 esac

@@ -320,13 +320,12 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     ({"build": True, "pull_policy": "build"}, False,
      "`build` leaves a built image alone", ""),
     ({"build": True}, True,
-     "no policy at all is the default, and the default pulls", "only 'never' or 'build'"),
+     "no policy at all is the default, and the default pulls",
+     "pull_policy is unset (the default, which pulls)"),
     ({"build": True, "pull_policy": "daily"}, True,
      "the periodic policies refetch like `always`", "only 'never' or 'build'"),
     ({"build": True, "pull_policy": "every_12h"}, True,
      "including the parameterised one", "only 'never' or 'build'"),
-    ({"build": True, "pull_policy": "never"}, False,
-     "an explicit never is fine too, just not required", ""),
 ])
 def test_the_image_rule_reads_what_compose_resolved(
         run, instance, tmp_path, kw, refused, why, expect):
