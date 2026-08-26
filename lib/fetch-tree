@@ -122,10 +122,23 @@ target="$home/$root/$dest"
 # lock nobody can clear. Held on fd 9 for the rest of the script, so the rollback
 # in cleanup() runs inside it too.
 mkdir -p "$(dirname "$target")"
-# In the home root, NOT beside the target. plugins/ and skills/ are directories
-# the gateway enumerates, and a lock file is not a plugin or a skill -- even a
-# dotfile there is one more thing for something else to have an opinion about.
-lockfile="$home/.fetch-tree.$root.$tree_name.lock"
+# OUTSIDE the agent's home, and that placement is load-bearing rather than tidy.
+# The home is bind-mounted into the container at /opt/data and the gateway runs
+# as the operator's uid, so everything in it is writable by a compromised agent.
+# `exec 9>` truncates, follows symlinks, and runs BEFORE flock -- so a lock
+# planted as `../.ssh/authorized_keys` turns the next host-side restore into a
+# truncation primitive aimed at the operator. This fleet has met that exact
+# crossing: the rentals agent's restore hook copies with --remove-destination
+# because a planted relative symlink resolves differently on each side of the
+# mount. fetch-tree runs host-side only, so the lock has no reason to sit
+# anywhere the agent can reach; beside the registry, nothing mounts it.
+#
+# Keyed on the home's BASENAME, which is unique per agent -- require_own_home
+# refuses two registered agents resolving to one home -- so distinct callers
+# cannot collide on one lock.
+lockdir="${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/locks"
+mkdir -p "$lockdir"
+lockfile="$lockdir/${home##*/}.$root.$tree_name.lock"
 command -v flock >/dev/null || { echo "fetch-tree needs flock (util-linux)" >&2; exit 1; }
 exec 9>"$lockfile" || { echo "could not open $lockfile" >&2; exit 1; }
 flock 9 || { echo "could not lock $lockfile" >&2; exit 1; }
@@ -143,6 +156,16 @@ flock 9 || { echo "could not lock $lockfile" >&2; exit 1; }
 # nothing to remove.
 staging="$target.incoming"
 backup_path="$target.previous"
+# Recover before clearing. A run killed between the two `mv`s below -- SIGKILL,
+# so the trap never fired -- leaves $backup_path holding the agent's ONLY valid
+# tree and no $target at all. Clearing first and then failing anywhere in the
+# fallible `cp -a`/`chmod` pair would take the agent off its phone line for good,
+# which is the one outcome this installer exists to prevent. Promoting the
+# rollback copy first makes the rest of this run replaceable rather than
+# load-bearing; the rm below is then a no-op for it.
+if [ ! -e "$target" ] && [ -e "$backup_path" ]; then
+    mv "$backup_path" "$target"
+fi
 rm -rf "$staging" "$backup_path"
 cp -a "$src" "$staging"
 # Scripts are invoked directly by the agent; an unreadable 644 fails from inside

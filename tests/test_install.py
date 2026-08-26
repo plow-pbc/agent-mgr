@@ -594,3 +594,61 @@ def test_two_concurrent_installs_leave_one_valid_tree(run, instance, tmp_path):
         "a staging or rollback tree survived a concurrent install"
     assert (plugins / "plow-chat-platform" / "plugin.yaml").is_file(), \
         "the published tree has no manifest at its root"
+
+
+def test_the_lock_is_not_placed_where_the_agent_can_reach_it(run, instance, tmp_path):
+    """A lock inside the agent's home is a host-side truncation primitive.
+
+    The home is bind-mounted at /opt/data and the gateway runs as the operator's
+    uid, so a compromised agent can replace anything in it. `exec 9>` truncates
+    and follows symlinks, and it runs BEFORE flock -- so a lock planted as
+    `../<something>` is written through by the next host-side restore, as the
+    operator. Not theoretical here: the rentals agent's restore hook copies with
+    --remove-destination against this same planted-relative-symlink crossing.
+
+    Seeded at the exact path the lock used to occupy, so moving it back reddens.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True, exist_ok=True)
+    sentinel = tmp_path / "home" / "operator-file"
+    sentinel.write_text("must survive\n")
+    (home / ".fetch-tree.plugins.plow-chat-platform.lock").symlink_to("../operator-file")
+
+    r = run("restore", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert sentinel.read_text() == "must survive\n", \
+        "restore followed a planted symlink out of the home and truncated a host file"
+    # Symlinks excluded: the planted one is still sitting there, untouched, which
+    # is the point. What must not exist is a lock this run CREATED in the home.
+    assert not [p for p in home.rglob("*.lock") if not p.is_symlink()], \
+        "a lock was created inside the container-writable home"
+
+
+def test_a_rollback_copy_is_promoted_before_the_next_run_can_fail(
+        run, instance, tmp_path):
+    """A SIGKILL between the two publish `mv`s leaves `.previous` holding the
+    agent's only valid tree and no target at all -- the trap does not fire.
+    Clearing it before the fallible `cp -a`/`chmod` pair means one more failure
+    leaves the agent with NO plugin, which is the phone line gone for good and
+    the one outcome this installer exists to prevent.
+
+    `find` is stubbed to fail because it drives the chmod pass -- the first
+    fallible step after the recovery point. Without the promotion the home ends
+    with nothing installed.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    plugins = tmp_path / "home" / ".hermes-rowan" / "plugins"
+    rollback = plugins / "plow-chat-platform.previous"
+    rollback.mkdir(parents=True)
+    (rollback / "plugin.yaml").write_text("name: plow-chat-platform\n")
+
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    (b / "find").write_text("#!/usr/bin/env bash\nexit 1\n")
+    (b / "find").chmod(0o755)
+
+    r = run("restore", "rowan")
+    assert r.returncode != 0, "the stubbed find should have failed this install"
+    assert (plugins / "plow-chat-platform" / "plugin.yaml").is_file(), \
+        "the rollback copy was cleared before the fallible step, leaving no tree"
