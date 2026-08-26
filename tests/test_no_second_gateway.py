@@ -193,3 +193,26 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
         assert "refused" in r.stderr
     else:
         assert r.returncode == 0, f"{why}: {r.stderr}"
+
+
+def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_path):
+    """The harness fence, and it belongs in this file: restarting a live gateway
+    is this repo's own failure class, and for a day the SUITE was the actor --
+    `up`/`restore` on a fixture agent named `rowan` resolved to the production
+    compose project, so 20 real `compose restart hermes` calls went out per run
+    (plow-pbc/agent-mgr#13).
+
+    A lifecycle command with no stub installed must be refused by the fixture's
+    docker rather than reaching the daemon. `which docker` is asserted too: the
+    session fixture shadows the real binary, and a test that rebuilt PATH from
+    os.environ used to re-admit it."""
+    import shutil
+    run("register", "rowan", str(instance("rowan")))
+
+    r = run("up", "rowan")
+    assert r.returncode != 0, "a lifecycle command reached a docker nothing stubbed"
+    assert "did not stub" in r.stderr
+
+    found = shutil.which("docker")
+    assert found and str(tmp_path.parent) in found or "poison-bin" in (found or ""), (
+        f"the real docker is back on PATH at {found}")

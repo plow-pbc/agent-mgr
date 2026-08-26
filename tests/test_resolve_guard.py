@@ -1,5 +1,21 @@
 """The guard proves what Compose actually resolved, rather than trusting that
-unsetting the descriptor keys held."""
+unsetting the descriptor keys held.
+
+The refusal cases stub the mismatch rather than producing it through a real
+`compose.override.yml`. What is under test is the guard's reaction to Compose
+disagreeing with the descriptor, not Compose's merge -- and the suite runs with
+the real docker shadowed, because a fixture agent named `rowan` or `str`
+resolves to the LIVE compose project (plow-pbc/agent-mgr#13).
+"""
+import os
+
+from conftest import fake_docker
+
+
+def _mismatched(tmp_path, name, **kw):
+    """A docker whose resolved config disagrees with the descriptor."""
+    b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name, **kw)
+    return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
 def _agent(run, instance, name, descriptor=""):
@@ -17,23 +33,21 @@ def test_the_guard_passes_when_the_resolved_config_matches(run, instance):
 def test_the_guard_refuses_when_an_override_retargets_the_home(run, instance, tmp_path):
     """An override that mounts a different home at /opt/data must be caught, even
     though every descriptor variable resolved exactly as written."""
-    repo = _agent(run, instance, "rowan")
-    (repo / "compose.override.yml").write_text(
-        "services:\n"
-        "  hermes:\n"
-        "    volumes:\n"
-        f"      - {tmp_path}/.hermes-SOMEONE-ELSE:/opt/data\n"
-    )
-    r = run("resolve-guard", "rowan")
+    _agent(run, instance, "rowan")
+    env = _mismatched(tmp_path, "rowan")
+    # The mismatch: Compose resolves a different home at /opt/data.
+    (tmp_path / "bin" / "docker").write_text(
+        (tmp_path / "bin" / "docker").read_text().replace(
+            str(tmp_path / "home" / ".hermes-rowan"), str(tmp_path / ".hermes-SOMEONE-ELSE")))
+    r = run("resolve-guard", "rowan", env=env)
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
 
 
-def test_the_guard_refuses_when_an_override_renames_the_container(run, instance):
-    repo = _agent(run, instance, "rowan")
-    (repo / "compose.override.yml").write_text(
-        "services:\n  hermes:\n    container_name: hermes\n")
-    r = run("resolve-guard", "rowan")
+def test_the_guard_refuses_when_an_override_renames_the_container(run, instance, tmp_path):
+    _agent(run, instance, "rowan")
+    env = _mismatched(tmp_path, "rowan", container="hermes")
+    r = run("resolve-guard", "rowan", env=env)
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
 
@@ -61,22 +75,19 @@ def test_an_override_cannot_re_project_the_stack_at_all(run, instance):
 
 
 def _retargeting(instance, run, name, tmp_path, config=None):
+    """Registered, and with a docker that resolves someone else's home."""
     repo = instance(name) if config is None else instance(name, config=config)
     run("register", name, str(repo))
-    (repo / "compose.override.yml").write_text(
-        "services:\n"
-        "  hermes:\n"
-        "    volumes:\n"
-        f"      - {tmp_path}/.hermes-SOMEONE-ELSE:/opt/data\n")
-    return repo
+    b = fake_docker(tmp_path, home=tmp_path / ".hermes-SOMEONE-ELSE", name=name)
+    return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
 def test_sign_in_will_not_write_a_credential_through_a_retargeting_override(run, instance, tmp_path):
     """sign-in mutates a running stack. Reaching Compose without the guard let a
     credential write land against a sibling agent's mounted home."""
-    _retargeting(instance, run, "rowan", tmp_path)
+    env = _retargeting(instance, run, "rowan", tmp_path)
     run("restore", "rowan")
-    r = run("sign-in", "rowan")
+    r = run("sign-in", "rowan", env=env)
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
 
@@ -84,13 +95,13 @@ def test_sign_in_will_not_write_a_credential_through_a_retargeting_override(run,
 def test_check_latch_will_not_probe_through_a_retargeting_override(run, instance, tmp_path):
     # A config that declares latch, so the probe gets past the not-configured
     # exit and actually reaches the guard this test is about.
-    _retargeting(instance, run, "property", tmp_path,
-                 config="model:\n  provider: openai-codex\nmcp_servers:\n  latch:\n"
-                        "    url: https://api.plow.co/v1/relay/devices/x/mcp\n")
+    env = _retargeting(instance, run, "property", tmp_path,
+                       config="model:\n  provider: openai-codex\nmcp_servers:\n  latch:\n"
+                              "    url: https://api.plow.co/v1/relay/devices/x/mcp\n")
     run("restore", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_1\nDOMO_MCP_TOKEN=tok_1\n")
-    r = run("check-latch", "property")
+    r = run("check-latch", "property", env=env)
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
 

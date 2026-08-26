@@ -10,7 +10,6 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # Overridable so tests never touch the operator's real registry.
 : "${AGENT_MGR_REGISTRY:=${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/agents}"
 
-registry_path() { printf '%s\n' "$AGENT_MGR_REGISTRY"; }
 
 # The name column is compared as a FIELD, by awk, never interpolated into a
 # pattern. That was three rounds of the same bug: a raw name reached a grep BRE
@@ -183,6 +182,12 @@ load_agent() {
     AGENT_NAME="$name"
     AGENT_DIR="$dir"
     : "${AGENT_HOME:=$HOME/.hermes-$name}"
+    # Canonicalised here, once, because two spellings of one directory defeat
+    # every check downstream: `$HOME//.hermes` and `$HOME/.hermes` address the
+    # same home and compare unequal, so the collision loop would clear a
+    # copycat and restore would overwrite the live sibling.
+    AGENT_HOME="$(printf '%s' "$AGENT_HOME" | tr -s /)"
+    AGENT_HOME="${AGENT_HOME%/}"
     : "${AGENT_CONTAINER:=hermes-$name}"
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"

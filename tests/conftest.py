@@ -10,9 +10,33 @@ ROOT = Path(__file__).resolve().parent.parent
 # tests/test_compose.py uses it -- see the fixture below.
 REAL_PATH = os.environ.get("PATH", "")
 
-POISON = ("#!/usr/bin/env bash\n"
-          'echo "refusing to reach the real docker daemon from a test: docker $*" >&2\n'
-          "exit 97\n")
+# The default `docker` every test gets: answers the two READ calls agent-mgr
+# makes, and refuses everything else.
+#
+# It needs no arguments because agent-mgr exports AGENT_PROJECT, AGENT_CONTAINER
+# and AGENT_HOME before shelling out, so the config it renders is self-consistent
+# with whatever agent is being resolved -- resolve-guard passes for any name.
+# `ps` reports no running gateway, so nothing reaches a restart.
+#
+# Refusing every other subcommand is the load-bearing half: a test must not be
+# able to start, stop or restart a container even by accident, because the
+# project it would name is production's.
+SAFE_DOCKER = """#!/usr/bin/env bash
+case "$*" in
+  *"config --format json"*)
+    cat <<JSON
+{"name": "${AGENT_PROJECT:-unset}",
+ "services": {"hermes": {"container_name": "${AGENT_CONTAINER:-unset}",
+   "volumes": [{"target": "/opt/data", "source": "${AGENT_HOME:-unset}"}]}}}
+JSON
+    ;;
+  *"ps --status running --quiet"*) ;;
+  *)
+    echo "refusing a docker call a test did not stub: docker $*" >&2
+    exit 97 ;;
+esac
+exit 0
+"""
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -35,7 +59,7 @@ def _no_real_docker_on_path(tmp_path_factory):
     the first attempt at this fix.
     """
     b = tmp_path_factory.mktemp("poison-bin")
-    (b / "docker").write_text(POISON)
+    (b / "docker").write_text(SAFE_DOCKER)
     (b / "docker").chmod(0o755)
     # Prepended, not filtered: `docker` lives in /usr/bin beside python3, bash
     # and every other tool the suite shells out to, so removing the directory
@@ -71,10 +95,7 @@ def run(registry, tmp_path):
     # install fake_docker into this same directory, which replaces this file.
     poison = tmp_path / "bin"
     poison.mkdir(exist_ok=True)
-    (poison / "docker").write_text(
-        "#!/usr/bin/env bash\n"
-        'echo "refusing to reach the real docker daemon from a test: docker $*" >&2\n'
-        "exit 97\n")
+    (poison / "docker").write_text(SAFE_DOCKER)
     (poison / "docker").chmod(0o755)
 
     def _run(*args, env=None, check=False):
