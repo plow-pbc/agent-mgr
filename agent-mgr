@@ -82,7 +82,7 @@ case "$cmd" in
         # composition -- must not leave the caller believing the deploy landed.
         if [ -n "$AGENT_RESTORE_HOOK" ]; then
             [ -x "$AGENT_RESTORE_HOOK" ] || die "$AGENT_NAME declares a restore hook at $AGENT_RESTORE_HOOK, which is missing or not executable"
-            ( cd "$AGENT_DIR" && "$AGENT_RESTORE_HOOK" ) || die "${AGENT_NAME}'s restore hook failed -- the deploy did NOT land"
+            ( cd "$AGENT_DIR" && env "${AGENT_HOOK_ENV[@]}" "$AGENT_RESTORE_HOOK" ) || die "${AGENT_NAME}'s restore hook failed -- the deploy did NOT land"
         fi
 
         # Once, at the end. config.yaml, the plugin and whatever the hook wrote

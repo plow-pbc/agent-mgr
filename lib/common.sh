@@ -111,6 +111,7 @@ load_agent() {
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
     local line key value
+    AGENT_HOOK_ENV=()
     while IFS= read -r line; do
         case "$line" in
             \#*|'') continue ;;
@@ -126,30 +127,23 @@ load_agent() {
         esac
         value="${value//\$\{HOME\}/$HOME}"
         value="${value//\$HOME/$HOME}"
-        # Never these, whatever a descriptor says. Widening the export past
-        # AGENT_* would otherwise hand a registered repo the loader and the
-        # command lookup: a PATH here reaches every docker, curl and gh this
-        # tool runs afterwards, which is the shell execution the parse exists
-        # to prevent, arriving by a different door.
-        case "$key" in
-            PATH|HOME|SHELL|SHELLOPTS|BASHOPTS|BASH_ENV|ENV|IFS|CDPATH|GLOBIGNORE|PS4|LD_*|DYLD_*)
-                echo "agent-mgr: ignoring $key in $descriptor -- a descriptor may not set it" >&2
-                continue ;;
-        esac
-        # Everything else the descriptor declares is exported, not just AGENT_*.
-        # agent-mgr's own logic still reads only AGENT_*, but an instance's
-        # override-only variables (STR_VAULT and friends) are what its compose
-        # override and its restore hook are written against -- so exporting them
-        # here means the hook does not keep a second copy of a path the
-        # descriptor already owns.
+        # Only AGENT_KEYS reaches THIS process. Everything else a descriptor
+        # declares is collected for the hooks and never exported here.
         #
-        # Safe because this is a parse, not a source: a value can still only be
-        # a literal with $HOME expanded. And it strengthens the guard rather
-        # than weakening it, since a stale value in the caller's shell is now
-        # overwritten by the descriptor's rather than surviving beside it.
-        export "$key=$value"
-        printf '%s' "$AGENT_KEYS" | grep -qw "$key" || continue
-        printf -v "$key" '%s' "$value"
+        # The previous shape exported every key, which handed a registered repo
+        # the dispatcher: AGENT_MGR_ROOT decides where lib/resolve-guard is
+        # loaded from, so a descriptor setting it made ordinary lifecycle
+        # commands run that repo's code with the operator's credentials. A
+        # denylist could not close that -- it is an allowlist problem, because
+        # the dangerous names are whatever this tool happens to read.
+        if printf '%s' "$AGENT_KEYS" | grep -qw "$key"; then
+            printf -v "$key" '%s' "$value"
+        else
+            # An instance's own variables -- STR_VAULT and friends -- which its
+            # compose override and its hooks are written against. Passed to the
+            # hooks as an environment, never into this process.
+            AGENT_HOOK_ENV+=("$key=$value")
+        fi
     done < "$descriptor"
 
     # Convention, applied only where the descriptor said nothing.
@@ -279,6 +273,6 @@ require_transition_allowed() {
     [ -n "$AGENT_PRE_TRANSITION" ] || return 0
     [ -x "$AGENT_PRE_TRANSITION" ] \
         || die "$AGENT_NAME declares a pre-transition guard at $AGENT_PRE_TRANSITION, which is missing or not executable"
-    ( cd "$AGENT_DIR" && "$AGENT_PRE_TRANSITION" ) \
+    ( cd "$AGENT_DIR" && env "${AGENT_HOOK_ENV[@]}" "$AGENT_PRE_TRANSITION" ) \
         || die "${AGENT_NAME}'s pre-transition guard refused -- not transitioning the container"
 }
