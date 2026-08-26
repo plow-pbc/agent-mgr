@@ -536,7 +536,7 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     assert "--ignore-buildable" in r.stderr
     # The tail too: it points at the OTHER door, and a message claiming this
     # refusal is the whole guarantee is the framing this branch retracted.
-    assert "'pull_policy: never' (or 'build')" in r.stderr
+    assert "the other door" in r.stderr
 
     # `pull` is not the only door: up/run/create all take --pull always, which
     # is the same substitution by a different route.
@@ -553,6 +553,11 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
         r = run("compose", "rowan", *args, env=env)
         assert r.returncode != 0, f"{args} fetched past the guard"
         assert "could replace a built image" in r.stderr
+        # The remedy has to be THIS door's: telling an operator to edit
+        # pull_policy cannot clear a flag refusal, because the flag overrides
+        # the file -- which is why the message says so.
+        assert "'--pull' takes only 'never' or 'build'" in r.stderr
+        assert "will not clear this one" in r.stderr
 
     assert run("compose", "rowan", "pull", "--ignore-buildable",
                env=env).returncode == 0, "the safe form was refused too"
