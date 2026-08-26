@@ -188,3 +188,21 @@ def test_the_howto_still_reaches_the_readmes_instance_repo_contract():
     assert targets, "the HOWTO should still defer the file list to the README"
     for t in targets:
         assert t in slugs, f"docs/HOWTO.md links to README.md#{t}, which no heading produces"
+
+
+def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
+    """AGENT_PRE_TRANSITION reached AGENT_KEYS one commit before the README
+    table learned about it. That table is the single owner of the instance-repo
+    contract, so the next hook must not be able to land without a row."""
+    import pathlib
+    import re
+    root = pathlib.Path(__file__).resolve().parent.parent
+    # The resolver's own loop, not a name heuristic: it is what decides which
+    # keys are instance-supplied executables rather than derived values.
+    loop = re.search(r"^\s*for _hook in ([A-Z_ ]+); do$",
+                     (root / "lib" / "common.sh").read_text(), re.M)
+    assert loop, "the hook loop moved -- this probe reads it to know what to check"
+    readme = (root / "README.md").read_text()
+    for hook in loop.group(1).split():
+        assert f"`{hook}`" in readme, (
+            f"{hook} is a declared hook but the instance-repo table does not name it")
