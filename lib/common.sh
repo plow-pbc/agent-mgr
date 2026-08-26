@@ -340,7 +340,7 @@ COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec
 # omission rather than by decision.
 #
 # These touch no running container: `config`, `version`, `ls`, `images`,
-# `build`, `pull` and `push` are file and image operations, and `run` starts a
+# `build` and `push` are file and image operations, and `run` starts a
 # throwaway beside the live one. `ps` is exempt because it reads names and
 # status only, and the identification is ITSELF a `compose ps` -- gating it
 # would issue a second identical call for no added information. Not because
@@ -348,13 +348,18 @@ COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec
 # never re-enters this dispatch, so gating `ps` later is possible if a reason
 # appears.
 #
-# `pull` stays named in both lists even though `compose` now refuses it: the
-# entries are what make that refusal the FIRST thing it hits, instead of a
-# daemon error from the identification it would otherwise be gated on.
+# `pull` is deliberately NOT named here, though `compose` refuses it before the
+# classification could matter. An exemption entry is the half that would take
+# effect silently if any `pull` form were ever re-admitted -- it would skip the
+# ownership check by inheritance rather than by decision, which is the
+# by-omission failure this list exists to prevent. Whoever re-admits it decides.
+# It stays in COMPOSE_LEAVES_IT_RUNNING for the opposite reason: routing it to
+# compose_transition would run the veto, so an operator would be asked to
+# confirm a transition on the live agent before being told `pull` is refused.
 #
 # Anything not named here is gated, heard of or not. Missing an entry costs a
 # needless `compose ps`; missing one from a gate-these list skipped the check.
-COMPOSE_NEEDS_NO_IDENTIFICATION="config version ls images build pull push run ps"
+COMPOSE_NEEDS_NO_IDENTIFICATION="config version ls images build push run ps"
 
 # The container that already EXISTS under this project may not be ours.
 #
