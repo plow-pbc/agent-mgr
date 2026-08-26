@@ -226,9 +226,11 @@ load_agent() {
            AGENT_DESCRIPTOR HERMES_UID HERMES_GID
 }
 
-# No fetch through this tool may replace what the host built. That is what makes
-# resolve-guard's build-exemption true rather than assumed -- two attempts to
-# derive it from the image name were both wrong, so the guarantee lives here.
+# No fetch through this tool may replace what the host built. This is one of the
+# two doors: resolve-guard closes the other, where Compose fetches on its own
+# under a pull_policy that is not `never` or `build`. Neither is sufficient
+# alone, and two attempts to derive the guarantee from the image NAME were both
+# wrong -- fetchability is not a property of the string.
 #
 # The SUBCOMMAND is $1, per this file's own rule: scanning the whole argv for it
 # made `compose rowan exec hermes git pull` die about --ignore-buildable.
@@ -274,7 +276,7 @@ compose() {
     # not -- they disagreed on wording and the passthrough's was redundant for
     # anything reaching compose_transition.
     compose_fetch_is_safe "$@" \
-        || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull always' has no such escape. resolve-guard exempts a built image from the digest rule only because a fetch through this tool cannot replace it."
+        || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull always' has no such escape. this closes the fetch agent-mgr could issue; resolve-guard separately requires a built service to set pull_policy: never, which closes the one Compose issues on its own."
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
