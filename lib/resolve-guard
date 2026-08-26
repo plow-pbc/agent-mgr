@@ -12,12 +12,12 @@ set -euo pipefail
 # shellcheck source=common.sh
 . "$AGENT_MGR_ROOT/lib/common.sh"
 load_agent "${1:?usage: resolve-guard <name>}"
-# Compose agreeing with the descriptor is not the same as the descriptor being
-# right: a copycat naming a sibling's home is self-consistent and passes every
-# check below. Every route through here either starts a gateway or writes, so
-# the ownership check belongs here rather than at each call site -- `up` on a
-# copycat would otherwise boot a SECOND gateway against a live home, which is
-# the failure this tool exists to prevent.
+# Compose agreeing with the descriptor is not the descriptor being RIGHT: a
+# copycat naming a sibling's home is self-consistent and satisfies every
+# comparison below. Every route through here either starts a gateway or writes,
+# so ownership belongs here rather than at each call site -- `up` on a copycat
+# would otherwise boot a SECOND gateway against a live home, which is the one
+# failure this tool exists to prevent.
 require_own_home
 
 resolved="$(compose config --format json)" || die "compose could not resolve a config for $AGENT_NAME"

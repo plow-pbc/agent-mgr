@@ -148,24 +148,6 @@ def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
     assert "refusing to act" in r.stderr
 
 
-@pytest.mark.parametrize("args, why", [
-    (("run", "--rm", "hermes", "--entrypoint", "bash"),
-     "--entrypoint after the service is an argument to the service's command, "
-     "so s6 still boots -- a substring check for the flag passed this"),
-    (("run", "--rm", "-e", "--entrypoint", "hermes"),
-     "--entrypoint as another flag's VALUE is not an entrypoint override"),
-])
-def test_run_needs_the_entrypoint_before_the_service(run, instance, tmp_path, args, why):
-    """The whole failure this tool exists to prevent, reached through the escape
-    hatch: without a replaced entrypoint the image's s6 boots a second gateway
-    against the live agent's home."""
-    run("register", "rowan", str(instance("rowan")))
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    r = run("compose", "rowan", *args, env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0, why
-    assert "without --entrypoint before the service" in r.stderr
-
-
 @pytest.mark.parametrize("args, refused, why", [
     (("scale", "hermes=0"), True,
      "scale stops a container and was in neither list when the guard enumerated "
@@ -179,6 +161,11 @@ def test_run_needs_the_entrypoint_before_the_service(run, instance, tmp_path, ar
     (("run", "--rm", "--entrypoint", "bash", "hermes"), False,
      "a throwaway container beside the live one stops nothing, and refusing it "
      "would break the maintenance shell during exactly the ingest it guards"),
+    (("run", "--rm", "hermes", "--entrypoint", "bash"), True,
+     "--entrypoint AFTER the service is an argument to the service's own "
+     "command, so s6 still boots -- a substring check for the flag passed this"),
+    (("run", "--rm", "-e", "--entrypoint", "hermes"), True,
+     "--entrypoint as another flag's VALUE is not an entrypoint override"),
 ])
 def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
         run, instance, tmp_path, args, refused, why):
@@ -190,7 +177,9 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
     r = run("compose", "rowan", *args, env={"PATH": f"{b}:{os.environ['PATH']}"})
     if refused:
         assert r.returncode != 0, why
-        assert "refused" in r.stderr
+        # Either gate may be the one that stops it: the veto for a transition,
+        # the entrypoint check for a `run` that would boot a second gateway.
+        assert "refused" in r.stderr or "without --entrypoint before the service" in r.stderr
     else:
         assert r.returncode == 0, f"{why}: {r.stderr}"
 
@@ -216,3 +205,26 @@ def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_p
     found = shutil.which("docker")
     assert found and str(tmp_path.parent) in found or "poison-bin" in (found or ""), (
         f"the real docker is back on PATH at {found}")
+
+
+def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance, tmp_path):
+    """The hazard that is NOT test-only, and the reason this check is in the tool
+    rather than in a fixture.
+
+    AGENT_PROJECT derives from the agent NAME and Docker's namespace is global,
+    so `agent-mgr restore rowan` from a scratch checkout addresses `-p
+    hermes-rowan` -- production -- however thoroughly HOME and the registry are
+    isolated. Every other check compares the descriptor against the config
+    agent-mgr WOULD apply, and a scratch descriptor is perfectly self-consistent.
+    An interactive run did exactly this to the live rentals gateway.
+
+    Deriving the project from the name stays deliberate: two names may share one
+    checkout so one repo can serve two people. So the container gets identified
+    rather than the name constrained."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    mount="/home/someone-else/.hermes-rowan")
+    r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, "restarted a container mounting a different home"
+    assert "not rowan's home" in r.stderr
+    assert "/home/someone-else/.hermes-rowan" in r.stderr, "the message must name what it found"

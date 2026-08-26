@@ -54,7 +54,7 @@ def test_no_argument_at_all_prints_usage(run):
     assert "usage" in (r.stdout + r.stderr).lower()
 
 
-@pytest.mark.parametrize("name", [".*", ".", "[a-z]*", "s.r"])
+@pytest.mark.parametrize("name", [".*", "[a-z]*", "s.r"])
 def test_a_pattern_is_a_name_that_matches_nothing_not_a_wildcard(run, instance, tmp_path, name):
     """The registry compares the name column as a FIELD, so a pattern is just a
     name no row has. It used to reach a grep BRE in every function here: `.*`

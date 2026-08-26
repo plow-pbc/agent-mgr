@@ -31,6 +31,10 @@ case "$*" in
 JSON
     ;;
   *"ps --status running --quiet"*) ;;
+  *inspect*)
+    # Self-consistent by default, like the config above: the container this
+    # agent would find is the one mounting this agent's home.
+    echo "${FAKE_MOUNT:-${AGENT_HOME:-unset}}" ;;
   *)
     echo "refusing a docker call a test did not stub: docker $*" >&2
     exit 97 ;;
@@ -138,7 +142,7 @@ def instance(tmp_path):
 
 
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
-                name="rowan", running=True, exec_output=None, log=None):
+                name="rowan", running=True, exec_output=None, log=None, mount=None):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -163,6 +167,7 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     })
     parts = [
         "#!/usr/bin/env bash",
+        f'case "$*" in *inspect*) echo "{mount or ""}"; exit 0 ;; esac' if mount else "",
         f'printf "%s\\n" "$*" >> {log}' if log else "",
         # stdin beside argv, in its OWN file: a test asserting a secret is
         # absent from argv proves nothing about whether it still reaches the
@@ -179,6 +184,7 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         'case "$*" in',
         f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;",
         f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',
+        f'  *inspect*) echo {home} ;;',
     ]
     if exec_output is not None:
         parts.append(f'  *exec*) echo {exec_output} ;;')

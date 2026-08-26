@@ -182,10 +182,10 @@ load_agent() {
     AGENT_NAME="$name"
     AGENT_DIR="$dir"
     : "${AGENT_HOME:=$HOME/.hermes-$name}"
-    # Canonicalised here, once, because two spellings of one directory defeat
+    # Canonicalised once, here, because two spellings of one directory defeat
     # every check downstream: `$HOME//.hermes` and `$HOME/.hermes` address the
-    # same home and compare unequal, so the collision loop would clear a
-    # copycat and restore would overwrite the live sibling.
+    # same home and compare unequal, so the collision loop would clear a copycat
+    # and restore would overwrite the live sibling.
     AGENT_HOME="$(printf '%s' "$AGENT_HOME" | tr -s /)"
     AGENT_HOME="${AGENT_HOME%/}"
     : "${AGENT_CONTAINER:=hermes-$name}"
@@ -258,9 +258,39 @@ compose() {
 # is a trade rather than a free win.
 COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec run cp pull build push"
 
+# The container that already EXISTS under this project may not be ours.
+#
+# Every other check here compares the descriptor against the config agent-mgr
+# WOULD apply, and a descriptor for a name that collides with a live agent is
+# perfectly self-consistent: isolate HOME and the registry as thoroughly as you
+# like and `-p hermes-rowan` still addresses production, because Docker's
+# namespace is global and the project is derived from the agent NAME. So the
+# last check has to be against the running container itself.
+#
+# This is not a test-only hazard, which is why it lives here rather than in the
+# suite's fixtures: an interactive `agent-mgr restore rowan` from a scratch
+# checkout restarted the live rentals gateway exactly this way. Deriving the
+# project from the name stays deliberate -- two names may share one checkout,
+# which is how one repo serves two people -- so the fix identifies the
+# container rather than constraining the name.
+require_running_container_is_ours() {
+    local cid mounted
+    cid="$(compose ps --status running --quiet hermes)" || return 0
+    # No container is the ordinary first bring-up, and nothing to misidentify.
+    [ -n "$cid" ] || return 0
+    mounted="$(docker inspect --format \
+        '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}' \
+        "$cid")" \
+        || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
+    mounted="$(printf '%s' "$mounted" | tr -s /)"; mounted="${mounted%/}"
+    [ -n "$mounted" ] && [ "$mounted" = "$AGENT_HOME" ] && return 0
+    die "refusing to touch the container running as $AGENT_PROJECT -- it mounts ${mounted:-<nothing>} at /opt/data, not ${AGENT_NAME}'s home ($AGENT_HOME). The compose project comes from the agent NAME, so a name that collides with a live agent reaches it however isolated this descriptor is."
+}
+
 # Every route to a container transition goes through here, so the instance's
 # veto cannot be bypassed by adding a call site that forgets it.
 compose_transition() {
+    require_running_container_is_ours
     require_transition_allowed
     compose "$@"
 }
