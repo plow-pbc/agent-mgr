@@ -10,8 +10,6 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # Overridable so tests never touch the operator's real registry.
 : "${AGENT_MGR_REGISTRY:=${XDG_CONFIG_HOME:-$HOME/.config}/agent-mgr/agents}"
 
-registry_path() { printf '%s\n' "$AGENT_MGR_REGISTRY"; }
-
 # The name column is matched literally. A name is validated to [a-z0-9-] on the
 # way in, so it carries no regex metacharacters -- but the match is anchored and
 # tab-terminated anyway, so a future name that does cannot match its own prefix.
@@ -273,6 +271,15 @@ install_plow_plugin() {
 # the check that catches that, and restore, install-plugin and add-skill all
 # write into the home without going near Compose.
 require_own_home() {
+    # Compared as filesystem identity, not as strings. `$HOME/tmp/../.hermes`
+    # differs lexically from `$HOME/.hermes`, and `.hermes-copycat` can be a
+    # symlink to `.hermes-rowan` and still satisfy the name-suffix rule below --
+    # either one lets restore, activate or sign-in overwrite a sibling's live
+    # credentials. `realpath -m` resolves both without requiring the path to
+    # exist, which a first restore depends on.
+    local canon
+    canon="$(realpath -m "$AGENT_HOME")"
+
     # No two registered agents may resolve to the same home. This is what
     # actually closes the legacy exception: a descriptor copied from the rentals
     # agent declares its bare `.hermes` and satisfies any name-shape test, being
@@ -287,12 +294,12 @@ require_own_home() {
         # collision went unseen -- one descriptor grammar, or the two disagree
         # exactly where it matters.
         ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )" || continue
-        [ -n "$ohome" ] || continue
-        [ "$ohome" = "$AGENT_HOME" ] \
+        [ "$(realpath -m "$ohome")" = "$canon" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
-    case "$AGENT_HOME" in
+    # The canonical path, so a symlink cannot borrow a sibling's name.
+    case "$canon" in
         *"/.hermes-$AGENT_NAME") return 0 ;;
         */.hermes)
             # The legacy shape, allowed only when the descriptor says so -- the

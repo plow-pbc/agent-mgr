@@ -300,17 +300,13 @@ def test_the_subcommand_is_classified_not_the_flattened_argv(run, instance, tmp_
 def test_restore_replays_every_pinned_skill(run, instance, tmp_path):
     """It is advertised as the whole deploy. A rebuild that omitted them left an
     agent whose skills.tsv said one thing and whose home held another."""
-    from conftest import fake_docker, fake_skill_bin
+    from conftest import fake_curl, fake_skill_bin
     repo = instance("rowan")
     (repo / "skills.tsv").write_text(f"plow-pbc/x\t{'a' * 40}\tmy-skill\t\n")
+    # fake_skill_bin already builds the docker fake and the PATH; curl lands in
+    # the same directory, so nothing needs re-inserting.
     env = fake_skill_bin(tmp_path, skill_name="my-skill", agent="rowan")
-    d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    b = tmp_path / "bin"
-    (b / "curl").write_text("#!/usr/bin/env bash\nout=\"\"\n"
-                            'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done\n'
-                            'printf "#!/usr/bin/env bash\\nexit 0\\n" > "$out"\n')
-    (b / "curl").chmod(0o755)
-    env["PATH"] = f"{b}:{d}:{os.environ['PATH']}"
+    fake_curl(tmp_path)
     run("register", "rowan", str(repo))
     r = run("restore", "rowan", env=env)
     assert r.returncode == 0, r.stderr

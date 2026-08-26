@@ -190,3 +190,29 @@ def test_a_quoted_sibling_home_is_still_a_collision(run, instance, tmp_path):
     r = run("restore", "copycat")
     assert r.returncode != 0
     assert "str is already registered there" in r.stderr
+
+
+def test_a_symlinked_home_cannot_borrow_a_siblings_name(run, instance, tmp_path):
+    """The suffix rule is satisfied by the NAME, so `.hermes-copycat` pointing at
+    `.hermes-rowan` passed it while writing into rowan's live home. Compared as
+    filesystem identity now, not as strings."""
+    home = tmp_path / "home"
+    (home / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
+    (home / ".hermes-copycat").symlink_to(home / ".hermes-rowan")
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "copycat", str(instance("copycat")))
+    r = run("restore", "copycat")
+    assert r.returncode != 0
+    assert "refusing to write" in r.stderr
+
+
+def test_a_traversing_home_is_the_same_home(run, instance, tmp_path):
+    """`$HOME/tmp/../.hermes-rowan` differs lexically and is the same directory."""
+    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "home" / "tmp").mkdir(parents=True, exist_ok=True)
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "copycat",
+        str(instance("copycat", descriptor="AGENT_HOME=$HOME/tmp/../.hermes-rowan\n")))
+    r = run("restore", "copycat")
+    assert r.returncode != 0
+    assert "refusing to write" in r.stderr
