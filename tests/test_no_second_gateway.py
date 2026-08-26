@@ -404,7 +404,7 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
         assert verb not in argv, f"{verb.strip()} reached compose before the check"
 
 
-@pytest.mark.parametrize("sub", ["config", "version", "ls", "images", "build", "pull", "push", "ps"])
+@pytest.mark.parametrize("sub", ["config", "version", "ls", "images", "build", "push", "ps"])
 def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, tmp_path, sub):
     """The identification costs a `compose ps`, which needs a live daemon. Gating
     the whole leaves-it-running list would make `config` -- which never contacted
@@ -489,3 +489,22 @@ def test_two_homes_aliasing_one_directory_through_a_symlink_collide(run, instanc
     r = run("restore", "copycat")
     assert r.returncode != 0, "two descriptors reached one directory undetected"
     assert "rowan is already registered there" in r.stderr
+
+
+def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
+    """What makes resolve-guard's build exemption TRUE rather than assumed. Two
+    attempts to derive safety from the image reference were both wrong -- a
+    derived image does get pulled (`--ignore-buildable` exists because that is
+    the default), and a bare name is fetchable (Docker resolves it against Hub's
+    implicit library/). So the guarantee moves to the one place that can hold
+    it: a fetch through this tool cannot replace what this host built."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    env = {"PATH": f"{b}:{os.environ['PATH']}"}
+
+    r = run("compose", "rowan", "pull", env=env)
+    assert r.returncode != 0, "a pull could have replaced a built image"
+    assert "--ignore-buildable" in r.stderr
+
+    assert run("compose", "rowan", "pull", "--ignore-buildable",
+               env=env).returncode == 0, "the safe form was refused too"

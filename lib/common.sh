@@ -228,6 +228,19 @@ load_agent() {
 
 # Every Compose invocation goes through here so the file list, the override
 # convention and the descriptor's env-file have exactly one definition.
+# `pull` never takes a buildable service through this tool. That is what makes
+# resolve-guard's build-exemption true rather than assumed: an image this host
+# builds cannot be silently replaced by a fetch, whatever it is named -- and a
+# bare name IS fetchable, since Docker resolves it against Hub's library/.
+compose_pull_is_safe() {
+    case " $* " in
+        *" pull "*)
+            case " $* " in *" --ignore-buildable "*) return 0 ;; esac
+            return 1 ;;
+    esac
+    return 0
+}
+
 compose() {
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")

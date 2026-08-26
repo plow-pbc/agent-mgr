@@ -54,22 +54,19 @@ print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
 # never passed through that variable at all and sailed past, free to run a
 # mutable pulled tag against the mounted credential home.
 #
-# The exemption is on the property that makes a tag safe, not on `build:`.
-# `docker compose pull` pulls buildable services BY DEFAULT -- `--ignore-buildable`
-# exists because that is the default -- and `pull` is a command this tool
-# exposes. So an override that adds `build:` while leaving `image:` pointing at
-# a remote repository (the plausible copy-paste when deriving from upstream and
-# keeping its name) would be replaced in the local store by the next pull, and
-# `up` would then run that mutable tag against the mounted credential home.
+# A pulled image must be a digest. A BUILT one is exempt -- and the exemption is
+# made true rather than assumed, because two attempts to derive it from the
+# reference string were both wrong: "a derived image never pulls" ignored that
+# `compose pull` takes buildable services by default, and "a bare name has no
+# registry" ignored that Docker resolves an unqualified name against Hub's
+# implicit library/ namespace, which is why `docker pull ubuntu:22.04` works.
 #
-# What actually makes the rentals agent's `sams-str-hermes-agent:local` safe is
-# that it names no registry: there is nothing to fetch it from. So a buildable
-# service is exempt only while its image is a bare `name:tag`.
-case "$got_image" in
+# No property of the string can settle it, so this stops asking the string. The
+# passthrough forces --ignore-buildable on `pull` (lib/common.sh), so a service
+# this host builds cannot be replaced by a fetch through this tool, whatever it
+# is named.
+case "$got_build:$got_image" in
     *@sha256:[0-9a-f][0-9a-f]*) ;;
-    */*) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which names a remote repository but is not a digest. A pulled tag re-resolves on the next pull and this container holds the agent's credentials -- pin it as ...@sha256:..., or build it locally under a bare name." ;;
-    *:*)
-        [ "$got_build" = build ] \
-            || die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, a local tag with no build to produce it" ;;
-    *) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which is not a digest" ;;
+    build:*) ;;
+    *) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which is neither a digest nor built here. A pulled tag re-resolves on the next pull and this container holds the agent's credentials -- pin it as ...@sha256:..., or give the service a build." ;;
 esac

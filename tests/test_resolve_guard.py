@@ -297,12 +297,11 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
      "a pulled tag re-resolves on the next pull, and this container holds the "
      "agent's credentials"),
     ({"build": True}, False,
-     "the rentals agent's shape: a bare local tag names no registry, so there is "
-     "nothing to fetch it from -- and refusing it broke every command"),
-    ({"build": True, "image": "nousresearch/hermes-agent:latest"}, True,
-     "`build:` is not what makes a tag safe. compose pull takes buildable "
-     "services by default, so an override keeping upstream's NAME gets replaced "
-     "in the local store by the next pull"),
+     "the rentals agent's shape, and refusing it broke every command"),
+    ({"build": True, "image": "nousresearch/hermes-agent:latest"}, False,
+     "a built service is exempt whatever it is NAMED -- two attempts to derive "
+     "safety from the reference string were both wrong, so the passthrough "
+     "forces --ignore-buildable on pull and makes the exemption true instead"),
     ({}, False, "the fleet-wide digest"),
 ])
 def test_the_image_rule_reads_what_compose_resolved(run, instance, tmp_path, kw, refused, why):
@@ -317,7 +316,7 @@ def test_the_image_rule_reads_what_compose_resolved(run, instance, tmp_path, kw,
     r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     if refused:
         assert r.returncode != 0, f"accepted a mutable image: {why}"
-        assert "is not a digest" in r.stderr
+        assert "neither a digest nor built here" in r.stderr
     else:
         assert r.returncode == 0, f"refused a legitimate image ({why}): {r.stderr}"
 
@@ -332,6 +331,29 @@ def test_restore_refuses_a_bad_image_before_it_writes_anything(run, instance, tm
                     image="nousresearch/hermes-agent:latest")
     r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
-    assert "is not a digest" in r.stderr
-    assert not (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists(), (
-        "the deploy wrote before refusing")
+    assert "neither a digest nor built here" in r.stderr
+    # The whole home, not just config.yaml -- which is the FOURTH thing restore
+    # writes, after the mkdir, the .env skeleton and the plugin install. A test
+    # named "before it writes anything" has to mean it.
+    assert not (tmp_path / "home" / ".hermes-rowan").exists(), (
+        "the deploy created the home before refusing")
+
+
+@pytest.mark.parametrize("args", [
+    ("install-plugin", "rowan"),
+    ("add-skill", "rowan", "plow-pbc/x", "--ref", "a" * 40),
+])
+def test_every_write_command_preflights_the_image(run, instance, tmp_path, args):
+    """restore was fixed and its two siblings kept the shape it was fixed for:
+    both reached resolve-guard only through reload-if-running on their last
+    line, so the plugin or the skill landed in the mounted credential home and
+    the refusal came after."""
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    image="nousresearch/hermes-agent:latest")
+    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True)
+    r = run(*args, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, f"{args[0]} ran against an unpinned image"
+    assert "neither a digest nor built here" in r.stderr
+    assert not list((tmp_path / "home" / ".hermes-rowan").iterdir()), (
+        f"{args[0]} wrote into the home before refusing")

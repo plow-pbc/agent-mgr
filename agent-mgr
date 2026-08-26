@@ -124,6 +124,10 @@ case "$cmd" in
     install-plugin)
         load_agent "${1:-}"
         require_own_home
+        # Same preflight as restore: resolve-guard owns the image rule, and
+        # reaching it through reload-if-running on the last line means the
+        # plugin is already in the credential home before the refusal.
+        "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
         install_plow_plugin
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the plugin just installed"
@@ -202,6 +206,7 @@ case "$cmd" in
             esac
         done
         require_own_home
+        "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         [ -n "$skill_ref" ] || skill_ref="$(gh api "repos/$skill_repo/commits/HEAD" --jq .sha)"
         [[ "$skill_ref" =~ ^[0-9a-f]{40}$ ]] || die "the skill ref must be a 40-char SHA, got: $skill_ref"
         : "${skill_dest:=${skill_repo##*/}}"
@@ -370,6 +375,8 @@ EOF
             # Everything not exempt is gated -- see COMPOSE_NEEDS_NO_IDENTIFICATION
             # in lib/common.sh for which and why. Locally: `compose rowan cp
             # ./x hermes:/opt/data/` writes into whatever runs under that project.
+            compose_pull_is_safe "$@" \
+                || die "refusing 'compose pull' without --ignore-buildable: a service this host builds would be replaced by whatever a registry serves under that name, and resolve-guard's build exemption rests on that not happening"
             case " $COMPOSE_NEEDS_NO_IDENTIFICATION " in
                 *" $1 "*) ;;
                 *) require_running_container_is_ours ;;
