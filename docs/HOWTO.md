@@ -114,12 +114,12 @@ Relative paths do **not** work in `compose.override.yml`: Compose resolves them
 against `agent-mgr`'s directory, not the agent's. Name paths through a variable
 set in `agent.env`.
 
-A `build:` must carry `pull_policy: never` beside it. Without it Compose
-**pulls** the tag when it is absent locally -- the default and `missing` both do
--- so a registry image can land on top of what this host built and then run with
-the agent's credentials. `resolve-guard` wants either the line or a digest
-`image:`, and until it has one it refuses every command that resolves Compose
-for this agent -- all of them but the registry bookkeeping (`ls`, `register`,
+A `build:` must carry `pull_policy: never` (or `build`) beside it. Without one
+Compose **pulls** the tag when it is absent locally -- the default and `missing`
+both do -- so a registry image can land on top of what this host built and then
+run with the agent's credentials. `resolve-guard` wants either that line or a
+digest `image:`, and until it has one it refuses every command that resolves
+Compose for this agent -- all of them but the registry bookkeeping (`ls`, `register`,
 `unregister`, `new`, `resolve`). `activate` is the one that neither refuses nor
 works: it reaches the guard through `reload-if-running`, whose refusal it
 deliberately swallows so a spent activation is never re-spent, so it writes the

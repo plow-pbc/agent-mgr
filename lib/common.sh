@@ -316,7 +316,7 @@ compose() {
 }
 
 # Compose subcommands that leave the LIVE container as it is. `exec` runs inside
-# one, `run` starts a separate throwaway beside it, `cp`/`pull`/`build`/`push`
+# one, `run` starts a separate throwaway beside it, `cp`/`build`/`push`
 # touch files and images -- none of them stops or replaces the gateway, which is
 # what the veto guards. `run` is here deliberately: it is what the escape hatch
 # exists for, its two live callers are a maintenance shell and a host-side
