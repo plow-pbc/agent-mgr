@@ -82,7 +82,7 @@ conversations.
 
 | repo | what the agent is | what makes it different |
 |---|---|---|
-| [`srosro/str-hermes-agent`](https://github.com/srosro/str-hermes-agent) | short-term rentals — messages guests, answers from the operations wiki, unlocks doors | the only one running its product end to end; carries a vault mount and a PMS |
+| [`plow-pbc/str-hermes-agent`](https://github.com/plow-pbc/str-hermes-agent) | short-term rentals — messages guests, answers from the operations wiki, unlocks doors | the only one running its product end to end; carries a vault mount and a PMS |
 | [`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | the skill and the agent are one checkout, mounted rather than pinned; the store, map and browser live on the Mac, reached through Latch |
 | [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar | the thinnest: no vault, no product surface, nothing on the Mac |
 
@@ -140,7 +140,7 @@ slip a pulled tag past it.) A moving ref re-points a running
 agent on the next upstream push, and these carry the chat token and drive a
 filesystem. Copying the artifact in instead makes the agent's repo a fork of it
 — which is what
-[`srosro/str-hermes-agent#138`](https://github.com/srosro/str-hermes-agent/pull/138)
+[`plow-pbc/str-hermes-agent#138`](https://github.com/plow-pbc/str-hermes-agent/pull/138)
 spent −1,311 LOC undoing, after a vendored plugin drifted until production was
 serving a working tree.
 
