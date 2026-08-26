@@ -160,14 +160,24 @@ def test_add_skill_will_not_write_into_a_siblings_home(run, instance, tmp_path):
     assert "refusing to write" in r.stderr
 
 
-def test_the_legacy_bare_home_is_still_allowed_when_declared(run, instance, tmp_path):
-    """The rentals agent predates the convention; an explicit declaration is
-    deliberate, and the convention can never produce a bare .hermes."""
-    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
+@pytest.mark.parametrize("spelling", [
+    "AGENT_HOME=$HOME/.hermes",
+    "export AGENT_HOME=$HOME/.hermes",
+    "AGENT_HOME = $HOME/.hermes",
+    "  AGENT_HOME=$HOME/.hermes",
+])
+def test_the_legacy_bare_home_is_still_allowed_when_declared(run, instance, spelling):
+    """The legacy bare home is allowed only when the descriptor DECLARES it,
+    and "declares" now means whatever the parser accepts.
+
+    require_own_home used to answer that with its own grep over the raw file.
+    Once the parser learned compose-go's normalization the two disagreed:
+    `export AGENT_HOME=...` resolved and was then refused as undeclared. The
+    parser records the fact; these rows are why that has to hold for every
+    spelling it accepts, not just the bare one."""
+    run("register", "str", str(instance("str", descriptor=f"{spelling}\n")))
     r = run("restore", "str")
     assert r.returncode == 0, r.stderr
-
-
 def test_two_agents_may_not_share_a_home(run, instance, tmp_path):
     """The check that actually closes the legacy exception. A descriptor copied
     from the rentals agent declares its bare `.hermes` and satisfies any
@@ -479,3 +489,5 @@ def test_a_resolver_failing_on_the_mounted_home_names_it(run, instance, tmp_path
     r = run("restart", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert f"could not resolve the home it mounts ({foreign})" in r.stderr
+
+

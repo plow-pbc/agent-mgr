@@ -1,3 +1,6 @@
+import os
+import pathlib
+import pytest
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
@@ -169,3 +172,146 @@ def test_an_instance_variable_still_reaches_its_hook(run, instance, tmp_path):
 
 
 
+
+
+# --- the descriptor parser is data, not shell -------------------------------
+
+
+@pytest.fixture
+def injection_marker():
+    """A marker path containing NO '-'.
+
+    Load-bearing. The exploit needs the key's bracket expression to be a VALID
+    character class, and a '-' between two characters inside one is a range --
+    `[$(touch /tmp/pytest-of-odio/...)Z]` is an invalid range, so grep errors
+    and the attack silently fails to reproduce. pytest's tmp_path always
+    contains '-', so a marker under it makes this test pass against the
+    vulnerable code: green for the wrong reason.
+    """
+    d = pathlib.Path(f"/tmp/agentmgr_inj_{os.getpid()}")
+    d.mkdir(exist_ok=True)
+    marker = d / "executed"
+    marker.unlink(missing_ok=True)
+    yield marker
+    marker.unlink(missing_ok=True)
+    d.rmdir()
+
+
+def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_marker):
+    """Read, never execute -- the property this parser exists for.
+
+    The membership check ran $key as a grep PATTERN, so a bracket expression
+    matched an allowlisted name as a character class (`AGENT_T[...Z]` matches
+    AGENT_TZ). The name then reached `printf -v`, where bash evaluates an array
+    subscript arithmetically and arithmetic performs command substitution -- so
+    any `agent-mgr resolve` on a registered repo ran that repo's code, as the
+    operator.
+    """
+    key = f"AGENT_T[$(touch {injection_marker})Z]"
+    run("register", "rowan", str(instance("rowan", descriptor=f"{key}=1\n")))
+    r = run("resolve", "rowan")
+    assert not injection_marker.exists(), (
+        "a descriptor key executed host code -- the parser is a shell again"
+    )
+    # Refused rather than skipped: the key is malformed, and a malformed
+    # declaration is a repository error.
+    assert r.returncode != 0
+    assert "malformed" in r.stderr
+
+
+@pytest.mark.parametrize("line", [
+    "STR VAULT=x",             # a key this tool does not own, with a space in it
+    "AGENT_TZ AGENT_IMAGE=x",  # multi-token: matched the allowlist as a substring
+])
+def test_a_malformed_declaration_is_refused(run, instance, line):
+    """Refused, not classified.
+
+    Every one of these is invalid dotenv, and Compose rejects the same lines
+    through --env-file -- so tolerating any would let agent-mgr and Compose
+    disagree about one file. Dying is also the only behaviour that cannot go
+    wrong quietly; the alternative was a second partial grammar here, sorting
+    near-misses of an owned key from malformed unowned lines, to write a better
+    message for a line nobody should have written.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode != 0, f"accepted a malformed declaration: {line!r}"
+    assert "malformed key" in r.stderr
+
+
+def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instance, tmp_path):
+    """The amplification, pinned so the trade-off is deliberate rather than
+    discovered.
+
+    `require_own_home` is fail-closed by design: it refuses when it cannot prove
+    no sibling claims this home, and a descriptor it cannot parse is exactly
+    that case. Refusing a malformed key therefore reaches past the repo that
+    contains it -- a stray space in agent B blocks direct-write commands on
+    agent A.
+
+    Kept rather than softened: the alternative is guessing a home out of a
+    descriptor that could not be read, which is the fail-open this guard exists
+    to prevent. The refusal names the sibling, the reason and the remedy, which
+    is what makes it survivable.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "broken", str(instance("broken", descriptor="AGENT_TZ AGENT_IMAGE=x\n")))
+    r = run("restore", "rowan")
+    assert r.returncode != 0
+    assert "could not resolve broken" in r.stderr
+    assert "malformed key" in r.stderr
+    assert "unregister broken" in r.stderr, "the refusal must name the way out"
+
+
+@pytest.mark.parametrize("line,expected", [
+    ("AGENT_TZ = America/Chicago", "America/Chicago"),        # spaces around =
+    ("  AGENT_TZ=America/Chicago", "America/Chicago"),        # indented
+    ("\tAGENT_TZ=America/Chicago", "America/Chicago"),        # tab-indented
+    ("export AGENT_TZ=America/Chicago", "America/Chicago"),   # shell-style export
+    ("export\tAGENT_TZ=America/Chicago", "America/Chicago"),  # export + tab
+    ("AGENT_TZ=America/Chicago   ", "America/Chicago"),       # trailing space: trimmed
+    ("AGENT_TZ =  America/Chicago  ", "America/Chicago"),     # both sides
+    ('AGENT_TZ="America/Chicago  "', "America/Chicago  "),    # quoted: spaces KEPT
+    ("AGENT_TZ=America/Chicago # the default", "America/Chicago"),   # inline comment
+    ("AGENT_TZ=America/Chicago# no space", "America/Chicago# no space"),  # not a comment
+    ('AGENT_TZ="America/Chicago # kept"', "America/Chicago # kept"),      # quotes protect
+    ("AGENT_TZ='America/Chicago # kept'", "America/Chicago # kept"),
+    ('AGENT_TZ="America/Chicago" trailing', "America/Chicago"),  # dropped after close quote
+    # comments and blanks, however indented -- a commented-out setting usually
+    # carries an `=`, which is what makes refusing them a live hazard
+    ("# AGENT_TZ=Europe/Berlin is the default\nAGENT_TZ=America/Chicago", "America/Chicago"),
+    ("  # AGENT_TZ=Europe/Berlin\nAGENT_TZ=America/Chicago", "America/Chicago"),
+    ("\t# commented out: AGENT_IMAGE=pinned\nAGENT_TZ=America/Chicago", "America/Chicago"),
+    ("   \nAGENT_TZ=America/Chicago", "America/Chicago"),
+])
+def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line, expected):
+    """Parity with compose-go, measured rather than assumed.
+
+    Compose reads this same file through --env-file, and a real
+    `docker compose --env-file` accepts all five of these and reads them as the
+    bare key. Refusing them here would make agent-mgr fail on a descriptor
+    Compose reads without complaint -- and through require_own_home's
+    fail-closed arm, fail every OTHER registered agent's direct-write commands
+    over one repo's indentation.
+    """
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    # Exact line, not a substring: a substring check cannot tell a normalized
+    # value from one carrying trailing whitespace, which is the half that was
+    # unpinned when this test was written.
+    assert f"AGENT_TZ={expected}\n" in r.stdout
+
+
+@pytest.mark.parametrize("line", [
+    'AGENT_TZ="America/Chicago',
+    "AGENT_TZ='America/Chicago",
+    'AGENT_TZ="America/Chicago\'',
+])
+def test_an_unterminated_quote_is_refused(run, instance, line):
+    """Compose refuses these, so accepting them is the dangerous direction:
+    the descriptor would resolve here and break the deploy that reads it."""
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode != 0, f"accepted an unterminated quote: {line!r}"
+    assert "unterminated quote" in r.stderr

@@ -162,6 +162,7 @@ load_agent() {
 
     # shellcheck disable=SC2086
     unset $AGENT_KEYS $COMPOSE_KEYS
+    AGENT_HOME_DECLARED=0
 
     # Read, never execute. This used to dot-source the descriptor, which made a
     # file documented as declarative into host shell code: any repo registered
@@ -175,7 +176,7 @@ load_agent() {
     # $HOME is the one expansion, because it is the one the template documents.
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
-    local line key value
+    local line key value _rest
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
     # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
     # this empty, and bash treats an empty array as unset under `set -u` until
@@ -183,17 +184,87 @@ load_agent() {
     # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
     AGENT_HOOK_ENV=()
     while IFS= read -r line; do
+        # Normalized the way compose-go's dotenv parser normalizes, because
+        # Compose reads this SAME file through --env-file (see compose()) and
+        # the two disagreeing about one file is the failure to avoid. Measured
+        # against a real `docker compose --env-file`: leading whitespace, an
+        # `export ` prefix, and space around the `=` are all accepted there and
+        # read as the bare key. Refusing them here would make agent-mgr fail on
+        # a descriptor Compose reads without complaint -- and via
+        # require_own_home's fail-closed arm, fail every OTHER agent's
+        # direct-write commands too.
+        line="${line#"${line%%[![:space:]]*}"}"
+        case "$line" in \#*|'') continue ;; esac
         case "$line" in
-            \#*|'') continue ;;
-            [A-Za-z_]*=*) ;;
+            export[[:space:]]*)
+                line="${line#export}"
+                line="${line#"${line%%[![:space:]]*}"}" ;;
+        esac
+
+        case "$line" in
+            *=*) ;;
+            # Not a declaration at all. Skipped, and parsing continues -- this
+            # parser's existing contract, whose concern is that such a line is
+            # never EXECUTED rather than that it is fatal.
             *) continue ;;
         esac
         key="${line%%=*}"
         value="${line#*=}"
-        # One layer of surrounding quotes, the way a dotenv file is usually written.
+        key="${key%"${key##*[![:space:]]}"}"
+        value="${value#"${value%%[![:space:]]*}"}"
+
+        # What remains after normalization must be a real identifier. This is
+        # where the execution hole was: a malformed key matched the allowlist as
+        # a PATTERN and reached `printf -v`, where an array subscript is
+        # evaluated arithmetically and arithmetic performs command substitution.
+        # Compose errors on these too, so refusing is the agreeing behaviour.
+        case "$key" in
+            ''|*[!A-Za-z0-9_]*) die "$descriptor: malformed key: $key" ;;
+        esac
+
+        # The value grammar, ported from compose-go in one pass rather than a
+        # rule per review round -- measured against a real `docker compose
+        # --env-file`, because Compose reads this same file and the two
+        # disagreeing about it is the whole failure mode:
+        #
+        #   VAL # c        -> VAL          (inline comment starts at SPACE-hash)
+        #   VAL# c         -> VAL# c       (no space: not a comment)
+        #   a#b            -> a#b          (ditto)
+        #   "VAL # c"      -> VAL # c      (quotes protect it)
+        #   'VAL # c'      -> VAL # c
+        #   "VAL" trailing -> VAL          (anything after the closing quote is dropped)
+        #   VAL␠␠          -> VAL          (unquoted trailing space trimmed)
+        #   "VAL␠␠"        -> VAL␠␠        (quoted trailing space kept)
+        #
+        # An unterminated quote is refused, because Compose refuses it -- and
+        # accepting what Compose rejects is the dangerous direction: the
+        # descriptor would resolve here and break the deploy that reads it.
+        #
+        # Single-quote literalness ('a\nb' stays literal) already agrees; that
+        # was measured, not assumed.
+        #
+        # ONE rule is deliberately not ported: escape processing inside DOUBLE
+        # quotes ("a\nb" -> a<newline>b). It is the only divergence left and the
+        # only inert one -- every AGENT_* value is a zone, a path or an image
+        # digest, so a value needing an escape is not one this parser has a use
+        # for. Recorded rather than discovered, so a future need starts from
+        # fact.
         case "$value" in
-            \"*\") value="${value#\"}"; value="${value%\"}" ;;
-            "'"*"'") value="${value#\'}"; value="${value%\'}" ;;
+            \"*)
+                _rest="${value#\"}"
+                case "$_rest" in
+                    *\"*) value="${_rest%%\"*}" ;;
+                    *) die "$descriptor: unterminated quote in value for $key" ;;
+                esac ;;
+            "'"*)
+                _rest="${value#\'}"
+                case "$_rest" in
+                    *"'"*) value="${_rest%%\'*}" ;;
+                    *) die "$descriptor: unterminated quote in value for $key" ;;
+                esac ;;
+            *)
+                case "$value" in *" #"*) value="${value%%" #"*}" ;; esac
+                value="${value%"${value##*[![:space:]]}"}" ;;
         esac
         value="${value//\$\{HOME\}/$HOME}"
         value="${value//\$HOME/$HOME}"
@@ -206,7 +277,31 @@ load_agent() {
         # commands run that repo's code with the operator's credentials. A
         # denylist could not close that -- it is an allowlist problem, because
         # the dangerous names are whatever this tool happens to read.
-        if printf '%s' "$AGENT_KEYS" | grep -qw "$key"; then
+        # -F, not a regex, and it is load-bearing rather than tidy. `grep -qw`
+        # read $key as a PATTERN, so a descriptor could declare a key whose
+        # bracket expression matched an allowlisted name as a character class --
+        # `AGENT_T[$(...)Z]` matches AGENT_TZ -- and the name then reached
+        # `printf -v`, where bash evaluates an array subscript arithmetically
+        # and arithmetic performs command substitution. A registered repo's
+        # agent.env could run host commands with the operator's credentials on
+        # any `agent-mgr resolve`, defeating the read-never-execute property
+        # this parser exists for.
+        #
+        # Not "defence in depth" -- a regex match against a fixed list was
+        # always the wrong way to test set membership, exploit or no. It is not
+        # independently observable from outside now that the shape check above
+        # rejects every regex metacharacter, so no test can distinguish -F from
+        # its absence; it is here because membership is a literal question, and
+        # because loosening that check must not silently re-open the sink.
+        # `--` for uniformity with the other guarded greps.
+        if printf '%s' "$AGENT_KEYS" | grep -Fqw -- "$key"; then
+            # Recorded by the parser that accepted it, so require_own_home does
+            # not need a second opinion about the same file. Its raw
+            # `grep '^[[:space:]]*AGENT_HOME='` predated the normalization and
+            # could not see `export AGENT_HOME=…` or `AGENT_HOME = …`, both of
+            # which load_agent accepts -- so a descriptor resolved fine and then
+            # every direct-write command refused it as undeclared.
+            [ "$key" = AGENT_HOME ] && AGENT_HOME_DECLARED=1
             printf -v "$key" '%s' "$value"
         else
             # An instance's own variables -- STR_VAULT and friends -- which its
@@ -713,7 +808,7 @@ require_own_home() {
             # convention can never produce a bare `.hermes`, so this is always a
             # deliberate declaration, and the collision check above is what
             # stops a second agent from making the same one.
-            grep -qE '^[[:space:]]*AGENT_HOME=' "$AGENT_DESCRIPTOR" && return 0
+            [ "${AGENT_HOME_DECLARED:-0}" = 1 ] && return 0
             die "refusing to write to $AGENT_HOME -- ${AGENT_NAME} did not declare that home" ;;
     esac
     die "refusing to write to $AGENT_HOME -- that is not ${AGENT_NAME}'s own home"
