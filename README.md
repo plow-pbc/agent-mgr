@@ -20,8 +20,10 @@ its root, the CLI has not landed on `main` yet.
 It runs on the Linux host the fleet lives on and on a Mac, where the floor is
 **macOS 12.3** — the release whose `readlink` grew `-f`, which the entrypoint
 uses to resolve itself through the symlink above before anything else is
-sourced. Everything after that point is portable, and `python3` and `docker`
-have to be on `PATH`.
+sourced. Everything after that point is portable, and `python3`, `docker` and
+an authenticated `gh` have to be on `PATH` — `restore` installs the Plow Chat
+plugin through `gh api` for **every** agent, not only one shipping a
+`skills.tsv`.
 
 ```sh
 agent-mgr new rowan          # scaffold the agent's repo, both platforms wired

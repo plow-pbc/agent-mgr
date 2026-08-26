@@ -103,18 +103,16 @@ databases you are rolling back. That is a mixture of two points in time,
 reported as a success.
 
 ```sh
-set -e   # every step below is a precondition of the next
-
-agent-mgr down rowan                   # can be VETOED — str refuses mid-ingest
-home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')
-real=$(readlink -f "$home")            # the actual directory, symlink or not
-b=$(basename "$real")
-aside="$(dirname "$real")/restoring-${b#.}-$(date -u +%Y%m%d%H%M%S)"
-mv "$real" "$aside"
-mkdir -p "$real"
-tar -C "$real" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz
-agent-mgr restore rowan                # repo-owned config, plugin and skills win
-agent-mgr up rowan
+agent-mgr down rowan \
+  && home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p') \
+  && real=$(readlink -f "$home") \
+  && b=$(basename "$real") \
+  && aside="$(dirname "$real")/restoring-${b#.}-$(date -u +%Y%m%d%H%M%S)" \
+  && mv "$real" "$aside" \
+  && mkdir -p "$real" \
+  && tar -C "$real" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz \
+  && agent-mgr restore rowan \
+  && agent-mgr up rowan
 ```
 
 Three things that recipe is doing on purpose:
@@ -124,8 +122,13 @@ Three things that recipe is doing on purpose:
   the next `mkdir -p` would then make a plain directory on the root disk, the
   restore would land on the wrong volume, and the real data would be orphaned at
   the old target. Resolving first makes the symlinked and plain cases identical.
-- **`set -e` over the whole block, not just an `&&` chain from `mv`.** The
-  precondition is `down`, and it can legitimately fail: it goes through
+- **One `&&` chain from `down`, not `set -e`.** Chained rather than `set -e`
+  because this is a paste-into-your-shell block: bash honours `errexit`
+  interactively, so the first non-zero exit would close the operator's session —
+  over SSH on the fleet host, taking the veto message they need to read with it —
+  and without a `set +e` it would survive into the verification that follows.
+  Chained from `down` because that is the precondition, and it can legitimately
+  fail: it goes through
   `compose_transition`, which runs `resolve-guard` and the agent's
   `AGENT_PRE_TRANSITION` veto — the rentals agent refuses to stop mid-ingest by
   design. On a vetoed `down` an unguarded recipe renames the home out from under
@@ -133,7 +136,12 @@ Three things that recipe is doing on purpose:
   moved inode), extracts into a fresh `$real`, and brings the agent up on it —
   the live writes land in the set-aside and the restored copy goes live. A
   failed `mv` has the same shape one step later: `mkdir -p` succeeds trivially
-  and `tar` overlays the live home. A sibling because `dirname "$real"` is the same filesystem, so the
+  and `tar` overlays the live home.
+- **If it stops part-way, `$aside` is the real home.** The likely trigger is the
+  extract: `backup-homes` accepts tar's "file changed as we read it" as success,
+  so an archive whose session database was torn mid-write is an ordinary
+  artifact. To back out, remove the partial `$real` and move `$aside` back to
+  it — nothing is lost, because the set-aside was a rename, not a copy. A sibling because `dirname "$real"` is the same filesystem, so the
   move is a rename; parking it under `$HOME` instead would make it a
   cross-device *copy* of the whole home onto the root disk, which is exactly the
   disk that was too small in the symlinked case.
