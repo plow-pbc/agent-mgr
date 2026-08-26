@@ -148,7 +148,12 @@ Why the recipe is shaped that way:
   been lost and nothing needs rescuing in a hurry. Look at what is actually at
   `$real` and `$aside` first. Re-pasting the block is the move to avoid: it
   computes a fresh stamp and renames the half-restored `$real` into a *second*
-  `restoring-*` sibling, leaving two set-asides with nothing to tell them apart.
+  `restoring-*` sibling, so you then have two — distinguishable only by their
+  stamps, and the newer one is the partial.
+
+  Do not leave it parked for long, either: while `$real` holds a half-restored
+  home the nightly keeps archiving *that*, and after `--keep` days the good
+  archives have aged out from under you. Finish or roll back within the window.
 
   There is deliberately no undo recipe here. The right action differs at every
   stop point — a vetoed `down` moved nothing, a failed `tar` leaves a partial
