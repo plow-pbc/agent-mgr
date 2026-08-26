@@ -397,3 +397,28 @@ def test_an_unterminated_descriptor_line_is_still_read(run, instance):
     """Same guard, the other file."""
     run("register", "rowan", str(instance("rowan", descriptor="AGENT_TZ=America/Chicago")))
     assert "AGENT_TZ=America/Chicago" in run("resolve", "rowan").stdout
+
+
+@pytest.mark.parametrize("line,expect", [
+    # A key the dotenv MAY set, spelled wrong -> tell them the spelling.
+    ("AGENT_TZ = America/Chicago", "malformed"),
+    ("export\tAGENT_TZ=America/Chicago", "malformed"),
+    # A key agent-mgr owns but this file may NOT set -> a spelling fix would be
+    # useless, so say where it belongs instead.
+    ("export AGENT_IMAGE=pinned", "this file may set only"),
+    ("AGENT_HOME = /opt/hijack", "this file may set only"),
+])
+def test_the_dotenv_says_which_kind_of_wrong_a_key_is(run, instance, tmp_path, line, expect):
+    """Two different mistakes with two different remedies.
+
+    Reachable only from the dotenv call site, where the allowlist is narrower
+    than AGENT_KEYS -- from the descriptor the two collapse and the second
+    branch cannot fire.
+    """
+    run("register", "rowan", str(instance("rowan")))
+    _home_env(tmp_path, "rowan", f"{line}\n")
+    r = run("resolve", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert expect in r.stderr
+    assert "AGENT_TZ=America/Los_Angeles" in r.stdout
+    assert "hijack" not in r.stdout and "pinned" not in r.stdout
