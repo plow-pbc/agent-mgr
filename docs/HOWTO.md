@@ -120,9 +120,17 @@ target.
 
 Four states at the link path. Only one means "carry on":
 
-`ls -ld "$home"` tells you which of the four you have — it prints the link and
-its target without following it, and `[ -e "$home" ]` then separates a live
-symlink (true) from a dangling one (false, because `-e` dereferences).
+Which of the four you have, before anything is bound or created — the literal
+path, because `$home` is not set until the restore block further down:
+
+```sh
+ls -ld ~/.hermes-rowan   # prints the link and its target, without following it
+[ -e ~/.hermes-rowan ] && echo "target reachable" || echo "no target: dangling, or nothing there"
+```
+
+`ls -ld` distinguishes a symlink from a plain directory and shows where it
+points; the `-e` test then separates a **live** symlink from a **dangling** one,
+because `-e` dereferences. Together they name the row.
 
 | what is there | what it tells you | what to do |
 |---|---|---|
