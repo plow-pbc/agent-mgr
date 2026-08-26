@@ -492,11 +492,15 @@ require_running_container_is_ours() {
         # because the two compose to the same answer -- they do not, and the
         # order matters: abspath collapses `..` lexically, realpath applies it
         # after following symlinks, so `/a/link/..` yields `/a` one way and the
-        # link's parent the other. It is that a `.Source` reaches us lexically
-        # cleaned by Compose, so the extra call bought a second interpreter and
-        # a second refusal branch and no different answer -- and that asymmetry
-        # with the abspath'd AGENT_HOME above is why it is a false refusal at
-        # worst, never a missed foreign container.
+        # link's parent the other. They differ only for a `..` FOLLOWING a
+        # symlink, though, which is not a shape any path this comparison has
+        # seen: the abspath bought a second interpreter and a second refusal
+        # branch for an answer that did not change. Nothing here launders the
+        # value first -- it is whatever `docker inspect` recorded, on a
+        # container this guard exists to suspect -- so the narrow claim is the
+        # only one available, and it is why the asymmetry with the abspath'd
+        # AGENT_HOME above costs a false refusal at worst, never a missed
+        # foreign container.
         #
         # `mounted` itself is never assigned from the substitution -- the
         # never-assign rule beside normalized_path -- which is what keeps
