@@ -99,13 +99,39 @@ target="$home/$root/$dest"
 # swap would publish a tree with its plugin.yaml one level down and exit 0
 # saying "installed". Reproduced against the live repo.
 staging="$target.incoming"
-# BOTH, and unconditionally. The backup's own rm lives inside the `is there a
-# current install` branch below, so on a first install -- or after any run that
-# left no target -- that branch is skipped and an orphaned .previous survives
-# untouched. Which is the accumulation case exactly: a complete, valid tree
-# carrying `name: plow-chat-platform`, in the directory the gateway enumerates.
-rm -rf "$staging" "$target.previous"
+backup_path="$target.previous"
+
+# One lock over this target, held from here through the publish.
+#
+# Fixed names and per-run isolation cannot both come from the NAME. Pid-suffixed
+# names isolated concurrent runs but meant each could only ever sweep its own
+# pid-twin's orphan, so every other killed run's tree accumulated forever. Fixed
+# names sweep all of them -- and, unlocked, let a second run `rm -rf` the first
+# run's live rollback copy during the window when $target.previous IS the
+# agent's only installed tree. Either way round, one of the two failures stays.
+#
+# The lock gives both, and closes a race that predates all of this: the publish
+# `mv` moves the staging tree INSIDE a target another run just created.
+#
+# flock, not a mkdir lock, for the property that matters here -- the kernel
+# releases it when the holder dies, so a run killed mid-install cannot leave a
+# lock nobody can clear. Held on fd 9 for the rest of the script, so the rollback
+# in cleanup() runs inside it too.
 mkdir -p "$(dirname "$target")"
+# In the home root, NOT beside the target. plugins/ and skills/ are directories
+# the gateway enumerates, and a lock file is not a plugin or a skill -- even a
+# dotfile there is one more thing for something else to have an opinion about.
+lockfile="$home/.fetch-tree.$root.$tree_name.lock"
+command -v flock >/dev/null || { echo "fetch-tree needs flock (util-linux)" >&2; exit 1; }
+exec 9>"$lockfile" || { echo "could not open $lockfile" >&2; exit 1; }
+flock 9 || { echo "could not lock $lockfile" >&2; exit 1; }
+
+# Every orphan, not only this run's: under the lock there is no other run's
+# staging or rollback tree to destroy. Without this an orphaned .previous is a
+# complete, valid tree carrying `name: plow-chat-platform` sitting beside the
+# real one in the directory the gateway enumerates -- and the in-branch rm below
+# never reaches it, because on a first install that branch is skipped entirely.
+rm -rf "$staging" "$backup_path"
 cp -a "$src" "$staging"
 # Scripts are invoked directly by the agent; an unreadable 644 fails from inside
 # the container as "no such file", the least informative failure available.
@@ -115,12 +141,7 @@ find "$staging" -type f \( -name '*.py' -o -name '*.sh' \) -exec chmod 755 {} +
 # tree in, so a SIGTERM or a failed mv between the two left the agent with no
 # tree at all, which is worse than the stale one it replaced.
 if [ -e "$target" ]; then
-    backup="$target.previous"
-    # Same reasoning as $staging: fixed name, unconditional rm. Without it a run
-    # killed between this mv and the publish leaves a complete valid tree beside
-    # the real one, and a later run would `mv` the target INSIDE it -- leaving a
-    # nested tree that cleanup then restores as the "previous copy".
-    rm -rf "$backup"
+    backup="$backup_path"
     mv "$target" "$backup"
 fi
 if ! mv "$staging" "$target"; then

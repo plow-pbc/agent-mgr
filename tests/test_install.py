@@ -493,3 +493,31 @@ def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
     assert r.returncode == 0, r.stderr
     assert sorted(p.name for p in plugins.iterdir()) == ["plow-chat-platform"], \
         "an orphaned tree survived the install"
+
+
+def test_two_concurrent_installs_leave_one_valid_tree(run, instance, tmp_path):
+    """Fixed staging/backup names are only safe under a lock; this is that lock.
+
+    Pid-suffixed names isolated concurrent runs but let every other killed run's
+    orphan accumulate. Fixed names sweep all the orphans -- and, unlocked, let a
+    second run rm -rf the first's rollback copy during the window when
+    $target.previous IS the agent's only installed tree, leaving it with none at
+    all. The lock is what makes fixed names safe, and it also closes the publish
+    race that predates both: `mv` moving the staging tree INSIDE a target
+    another run just created.
+    """
+    import concurrent.futures
+
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")  # a target exists, so both runs take the backup path
+    plugins = tmp_path / "home" / ".hermes-rowan" / "plugins"
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        results = [f.result() for f in
+                   [pool.submit(run, "install-plugin", "rowan") for _ in range(2)]]
+    assert all(r.returncode == 0 for r in results), [r.stderr for r in results]
+
+    assert sorted(p.name for p in plugins.iterdir()) == ["plow-chat-platform"], \
+        "a staging or rollback tree survived a concurrent install"
+    assert (plugins / "plow-chat-platform" / "plugin.yaml").is_file(), \
+        "the published tree has no manifest at its root"
