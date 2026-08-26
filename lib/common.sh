@@ -348,11 +348,16 @@ COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec
 # never re-enters this dispatch, so gating `ps` later is possible if a reason
 # appears.
 #
-# `pull` is deliberately NOT named here, though `compose` refuses it before the
-# classification could matter. An exemption entry is the half that would take
-# effect silently if any `pull` form were ever re-admitted -- it would skip the
-# ownership check by inheritance rather than by decision, which is the
-# by-omission failure this list exists to prevent. Whoever re-admits it decides.
+# `pull` is deliberately NOT named here, and the order is worth stating because
+# it is not the order the previous comment claimed: classification runs FIRST,
+# in the dispatch, so dropping the exemption means a `pull` pays the ownership
+# check -- and a `pull` on a host with no daemon reports that before it is told
+# `pull` is refused at all. Accepted, because the command is refused either way
+# and the alternative is worse: an exemption entry is the half that takes effect
+# SILENTLY if any `pull` form is ever re-admitted, skipping the ownership check
+# by inheritance rather than by decision, which is the by-omission failure this
+# list exists to prevent. Whoever re-admits it decides.
+#
 # It stays in COMPOSE_LEAVES_IT_RUNNING for the opposite reason: routing it to
 # compose_transition would run the veto, so an operator would be asked to
 # confirm a transition on the live agent before being told `pull` is refused.
