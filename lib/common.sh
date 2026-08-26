@@ -228,25 +228,46 @@ load_agent() {
 
 # Every Compose invocation goes through here so the file list, the override
 # convention and the descriptor's env-file have exactly one definition.
-# `pull` never takes a buildable service through this tool. That is what makes
-# resolve-guard's build-exemption true rather than assumed: an image this host
-# builds cannot be silently replaced by a fetch, whatever it is named -- and a
-# bare name IS fetchable, since Docker resolves it against Hub's library/.
-compose_pull_is_safe() {
-    # `pull` is not the only way to fetch: `up`, `run` and `create` all take
-    # --pull always, which is the same substitution through a different door.
-    case " $* " in
-        *" --pull always "*|*" --pull=always "*) return 1 ;;
-    esac
-    case " $* " in
-        *" pull "*)
+# No fetch through this tool may replace what the host built. That is what makes
+# resolve-guard's build-exemption true rather than assumed -- two attempts to
+# derive it from the image name were both wrong, so the guarantee lives here.
+#
+# Keyed on the SUBCOMMAND and on flags before the service, per this file's own
+# rule: scanning the whole argv made `compose rowan exec hermes git pull` die
+# about --ignore-buildable.
+compose_fetch_is_safe() {
+    local sub="${1:-}" a
+    case "$sub" in
+        pull)
             case " $* " in *" --ignore-buildable "*) return 0 ;; esac
             return 1 ;;
     esac
+    shift || true
+    # Flags only, stopping at the service: past it the words belong to the
+    # container's own command line.
+    while [ $# -gt 0 ]; do
+        a="$1"; shift
+        case "$a" in
+            --pull=always) return 1 ;;
+            --pull) [ "${1:-}" = always ] && return 1; shift || true ;;
+            # Flags that take a value, so their VALUE is not mistaken for the
+            # service and does not end the scan early.
+            --entrypoint|-e|--env|-l|--label|-p|--publish|-u|--user|-v|--volume|-w|--workdir|--name)
+                shift || true ;;
+            -*) ;;
+            *) break ;;
+        esac
+    done
     return 0
 }
 
 compose() {
+    # Here, so there is one site and one message: every Compose invocation in
+    # this tool goes through this function, which the two call-site copies did
+    # not -- they disagreed on wording and the passthrough's was redundant for
+    # anything reaching compose_transition.
+    compose_fetch_is_safe "$@" \
+        || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull always' has no such escape. resolve-guard exempts a built image from the digest rule only because a fetch through this tool cannot replace it."
     local files=(-f "$AGENT_MGR_ROOT/templates/compose.yml")
     [ -f "$AGENT_DIR/compose.override.yml" ] && files+=(-f "$AGENT_DIR/compose.override.yml")
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
@@ -363,8 +384,6 @@ require_running_container_is_ours() {
 # Every route to a container transition goes through here, so the instance's
 # veto cannot be bypassed by adding a call site that forgets it.
 compose_transition() {
-    compose_pull_is_safe "$@" \
-        || die "refusing a fetch that could replace a built image: '--pull always' would substitute whatever a registry serves, and resolve-guard exempts a built image only because a fetch through this tool cannot"
     require_running_container_is_ours
     require_transition_allowed
     compose "$@"

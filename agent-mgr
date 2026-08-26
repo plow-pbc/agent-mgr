@@ -375,8 +375,6 @@ EOF
             # Everything not exempt is gated -- see COMPOSE_NEEDS_NO_IDENTIFICATION
             # in lib/common.sh for which and why. Locally: `compose rowan cp
             # ./x hermes:/opt/data/` writes into whatever runs under that project.
-            compose_pull_is_safe "$@" \
-                || die "refusing a fetch that could replace a built image: 'pull' needs --ignore-buildable, and '--pull always' has no such escape. resolve-guard exempts a built image from the digest rule only because a fetch through this tool cannot replace it."
             case " $COMPOSE_NEEDS_NO_IDENTIFICATION " in
                 *" $1 "*) ;;
                 *) require_running_container_is_ours ;;

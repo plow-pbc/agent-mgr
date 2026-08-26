@@ -364,8 +364,17 @@ def test_a_refetch_declared_in_the_file_is_refused_too(run, instance, tmp_path):
     declared as `pull_policy: always` in an override -- which an argv guard
     cannot see. This seam reads what Compose resolved, so it can."""
     run("register", "rowan", str(instance("rowan")))
+    for policy in ("always", "daily", "weekly", "every_12h"):
+        b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                        build=True, pull_policy=policy)
+        r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+        assert r.returncode != 0, f"pull_policy: {policy} refetches and was allowed"
+        assert f"pull_policy: {policy}" in r.stderr
+
+    # A DIGEST is immutable, so refetching it is a no-op -- gating before the
+    # digest arm refused the very remedy the message recommends.
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    build=True, pull_policy="always")
-    r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0, "a built image would be refetched on every up"
-    assert "pull_policy: always" in r.stderr
+                    pull_policy="always")
+    assert run("resolve-guard", "rowan",
+               env={"PATH": f"{b}:{os.environ['PATH']}"}).returncode == 0, (
+        "a pinned digest was refused for a policy that cannot change it")

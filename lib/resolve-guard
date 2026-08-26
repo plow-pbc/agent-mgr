@@ -66,16 +66,27 @@ print(cfg.get("name", "-"), svc.get("container_name", "-"), home or "-",
 # passthrough forces --ignore-buildable on `pull` (lib/common.sh), so a service
 # this host builds cannot be replaced by a fetch through this tool, whatever it
 # is named.
-# A fetch can also be declared in the FILE rather than on the argv, and an argv
-# guard cannot see it. This seam reads what Compose resolved, so it can: a
-# service that would refetch on every `up` is the same substitution the CLI
-# flag was refused for.
-case "$got_pull" in
-    always) die "refusing to act: $AGENT_NAME's compose config sets pull_policy: always, which refetches the image on every up -- the substitution --pull always is refused for, declared in the file instead. Remove it, or pin the image by digest so there is nothing mutable to refetch." ;;
-esac
-
 case "$got_build:$got_image" in
     *@sha256:[0-9a-f][0-9a-f]*) ;;
     build:*) ;;
     *) die "refusing to act: compose resolved image '$got_image' for $AGENT_NAME, which is neither a digest nor built here. A pulled tag re-resolves on the next pull and this container holds the agent's credentials -- pin it as ...@sha256:..., or give the service a build." ;;
+esac
+
+# A fetch can also be declared in the FILE rather than on the argv, and an argv
+# guard cannot see it. This seam reads what Compose resolved, so it can.
+#
+# AFTER the digest arm, deliberately: refetching a digest is a no-op, since a
+# digest names one immutable image -- so gating first would have refused the
+# very remedy the message recommends. And every policy that refetches, not just
+# `always`: Compose also takes daily, weekly and every_<duration>.
+case "$got_image" in
+    # Immutable: refetching a digest yields the same image, so a policy cannot
+    # change anything -- gating it here would refuse the very remedy the message
+    # recommends.
+    *@sha256:[0-9a-f][0-9a-f]*) ;;
+    *)
+        case "$got_pull" in
+            always|daily|weekly|every_*)
+                die "refusing to act: ${AGENT_NAME}'s compose config sets pull_policy: $got_pull, which refetches a mutable tag -- the substitution --pull always is refused for, declared in the file instead. Remove it, or pin the image by digest so there is nothing mutable to refetch." ;;
+        esac ;;
 esac

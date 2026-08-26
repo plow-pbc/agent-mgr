@@ -516,3 +516,9 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
 
     assert run("compose", "rowan", "pull", "--ignore-buildable",
                env=env).returncode == 0, "the safe form was refused too"
+
+    # Keyed on the SUBCOMMAND and on flags before the service, per this file's
+    # own rule -- scanning the whole argv made a container's own command line
+    # trip the guard.
+    assert run("compose", "rowan", "exec", "hermes", "git", "pull",
+               env=env).returncode == 0, "a container's `git pull` tripped the fetch guard"
