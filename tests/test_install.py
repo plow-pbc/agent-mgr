@@ -677,25 +677,38 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
     unquoted, `env`-prefixed or not: the expansion has no spelling this can
     miss, which is what the denylist above could not manage for this form.
 
-    Two things it does enumerate, stated so the claim does not exceed the check.
-    The GUARD has exactly two writes -- `[@]+` and `[@]:+`, both set-tests and
-    both safe on 3.2 -- so `:+` is normalised to `+` before counting rather than
-    reddening a correct line. And the assertion is a per-line BALANCE, not a
-    per-occurrence proof: a bare expansion offset by an extra guard mention
-    elsewhere on the same line would still pass. Neither shape occurs here, and
-    the real check is #26.
+    What it enumerates, stated so the claim does not exceed the check: the
+    subscript (`[@]` / `[*]`) and the guard (`+` / `:+`), both normalised before
+    counting, and `${#...}` / `${!...}` references dropped as non-value forms.
+    The assertion is a per-line BALANCE, not a per-occurrence proof -- a bare
+    expansion offset by an extra guard mention on the same line would pass.
+
+    That list stops here. Six review rounds each found one more adjacent
+    spelling, which is the signal that a text check cannot prove a RUNTIME
+    property of bash 3.2. #26 -- running this suite under 3.2 or on a macOS
+    runner -- owns the invariant; this is the cheap local approximation of it,
+    and any further spelling found by inspection is a round #26 removes.
     """
+    import re
     root_files = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
     for script in root_files:
         for n, line in enumerate(script.read_text().splitlines(), 1):
             if line.lstrip().startswith("#"):
                 continue
+            # `[*]` fails identically to `[@]` on an empty array under
+            # `set -u`, so it is normalised BEFORE the filter -- skipping it
+            # there was a real false negative, not a cosmetic one.
+            line = line.replace("AGENT_HOOK_ENV[*]", "AGENT_HOOK_ENV[@]")
             if "AGENT_HOOK_ENV[@]" not in line:
                 continue
             # `:+` and `+` are both set-tests and both safe; normalise so the
             # ratio does not redden a correct line and tell its author the
             # opposite of the truth.
             line = line.replace("AGENT_HOOK_ENV[@]:+", "AGENT_HOOK_ENV[@]+")
+            # Length and key references never trip nounset -- ${#a[@]} is the
+            # idiomatic pre-check before expanding -- so they are not value
+            # expansions and must not be counted as one.
+            line = re.sub(r"\$\{[#!]AGENT_HOOK_ENV\[@\]\}", "", line)
             # Counted, not searched. A substring test is per-LINE: one guarded
             # and one bare expansion on the same line passes, because the
             # guarded spelling itself supplies the `+`. The canonical form
@@ -708,7 +721,12 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
             # the prose in common.sh that named this array, and if someone later
             # writes a trailing comment mentioning it the cost is a loud test
             # failure, not a silent hole.
-            assert line.count("AGENT_HOOK_ENV[@]") == 2 * line.count("AGENT_HOOK_ENV[@]+"), (
+            # Floored, so a lone set-test `[ ${A[@]+x} ]` (one mention, one
+            # guard) passes rather than failing a 1 == 2 comparison while being
+            # the guard itself.
+            bare = max(0, line.count("AGENT_HOOK_ENV[@]")
+                          - 2 * line.count("AGENT_HOOK_ENV[@]+"))
+            assert bare == 0, (
                 f"{script.name}:{n} expands AGENT_HOOK_ENV[@] without the `+` "
                 "guard -- empty under `set -u` on the bash 3.2 macOS ships, so "
                 "this passes here and breaks restore on the operator's Mac")
