@@ -22,6 +22,10 @@ registry_path() { printf '%s\n' "$AGENT_MGR_REGISTRY"; }
 # agent, with `unregister` refusing the same name and no way out but editing the
 # file again. Comparing fields removes the class instead of gating it: any row an
 # operator can see in `ls` is a row they can read and drop.
+#
+# Through ENVIRON rather than -v, which processes backslash escapes in the value,
+# and concatenated with "" on both sides because awk compares NUMERICALLY when
+# both operands look numeric -- so `007` and `7` would be the same row.
 registry_valid_name() {
     case "${1:-}" in
         ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: ${1:-}" ;;
@@ -40,7 +44,7 @@ registry_add() {
     # Rewrite rather than append: registering a name twice must move it, not
     # leave two rows whose order silently decides which one wins.
     local tmp; tmp="$(mktemp)"
-    awk -F'\t' -v n="$name" '$1 != n' "$AGENT_MGR_REGISTRY" > "$tmp"
+    name="$name" awk -F'\t' '($1 "") != (ENVIRON["name"] "")' "$AGENT_MGR_REGISTRY" > "$tmp"
     printf '%s\t%s\n' "$name" "$dir" >> "$tmp"
     sort -o "$tmp" "$tmp"
     mv "$tmp" "$AGENT_MGR_REGISTRY"
@@ -54,10 +58,10 @@ registry_add() {
 registry_remove() {
     local name="$1"
     [ -f "$AGENT_MGR_REGISTRY" ] || die "no registry at $AGENT_MGR_REGISTRY"
-    awk -F'\t' -v n="$name" '$1 == n {found=1} END{exit !found}' "$AGENT_MGR_REGISTRY" \
-        || die "$name is not registered"
+    name="$name" awk -F'\t' '($1 "") == (ENVIRON["name"] "") {found=1} END{exit !found}' \
+        "$AGENT_MGR_REGISTRY" || die "$name is not registered"
     local tmp; tmp="$(mktemp)"
-    awk -F'\t' -v n="$name" '$1 != n' "$AGENT_MGR_REGISTRY" > "$tmp"
+    name="$name" awk -F'\t' '($1 "") != (ENVIRON["name"] "")' "$AGENT_MGR_REGISTRY" > "$tmp"
     mv "$tmp" "$AGENT_MGR_REGISTRY"
 }
 
@@ -65,7 +69,7 @@ registry_lookup() {
     local name="$1"
     [ -f "$AGENT_MGR_REGISTRY" ] || return 1
     local dir
-    dir="$(awk -F'\t' -v n="$name" '$1 == n {print $2; exit}' "$AGENT_MGR_REGISTRY")"
+    dir="$(name="$name" awk -F'\t' '($1 "") == (ENVIRON["name"] "") {print $2; exit}' "$AGENT_MGR_REGISTRY")"
     [ -n "$dir" ] || return 1
     printf '%s\n' "$dir"
 }

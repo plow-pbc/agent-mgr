@@ -91,3 +91,16 @@ def test_a_hand_edited_row_can_still_be_dropped(run, instance, tmp_path, registr
     assert run("unregister", "Property").returncode == 0
     assert "Property" not in run("ls").stdout
     assert "rowan" in run("ls").stdout
+
+
+def test_a_numeric_looking_name_is_not_the_same_row_as_another(run, instance, tmp_path):
+    """awk compares numerically when both operands look numeric, so `007` and `7`
+    would be one row: registering the second would drop the first, and looking up
+    either could resolve the other's directory."""
+    run("register", "007", str(instance("007")))
+    run("register", "7", str(instance("7")))
+    rows = run("ls").stdout
+    assert "007" in rows and "\n7 " in rows.replace("007", "xxx"), f"a row was absorbed: {rows}"
+    assert run("resolve", "7").stdout.count("AGENT_DIR=") == 1
+    assert "/7-repo" in run("resolve", "7").stdout
+    assert "/007-repo" in run("resolve", "007").stdout
