@@ -114,6 +114,22 @@ Relative paths do **not** work in `compose.override.yml`: Compose resolves them
 against `agent-mgr`'s directory, not the agent's. Name paths through a variable
 set in `agent.env`.
 
+## Running a one-off container
+
+```sh
+agent-mgr compose <name> run --entrypoint bash --rm --no-deps -T hermes -c '...'
+```
+
+**`--entrypoint` must be the first argument after `run`**, and it must have a
+value. Without a replaced entrypoint the image's s6 boots a gateway beside the
+live one; with it, s6 never starts.
+
+First position rather than merely "before the service", because every looser
+rule needs something the argv cannot supply — locating the service needs a
+complete list of which flags take values, and a missing entry silently puts the
+boundary in the wrong place. Getting the order wrong is refused by name, so the
+fix is visible; the alternative fails by letting a second gateway through.
+
 ## Why `agent` uses `exec`
 
 Because the image's s6 entrypoint starts a gateway whatever command you pass it,

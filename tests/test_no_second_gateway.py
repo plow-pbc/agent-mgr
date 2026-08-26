@@ -173,6 +173,13 @@ def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
      "not first: locating the service to check 'before it' needs a complete "
      "list of value-taking flags, and a missing entry admits a second gateway",
      "first argument is not --entrypoint"),
+    (("run", "--entrypoint", "hermes"), True,
+     "a bare --entrypoint with nothing after it overrides with nothing, so s6 "
+     "is still the entrypoint",
+     "first argument is not --entrypoint"),
+    (("run", "--entrypoint=", "--rm", "hermes"), True,
+     "an empty value overrides with nothing either",
+     "first argument is not --entrypoint"),
     (("run", "--rm", "hermes", "--entrypoint", "bash"), True,
      "--entrypoint AFTER the service is an argument to the service's own "
      "command, so s6 still boots -- a substring check for the flag passed this",

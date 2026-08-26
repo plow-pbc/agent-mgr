@@ -424,8 +424,11 @@ compose_transitions_nothing() {
 # `run --entrypoint bash --rm --no-deps -T hermes`. Nothing becomes impossible.
 run_replaces_the_entrypoint() {
     shift  # the `run` subcommand itself
+    # A non-empty value too: `--entrypoint=` and a bare `--entrypoint` with
+    # nothing after it override with nothing, so s6 is still the entrypoint.
     case "${1:-}" in
-        --entrypoint|--entrypoint=*) return 0 ;;
+        --entrypoint) [ -n "${2:-}" ] && return 0 ;;
+        --entrypoint=?*) return 0 ;;
     esac
     return 1
 }
