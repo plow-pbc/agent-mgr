@@ -289,7 +289,7 @@ case "$cmd" in
         ;;
     new)
         name="${1:-}"; [ -n "$name" ] || die "usage: agent-mgr new <name> [dir]"
-        case "$name" in ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: $name" ;; esac
+        registry_valid_name "$name"
         dir="${2:-$PWD/$name-hermes-agent}"
         # On the NAME first. Scaffolding an already-registered name at a fresh
         # directory passes any directory-scoped check and then silently repoints
