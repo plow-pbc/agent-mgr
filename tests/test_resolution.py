@@ -239,23 +239,6 @@ def test_a_malformed_declaration_is_refused(run, instance, line):
     assert "malformed key" in r.stderr
 
 
-@pytest.mark.parametrize("line", [
-    "# AGENT_TZ=America/Chicago is the default",
-    "  # AGENT_TZ=America/Chicago is the default",   # indented, and carries an =
-    "\t# commented out: AGENT_IMAGE=pinned",
-    "   ",
-])
-def test_comments_and_blanks_are_skipped_however_indented(run, instance, line):
-    """A commented-out setting usually carries an `=`, and a comment indented
-    inside a block is ordinary -- Compose skips both. Refusing one as a
-    malformed key would make a descriptor agent-mgr's own template could contain
-    unreadable."""
-    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\nAGENT_TZ=UTC\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "AGENT_TZ=UTC" in r.stdout
-
-
 def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instance, tmp_path):
     """The amplification, pinned so the trade-off is deliberate rather than
     discovered.
@@ -294,6 +277,12 @@ def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instanc
     ('AGENT_TZ="America/Chicago # kept"', "America/Chicago # kept"),      # quotes protect
     ("AGENT_TZ='America/Chicago # kept'", "America/Chicago # kept"),
     ('AGENT_TZ="America/Chicago" trailing', "America/Chicago"),  # dropped after close quote
+    # comments and blanks, however indented -- a commented-out setting usually
+    # carries an `=`, which is what makes refusing them a live hazard
+    ("# AGENT_TZ=Europe/Berlin is the default\nAGENT_TZ=America/Chicago", "America/Chicago"),
+    ("  # AGENT_TZ=Europe/Berlin\nAGENT_TZ=America/Chicago", "America/Chicago"),
+    ("\t# commented out: AGENT_IMAGE=pinned\nAGENT_TZ=America/Chicago", "America/Chicago"),
+    ("   \nAGENT_TZ=America/Chicago", "America/Chicago"),
 ])
 def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line, expected):
     """Parity with compose-go, measured rather than assumed.
