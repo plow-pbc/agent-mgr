@@ -86,9 +86,10 @@ conversations.
 | [`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | the skill and the agent are one checkout, mounted rather than pinned; the store, map and browser live on the Mac, reached through Latch |
 | [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar | the thinnest: no vault, no product surface, nothing on the Mac |
 
-**A repo is not an agent — a registry row is**, which is why these are named for
-what the agent *does* and a row is free to name a person instead
-(`sam-property`) once a checkout serves more than one. See
+**A repo is not an agent — a registry row is.** Identity derives from the
+registered name rather than the directory, so a row may be named for a person
+(`sam-property`) against a repo named for a capability — and one checkout can
+serve several rows at once. See
 [One repo, several people](#one-repo-several-people) for what makes that safe.
 
 One repo in orbit:
