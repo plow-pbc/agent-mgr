@@ -62,12 +62,8 @@ rather than to any one agent; and a suggestion that would make this tool *more*
 general than one operator's fleet needs, which is the bloat rather than the fix.
 
 The failure class this tool exists to prevent is **two gateways against one
-home**. The image's s6 entrypoint starts a gateway whatever command you pass it,
-so a `docker compose run` without `--entrypoint` boots a second one that answers
-alongside the live agent and posts a shutdown notice into the owners' channel on
-exit. Measured before the fix: 25 gateway starts against a 1–6/day baseline, 21
-shutdown notices in one day, 6 sqlite errors from two gateways racing one session
-database. Anything that reopens that path is blocking.
+home** — the incident and its numbers are in `README.md` § Why it exists.
+Anything that reopens that path is blocking.
 
 **Repo-specific contrast pairs:**
 
@@ -77,7 +73,7 @@ database. Anything that reopens that path is blocking.
 | Demand a config-schema validator, a plugin abstraction, or a packaging story. This is one bash script symlinked onto one host, for one operator. | Flag a **new route to a container transition** that does not go through the single transition seam, or a `compose run` that does not require `--entrypoint`. Both reopen the second-gateway class above. |
 | Suggest guards for an agent count, host count or concurrency this fleet will not reach. | Flag a **write into an agent's home that skips the ownership check**. Proving Compose agrees with the descriptor is not enough — a descriptor copied from a sibling satisfies that perfectly. It is self-consistent and wrong, and the write lands on the sibling. |
 | Treat doc-only edits to `README.md` / `docs/` as low-value churn. | Flag **prose↔code drift**. The README owns the agent-repo contract; a behaviour change that leaves its table describing the old behaviour is the canonical regression here. |
-| Propose vendoring an upstream artifact to avoid a fetch. | Flag any ref that is **not a 40-char SHA** — image digest, plugin, skill. A branch silently re-points a running agent on the next upstream push, and these carry the chat token and drive a filesystem. |
+| Propose vendoring an upstream artifact to avoid a fetch. | Flag any ref that is **not exact**: a git artifact (plugin, skill) must be a 40-char SHA, a container image a `sha256:` digest — never a tag or a branch. A moving ref silently re-points a running agent on the next upstream push, and these carry the chat token and drive a filesystem. |
 | — | Flag a **path that can traverse out of the agent's home**. Destinations are joined onto it and the result is `rm -rf`'d during a swap, so a traversing `--dest` is a delete primitive aimed at the operator's home. Reject by component, not substring — a legitimate `..foo` must still install. |
 | — | Flag any **secret reaching argv, a URL, or a log line**. Credentials belong in the agent's dotenv, read through the home mount; compose passes none, and a token travels in a header rather than a path. |
 | — | Flag an **agent-specific fact reaching a code path here**: a hardcoded `~/.hermes-<something>`, a PMS token, a lock or property-search call, a recipe only one agent would run. The test is whether a second agent would want it — not whether it mentions an agent, which comments and fixtures do freely. |

@@ -5,6 +5,13 @@ One CLI for the Hermes agent fleet. It brings up and manages containers running
 line — and **Plow Latch** — the Mac it is allowed to drive. Standing up a new
 agent is a command rather than a copy-paste of the last one.
 
+Install is a clone and a symlink — there is no release and no package:
+
+```sh
+git clone git@github.com:plow-pbc/agent-mgr.git ~/services/agent-mgr
+ln -s ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
+```
+
 ```sh
 agent-mgr new rowan          # scaffold the agent's repo, both platforms wired
 agent-mgr restore rowan      # the whole deploy: config, plugin, restore hook
@@ -24,10 +31,10 @@ owners' channel on exit. Measured over two days on one host: 25 gateway starts
 against a 1–6/day baseline, 21 shutdown notices in a single day, and 6 sqlite
 errors from two gateways racing one session database.
 
-Two of the four repos already carried a test for that invariant. The repo that
-needed it is the one without it. An invariant discovered three times, written
-down three times, and missed exactly where it mattered — that is the argument
-for one tool in one sentence.
+Two of the four repos already carried a test for that invariant. The repo using
+`docker compose run` was not one of them. An invariant found twice, written into
+a test twice, and missed exactly where it mattered — that is the argument for
+one tool in one sentence.
 
 ## What belongs in this repo
 
@@ -104,12 +111,15 @@ and a copy is a fork of the fleet that drifts silently. A `justfile` is the one
 near-miss: keep it for this agent's own recipes and tests, never to restate
 `up`, `restore` or `activate`.
 
-**Pin upstream, never vendor it.** Every artifact from another repo arrives by
-40-char SHA. A branch would re-point a running agent on the next upstream push,
-and these carry the chat token and drive a filesystem. Copying the artifact in
-instead makes the agent's repo a fork of it — which is what
-`sams-str-hermes-agent#138` spent −1,311 LOC undoing, after a vendored plugin
-drifted until production was serving a working tree.
+**Pin upstream, never vendor it.** Every artifact from another repo arrives at
+an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image
+by `sha256:` digest — never a tag or a branch. A moving ref re-points a running
+agent on the next upstream push, and these carry the chat token and drive a
+filesystem. Copying the artifact in instead makes the agent's repo a fork of it
+— which is what
+[`srosro/sams-str-hermes-agent#138`](https://github.com/srosro/sams-str-hermes-agent/pull/138)
+spent −1,311 LOC undoing, after a vendored plugin drifted until production was
+serving a working tree.
 
 **Assert what it cannot reach.** Siblings share a host, so the realistic failure
 is a copy-paste — a compose file, a config block, a descriptor — that quietly
@@ -140,13 +150,14 @@ nothing verifies.
 
 | dependency | what it is | pinned as |
 |---|---|---|
-| [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **digest** |
+| [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **`sha256:` digest** |
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA** |
 | [`plow-pbc/seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) | the protocol that plugin implements | not consumed directly |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
-Both pins are exact on purpose. A tag or a branch re-resolves on the next pull,
-which silently changes a large unreviewed surface under a running agent that
+Both pins are exact on purpose — a `sha256:` digest for the image, a 40-char
+SHA for the plugin. A tag or a branch re-resolves on the next pull, which
+silently changes a large unreviewed surface under a running agent that
 holds live credentials — and for the plugin, one that holds the chat token.
 
 ## Sharing with `plow-pbc/plow`
