@@ -152,8 +152,8 @@ Why the recipe is shaped that way:
   stamps, and the newer one is the partial.
 
   Do not leave it parked for long, either: while `$real` holds a half-restored
-  home the nightly keeps archiving *that*, and after `--keep` days the good
-  archives have aged out from under you. Finish or roll back within the window.
+  home the nightly keeps archiving *that*, and the cron's `-mtime +14` prunes
+  the good archives out from under you. Finish or roll back inside that window.
 
   There is deliberately no undo recipe here. The right action differs at every
   stop point — a vetoed `down` moved nothing, a failed `tar` leaves a partial
