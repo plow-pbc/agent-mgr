@@ -31,7 +31,8 @@ the code must be sent from the handset that should own the agent. A code texted
 by the wrong person binds the agent to the wrong account, and it is a one-time
 spend.
 
-To let it drive a Mac, put the pair from that Mac in `~/.hermes-rowan/.env`:
+To let it drive a Mac, put the pair from that Mac in that instance's dotenv —
+`$AGENT_HOME/.env`, which `agent-mgr resolve rowan` prints:
 
 ```sh
 DOMO_DEVICE_UID=dev_...
@@ -77,8 +78,9 @@ whatever it is — identity, config, its skill, its scripts.
 One case splits further. When several instances are registered against one
 checkout, a value belonging to a *person* rather than to the agent cannot live
 in `agent.env` either, because every instance reads it. That goes in the
-instance's own `~/.hermes-<name>/.env` — see *One repo, several people* in the
-[README](../README.md).
+instance's own `$AGENT_HOME/.env` — `~/.hermes-<name>` by convention, but
+whatever that instance resolved, which `agent-mgr resolve <name>` prints. See
+*One repo, several people* in the [README](../README.md).
 
 ## Adding a shared skill
 

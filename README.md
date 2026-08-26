@@ -174,8 +174,13 @@ thing that works.
 
 ### Where a per-person value goes
 
-**The instance's own dotenv** — `~/.hermes-<name>/.env`, the file that already
-holds its Plow token and its Latch credential, mounted at `/opt/data`.
+**The instance's own dotenv** — `$AGENT_HOME/.env`, the file that already holds
+its Plow token and its Latch credential, mounted at `/opt/data`.
+
+`$AGENT_HOME` is `~/.hermes-<name>` by convention, but it is whatever the
+instance *resolved* — an agent whose descriptor declares `AGENT_HOME` keeps its
+dotenv beside that home, and `agent-mgr resolve <name>` prints the path it will
+read.
 
 Almost nothing needs `agent-mgr` involved at all: the gateway interpolates
 `${VAR}` in `config.yaml` from that same dotenv at runtime, which is how
@@ -189,7 +194,7 @@ cannot resolve it from the dotenv the way it resolves everything else. So
 `load_agent` reads that one key from the same file:
 
 ```sh
-printf '\nAGENT_TZ=America/Chicago\n' >> ~/.hermes-rowan/.env
+printf '\nAGENT_TZ=America/Chicago\n' >> "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')/.env"
 ```
 
 The leading newline is not decoration. A dotenv the gateway or a person last
