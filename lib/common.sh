@@ -147,6 +147,14 @@ AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_
 # exactly as expected, so nothing downstream notices -- `up` creates a stack
 # under a foreign project against this agent's live home, and `down` then
 # reports success having stopped nothing.
+# The keys whose default IS empty: load_agent sets `: "${X:=}"` for both, the
+# path-resolution loop has an explicit '' arm, and pre_transition short-circuits
+# on an empty value. For these, empty and unset mean the same thing, so nothing
+# is silently substituted and `AGENT_RESTORE_HOOK=` is the natural way to write
+# "this agent has no restore step". Every other consumed key defaults to a real
+# value, which is what makes an empty one a silent substitution.
+EMPTY_MEANS_UNSET="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
+
 COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FILES COMPOSE_PROFILES"
 
 # Parse one declarative KEY=VALUE file. Read, NEVER execute.
@@ -336,14 +344,19 @@ parse_env_file() {
             # descriptor resolved fine and every direct-write command then
             # refused it as undeclared.
             [ "$key" = AGENT_HOME ] && AGENT_HOME_DECLARED=1
-            # A key this tool CONSUMES must carry a value. Empty is refused
-            # rather than assigned, because assigning it is indistinguishable
-            # from never declaring it -- every consumer downstream reaches for
-            # `${X:=default}`, so `AGENT_TZ=` in an instance's dotenv overwrote
-            # the repo's zone with nothing and the convention default filled in,
-            # putting the container on a third clock neither file named. Unowned
-            # keys are not this tool's business and go to the hooks empty or not.
-            [ -n "$value" ] || die "$file: line $_lineno: empty value for $key"
+            # A key this tool CONSUMES must carry a value, unless empty IS its
+            # value (EMPTY_MEANS_UNSET). Assigning empty to the rest is
+            # indistinguishable from never declaring it, because they all reach
+            # `${X:=default}` downstream: `AGENT_TZ=` in an instance's dotenv
+            # overwrote the repo's zone with nothing, the convention default
+            # filled in, and the container ran on a third clock neither file
+            # named. Unowned keys are not this tool's business and go to the
+            # hooks empty or not. The key is a validated identifier by here, so
+            # the padded glob is an exact membership test.
+            case " $EMPTY_MEANS_UNSET " in
+                *" $key "*) ;;
+                *) [ -n "$value" ] || die "$file: line $_lineno: empty value for $key" ;;
+            esac
             printf -v "$key" '%s' "$value"
         elif [ "$collect" = "hooks" ]; then
             # An instance's own variables -- STR_VAULT and friends -- which its

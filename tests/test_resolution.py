@@ -426,16 +426,27 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
 
 
 @pytest.mark.parametrize(
-    "dotenv, rowan_resolves, reaches_siblings, expected_error",
+    "descriptor, dotenv, rowan_resolves, reaches_siblings, expected_error",
     [
-        ("AGENT_T[oops]=1\n", True, False, None),
-        ('PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n',
+        ("", "AGENT_T[oops]=1\n", True, False, None),
+        ("", 'PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n',
          False, True, "line 2: unterminated quote"),
+        # Blanked, not deleted: the repo's zone is cleared, the convention
+        # default fills in, and the container runs on a third zone NEITHER file
+        # named -- so an empty value on a consumed key is refused like any other
+        # value it cannot use.
+        ("AGENT_TZ=America/New_York\n", "AGENT_TZ=\n",
+         False, True, "line 1: empty value for AGENT_TZ"),
     ],
-    ids=["a-key-agent-mgr-skips", "the-one-key-it-consumes"],
+    ids=[
+        "a-key-agent-mgr-skips",
+        "a-broken-value-on-the-key-it-consumes",
+        "a-blanked-value-on-the-key-it-consumes",
+    ],
 )
 def test_which_dotenv_lines_reach_another_agent(
-    run, instance, tmp_path, dotenv, rowan_resolves, reaches_siblings, expected_error
+    run, instance, tmp_path, descriptor, dotenv, rowan_resolves,
+    reaches_siblings, expected_error
 ):
     """Which lines in somebody's credential file can cost somebody ELSE a command.
 
@@ -453,8 +464,14 @@ def test_which_dotenv_lines_reach_another_agent(
 
     The diagnostic is checked on the same row that causes it: file, line and
     kind, never content, because this file sits beside credentials.
+
+    "Cannot use" includes empty. Assigning an empty value is indistinguishable
+    from never declaring one, since every consumed key reaches `${X:=default}`
+    downstream -- so blanking the line would clear the repo's zone, let the
+    convention default fill in, and run that container on a third zone neither
+    file named, with resolution reporting success.
     """
-    run("register", "rowan", str(instance("rowan")))
+    run("register", "rowan", str(instance("rowan", descriptor=descriptor)))
     run("register", "other", str(instance("other")))
     _home_env(tmp_path, "rowan", dotenv)
 
@@ -473,24 +490,27 @@ def test_which_dotenv_lines_reach_another_agent(
     assert ("could not resolve rowan" in other.stderr) is reaches_siblings
 
 
-def test_an_empty_person_zone_does_not_silently_discard_the_repos(run, instance, tmp_path):
-    """`AGENT_TZ=` is refused, not assigned.
+@pytest.mark.parametrize("line, accepted", [
+    ("AGENT_IMAGE=", False),
+    ("AGENT_RESTORE_HOOK=", True),
+    ("AGENT_PRE_TRANSITION=", True),
+], ids=["a-key-that-defaults-to-a-value", "the-restore-hook", "the-pre-transition-hook"])
+def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
+    run, instance, line, accepted
+):
+    """The refusal is scoped to keys where empty is a silent substitution.
 
-    Assigning empty is indistinguishable from never declaring it, because every
-    consumer downstream reaches for `${AGENT_TZ:=America/Los_Angeles}`. So an
-    empty person-level value overwrote the repo's zone with nothing, the
-    convention default filled in, and the container ran on a third clock that
-    NEITHER file named -- with resolution reporting success. The silent
-    wrong-clock failure this whole feature exists to prevent, reachable by
-    clearing a line.
+    Both hooks default to empty -- `: "${X:=}"`, an explicit '' arm in the path
+    loop, and a `[ -n "$X" ] || return 0` short-circuit -- so `AGENT_RESTORE_HOOK=`
+    is the natural way to write "this agent has no restore step", and nothing is
+    substituted behind the operator's back. Refusing it would brick that agent
+    and, through require_own_home's fail-closed arm, every other one.
     """
-    repo = instance("rowan", descriptor="AGENT_TZ=America/New_York\n")
-    run("register", "rowan", str(repo))
-    _home_env(tmp_path, "rowan", "AGENT_TZ=\n")
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
     r = run("resolve", "rowan")
-    assert r.returncode != 0, "an empty person-level zone was accepted"
-    assert "line 1: empty value for AGENT_TZ" in r.stderr
-    assert "America/Los_Angeles" not in r.stdout
+    assert (r.returncode == 0) is accepted, r.stderr
+    if not accepted:
+        assert "empty value for" in r.stderr
 
 
 def test_the_dotenv_follows_a_declared_home(run, instance, tmp_path):
