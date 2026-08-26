@@ -1,3 +1,4 @@
+import contextlib
 import os
 import pathlib
 import shutil
@@ -12,34 +13,10 @@ ROOT = Path(__file__).resolve().parent.parent
 # tests/test_compose.py uses it -- see the fixture below.
 REAL_PATH = os.environ.get("PATH", "")
 
-# The real docker, resolved once before the shadow goes up. Only the fence test
-# uses it, to build a PATH that reaches it wherever it happens to live.
-REAL_DOCKER = shutil.which("docker", path=REAL_PATH)
-
 # Pytest's tmp root: every docker this suite is allowed to run -- the session
 # stub and any fake_docker -- is written under it. Set by the fixture below.
 SUITE_TMP = None
 
-
-def spawn(argv, env, **kw):
-    """The one place this suite starts a subprocess with a PATH of its own.
-
-    Asked as a positive property: which docker would this env find, and is it
-    one the suite created? That subsumes every way of reaching the real binary
-    -- a PATH built from scratch, one that merely puts /usr/bin ahead of the
-    shadow, a second docker somewhere else entirely -- without naming any of
-    them, and without assuming where the operator's docker lives.
-
-    The check lives here rather than in the `run` fixture because the one
-    violation this suite actually had was not a `run` call: it shelled
-    lib/reload-if-running directly, which is the script whose reload restarted
-    production. A seam only the fixture passes through would not have seen it.
-    """
-    found = shutil.which("docker", path=env.get("PATH", ""))
-    assert found and pathlib.Path(found).is_relative_to(SUITE_TMP), (
-        f"this env resolves docker to {found}, which the suite did not create; "
-        "build PATH as f\"{mybin}:{os.environ['PATH']}\" so the stub still wins")
-    return subprocess.run(argv, capture_output=True, text=True, env=env, **kw)
 
 # The default `docker` every test gets: answers the two READ calls agent-mgr
 # makes, and refuses everything else.
@@ -74,6 +51,38 @@ exit 0
 """
 
 
+_ALLOW_REAL_DOCKER = False
+
+
+@contextlib.contextmanager
+def allow_real_docker():
+    """The one deliberate exemption: tests/test_compose.py renders the real
+    template with the real `compose config`, which never contacts the daemon."""
+    global _ALLOW_REAL_DOCKER
+    _ALLOW_REAL_DOCKER = True
+    try:
+        yield
+    finally:
+        _ALLOW_REAL_DOCKER = False
+
+
+def _docker_the_suite_owns(path):
+    """Which docker would this PATH find, and did the suite create it?
+
+    Asked as a positive property so it subsumes every way of reaching the real
+    binary -- a PATH built from scratch, one that merely puts the real bindir
+    ahead of the shadow, a second docker somewhere else entirely -- without
+    enumerating them, and without assuming where the operator's docker lives.
+    """
+    found = shutil.which("docker", path=path)
+    return bool(found) and pathlib.Path(found).is_relative_to(SUITE_TMP)
+
+
+def spawn(argv, env, **kw):
+    """Convenience wrapper: the suite's usual capture_output/text defaults."""
+    return subprocess.run(argv, capture_output=True, text=True, env=env, **kw)
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _no_real_docker_on_path(tmp_path_factory):
     """Take the real `docker` off PATH for the whole suite.
@@ -103,7 +112,31 @@ def _no_real_docker_on_path(tmp_path_factory):
     # f"{mybin}:{os.environ['PATH']}" still puts this ahead of /usr/bin.
     os.environ["PATH"] = os.pathsep.join([str(b), REAL_PATH])
     SUITE_TMP = tmp_path_factory.getbasetemp()
-    yield
+
+    # Enforced on subprocess itself, not offered as a helper. Two rounds of
+    # review made the same point: a seam that callers must remember to use is
+    # the convention this change exists to retire, and the violation that
+    # actually restarted production was a bare subprocess.run the `run` fixture
+    # never saw. Patched here, the property holds for code that never heard of
+    # spawn(). An env without its own PATH inherits the shadow above and is
+    # already safe.
+    real_run = subprocess.run
+
+    def guarded_run(argv, *a, **kw):
+        env = kw.get("env")
+        if env and "PATH" in env and not _ALLOW_REAL_DOCKER:
+            assert _docker_the_suite_owns(env["PATH"]), (
+                f"this env resolves docker to "
+                f"{shutil.which('docker', path=env['PATH'])}, which the suite "
+                "did not create; build PATH as f\"{mybin}:{os.environ['PATH']}\" "
+                "so the stub still wins, or use conftest.allow_real_docker()")
+        return real_run(argv, *a, **kw)
+
+    subprocess.run = guarded_run
+    try:
+        yield
+    finally:
+        subprocess.run = real_run
 
 
 @pytest.fixture

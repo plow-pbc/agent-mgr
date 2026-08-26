@@ -9,11 +9,12 @@ day, and 6 sqlite errors from two gateways racing one session database.
 """
 import os
 import re
+import tempfile
 from pathlib import Path
 
 import pytest
 
-from conftest import REAL_DOCKER, fake_docker
+from conftest import fake_docker
 from test_install import _guarded
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -184,10 +185,9 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
         assert r.returncode == 0, f"{why}: {r.stderr}"
 
 
-@pytest.mark.skipif(REAL_DOCKER is None, reason="no real docker to reach")
 @pytest.mark.parametrize("path, why", [
-    ("{real}", "built from scratch, dropping the shadow entirely"),
-    ("{real}{sep}{inherited}", "inherits the shadow but resolves ahead of it"),
+    ("{outside}", "built from scratch, dropping the shadow entirely"),
+    ("{outside}{sep}{inherited}", "inherits the shadow but resolves ahead of it"),
 ])
 def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
     """The companion to the fence below: it proves the stub refuses an unstubbed
@@ -202,18 +202,23 @@ def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
 
     The second row is why the check asks which docker the env RESOLVES, not
     whether the shadow is present: that PATH keeps the shadow in the list and
-    still finds the real binary. Both rows are built from wherever docker
-    actually lives, so the fence means the same thing off this host.
+    still finds the one ahead of it.
     """
-    with pytest.raises(AssertionError, match="the suite did not create"):
-        # `ls`, not `restore`: if this fence ever regresses it must run
-        # something that cannot reach a transition. `restore` ends in
-        # reload-if-running -- `compose restart` against -p hermes-rowan --
-        # and "inert only because it dies earlier" is the accident this
-        # whole change exists to stop relying on.
-        run("ls", env={"PATH": path.format(
-            real=os.path.dirname(REAL_DOCKER), sep=os.pathsep,
-            inherited=os.environ["PATH"])})
+    # `ls`, not `restore`: if this fence ever regresses it must run something
+    # that cannot reach a transition. `restore` ends in reload-if-running --
+    # `compose restart` against -p hermes-rowan -- and "inert only because it
+    # dies earlier" is the accident this whole change exists to stop relying on.
+    # A docker outside the suite's tmp root, which is the whole predicate --
+    # built here rather than taken from the host so the fence means the same
+    # thing on a machine with docker somewhere else, or with none at all. The
+    # assert fires before the spawn, so this never executes.
+    with tempfile.TemporaryDirectory() as outside:
+        (Path(outside) / "docker").write_text("#!/bin/sh\nexit 0\n")
+        (Path(outside) / "docker").chmod(0o755)
+        with pytest.raises(AssertionError, match="the suite did not create"):
+            run("ls", env={"PATH": path.format(
+                outside=outside, sep=os.pathsep,
+                inherited=os.environ["PATH"])}), why
 
 
 def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_path):
