@@ -25,6 +25,25 @@ die() { printf 'agent-mgr: %s\n' "$*" >&2; exit 1; }
 # Through ENVIRON rather than -v, which processes backslash escapes in the value,
 # and concatenated with "" on both sides because awk compares NUMERICALLY when
 # both operands look numeric -- so `007` and `7` would be the same row.
+# `realpath -m` and `realpath -m -s` are GNU-only: BSD/macOS realpath has
+# neither flag, so on a Mac every command that loads an agent died at the first
+# call with "illegal option -- m" -- 178 of 220 tests with it. python3 is
+# already a host dependency here (lib/resolve-guard parses compose config with
+# it) and answers for a path that does not exist yet, which `-m` is for and
+# which a first restore needs. Both forms take the path as an argument, so a
+# leading dash is data rather than an option and no `--` is needed.
+#
+# Two functions because the two GNU forms mean different things, and the callers
+# below depend on the difference: normalized_path leaves symlinks intact
+# (`-m -s`), canonical_path follows them (`-m`).
+normalized_path() {
+    python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "$1"
+}
+
+canonical_path() {
+    python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$1"
+}
+
 registry_valid_name() {
     case "${1:-}" in
         ''|*[!a-z0-9-]*) die "agent name must be lowercase letters, digits and dashes: ${1:-}" ;;
@@ -143,6 +162,11 @@ load_agent() {
     # Anything else stays literal -- a descriptor cannot reach $(...) or a
     # sibling variable, which is the whole point of not sourcing it.
     local line key value
+    # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
+    # bare "${AGENT_HOOK_ENV[@]}": an agent with no extra descriptor keys leaves
+    # this empty, and bash treats an empty array as unset under `set -u` until
+    # 4.4 -- so on the 3.2 that macOS still ships, `restore` and every guarded
+    # transition died with "AGENT_HOOK_ENV[@]: unbound variable".
     AGENT_HOOK_ENV=()
     while IFS= read -r line; do
         case "$line" in
@@ -185,10 +209,11 @@ load_agent() {
     # Canonicalised once, here, because two spellings of one directory defeat
     # every check downstream: they address the same home and compare unequal, so
     # the collision loop clears a copycat and restore overwrites the live
-    # sibling. `realpath -m --` rather than collapsing slashes by hand, which
-    # left `$HOME/foo/../.hermes` intact and evading the check -- `-m` because a
-    # home need not exist yet, `--` because a path may begin with a dash.
-    AGENT_HOME="$(realpath -m -s -- "$AGENT_HOME")"
+    # sibling. Resolved rather than collapsing slashes by hand, which left
+    # `$HOME/foo/../.hermes` intact and evading the check. normalized_path, not
+    # canonical_path: a home symlinked onto a bigger disk is ordinary, and the
+    # shape rule below reads this value and must still see the declared name.
+    AGENT_HOME="$(normalized_path "$AGENT_HOME")"
     : "${AGENT_CONTAINER:=hermes-$name}"
     : "${AGENT_PROJECT:=hermes-$name}"
     : "${AGENT_TZ:=America/Los_Angeles}"
@@ -412,10 +437,10 @@ require_running_container_is_ours() {
         || die "refusing to touch the container running as $AGENT_PROJECT -- docker could not say whose home it mounts"
     # Same canonicalisation as AGENT_HOME, or the comparison is between two
     # spellings again -- one of them from a source we do not control.
-    [ -z "$mounted" ] || mounted="$(realpath -m -s -- "$mounted")"
+    [ -z "$mounted" ] || mounted="$(normalized_path "$mounted")"
     # Same-directory question, so resolved on both sides like the collision loop.
     if [ -n "$mounted" ] \
-        && [ "$(realpath -m -- "$mounted")" = "$(realpath -m -- "$AGENT_HOME")" ]; then
+        && [ "$(canonical_path "$mounted")" = "$(canonical_path "$AGENT_HOME")" ]; then
         continue
     fi
     # No removal command here, deliberately, and no branch that could produce
@@ -591,7 +616,7 @@ require_own_home() {
         # match neither accepted shape. This one asks "is it the same
         # directory", and two spellings reaching one directory through a symlink
         # is exactly the aliasing this loop exists to catch.
-        [ "$(realpath -m -- "$ohome")" = "$(realpath -m -- "$AGENT_HOME")" ] \
+        [ "$(canonical_path "$ohome")" = "$(canonical_path "$AGENT_HOME")" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
@@ -636,6 +661,6 @@ require_transition_allowed() {
     [ -n "$AGENT_PRE_TRANSITION" ] || return 0
     [ -x "$AGENT_PRE_TRANSITION" ] \
         || die "$AGENT_NAME declares a pre-transition guard at $AGENT_PRE_TRANSITION, which is missing or not executable"
-    ( cd "$AGENT_DIR" && env "${AGENT_HOOK_ENV[@]}" "$AGENT_PRE_TRANSITION" ) \
+    ( cd "$AGENT_DIR" && env ${AGENT_HOOK_ENV[@]+"${AGENT_HOOK_ENV[@]}"} "$AGENT_PRE_TRANSITION" ) \
         || die "${AGENT_NAME}'s pre-transition guard refused -- not transitioning the container"
 }
