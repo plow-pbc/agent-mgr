@@ -662,34 +662,68 @@ require_running() {
     require_running_container_is_ours
 }
 
-# What counts as a declaration of KEY in an agent's dotenv, in ONE place --
-# set-latch writes through it and check-latch reads through it, and two readers
-# of one file disagreeing about which line is live is the whole failure class
-# these two commands exist to end.
+# Which LINES declare KEY -- the writer's half. set-latch needs to locate every
+# spelling so it can replace one and drop the rest; it never parses a value,
+# because it only ever writes the canonical form. dotenv_read below is the
+# reader's half, and parses.
 #
-# The grammar is the GATEWAY's, read off its parser rather than guessed
-# (hermes_cli/config.py, load_env): it strips the line, drops an `export `
-# prefix, strips space around the key, and assigns into a dict. So leading
-# whitespace and `export ` are declarations, and the LAST one wins.
+# Both mirror the same reference (hermes_cli/config.py): a line is stripped, an
+# `export ` prefix dropped, and the key stripped -- so leading whitespace,
+# `export ` and space before `=` all still declare KEY.
 dotenv_declares() {
     printf '^[[:space:]]*(export[[:space:]]+)?%s[[:space:]]*=' "$1"
 }
 
-# The value the gateway would load for KEY. `grep -m1 "^KEY="` -- what this
-# replaces -- disagreed with it in both directions at once: bare spelling only,
-# and first match rather than last. An indented but perfectly good credential
-# read as absent, and a stale bare line above a newer `export` one got probed in
-# place of the token actually in use.
+# The value the gateway would load for KEY -- the whole grammar, not the key
+# half of it.
+#
+# In python3, which is already a hard dependency (`canonical_path` above shells
+# to it), because the value side is quote-aware with backslash escapes and a
+# sed approximation of it took three review rounds to get half right: the key
+# spelling one round, the precedence the next, the value whitespace and quotes
+# the round after. Each fix was correct and the class kept producing another
+# facet. This mirrors hermes_cli/config.py line for line instead -- strip the
+# line, skip blanks and comments, require an `=`, drop `export `, strip the
+# key, then strip the value and unquote it -- so there is one place to compare
+# against the reference, and drift shows up as a diff rather than as a
+# misdiagnosis in the field.
+#
+# Last declaration wins, which falls out of assigning as it reads rather than
+# stopping at a match -- the same way the parser it mirrors gets it.
 dotenv_read() {
-    local key="$1" file="$2" line
-    # `|| true` is load-bearing under `set -o pipefail`: no match is an ordinary
-    # answer here, and grep's exit 1 would otherwise kill the caller.
-    line="$(grep -E "$(dotenv_declares "$key")" "$file" | tail -n 1)" || true
-    [ -n "$line" ] || return 0
-    # A normal dotenv line is KEY="..." and sending the quotes on gets a 401.
-    printf '%s' "$line" \
-        | sed -E "s/^[[:space:]]*(export[[:space:]]+)?${key}[[:space:]]*=//" \
-        | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/"
+    python3 -I -c '
+import sys
+key, path = sys.argv[1], sys.argv[2]
+DQ, SQ, BS = chr(34), chr(39), chr(92)
+val = ""
+try:
+    with open(path, encoding="utf-8-sig", errors="replace") as f:
+        lines = f.readlines()
+except OSError:
+    sys.exit(0)
+for line in lines:
+    line = line.strip()
+    if not line or line.startswith("#") or "=" not in line:
+        continue
+    if line.startswith("export "):
+        line = line[7:]
+    k, _, v = line.partition("=")
+    if k.strip() != key:
+        continue
+    v = v.strip()
+    if len(v) >= 2 and v[0] == v[-1] == DQ:
+        out, q, i = [], v[1:-1], 0
+        while i < len(q):
+            if q[i] == BS and i + 1 < len(q) and q[i + 1] in (DQ, BS):
+                out.append(q[i + 1]); i += 2; continue
+            out.append(q[i]); i += 1
+        val = "".join(out)
+    elif len(v) >= 2 and v[0] == v[-1] == SQ:
+        val = v[1:-1]
+    else:
+        val = v
+sys.stdout.write(val)
+' "$1" "$2"
 }
 
 # Does the INSTALLED config declare a latch server? The config is the

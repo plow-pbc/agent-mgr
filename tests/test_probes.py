@@ -225,27 +225,47 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
 @pytest.mark.parametrize(
     "dotenv",
     [
-        'DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN="tok_abc"\n',
-        "  DOMO_DEVICE_UID=dev_123\n  DOMO_MCP_TOKEN=tok_abc\n",
-        "export DOMO_DEVICE_UID=dev_123\nexport DOMO_MCP_TOKEN=tok_abc\n",
-        "DOMO_DEVICE_UID = dev_123\nDOMO_MCP_TOKEN = tok_abc\n",
+        'DOMO_MCP_TOKEN="tok_abc"\n',
+        "  DOMO_MCP_TOKEN=tok_abc\n",
+        "export DOMO_MCP_TOKEN=tok_abc\n",
+        "DOMO_MCP_TOKEN = tok_abc\n",
+        'DOMO_MCP_TOKEN = "tok_abc"\n',
+        "DOMO_MCP_TOKEN='tok_abc'\n",
+        'DOMO_MCP_TOKEN="tok_abc"  \n',
     ],
-    ids=["bare", "indented", "export", "spaced"],
+    ids=["dquoted", "indented", "export", "spaced", "spaced-and-dquoted",
+         "squoted", "trailing-space"],
 )
-def test_check_latch_reads_every_spelling_the_gateway_honours(run, instance, tmp_path, dotenv):
-    """check-latch is the command for diagnosing a hand-edited dotenv, so the
-    spellings a hand edit arrives in are exactly the ones it must not miss. Its
-    grammar is the gateway's own (hermes_cli/config.py load_env): strip the
-    line, drop `export `, strip space around the key, last declaration wins."""
+def test_check_latch_sends_the_value_the_gateway_would_load(run, instance, tmp_path, dotenv):
+    """Every spelling a hand-edited dotenv arrives in, which is the population
+    check-latch exists to diagnose. Asserted on the bytes that reached curl, not
+    on the exit code: the fake relay answers 200 to anything, so a returncode
+    assertion holds for a value that is mangled, still quote-wrapped, or a lone
+    space -- it pins that the line was FOUND, never that it was PARSED."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
     run("restore", "property")
-    (tmp_path / "home" / ".hermes-property" / ".env").write_text(dotenv)
-    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
+        "DOMO_DEVICE_UID=dev_123\n" + dotenv)
+    log = tmp_path / "docker.log"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-property",
+                    name="property", exec_output="200", log=log)
+    r = run("check-latch", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
-    assert "reachable" in r.stdout
-    # Not "is empty" -- the credential is right there in a spelling the gateway
-    # loads, and reporting it missing sends the operator to re-mint a live pair.
-    assert "is empty" not in r.stderr
+    stdin = (tmp_path / "docker.log.stdin").read_text()
+    assert 'header = "Authorization: Bearer tok_abc"' in stdin
+
+
+def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, instance, tmp_path):
+    """`KEY=   ` is a key with no credential. Sending it probes the relay with an
+    empty bearer and reports the 401 as REVOKED, which sends the operator to
+    replace a credential that was never set."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("restore", "property")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
+        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=   \n")
+    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
+    assert r.returncode != 0
+    assert "DOMO_MCP_TOKEN is empty" in r.stderr
 
 
 def test_check_latch_probes_the_declaration_the_gateway_actually_loaded(run, instance, tmp_path):
