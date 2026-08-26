@@ -76,23 +76,26 @@ second consumer exists.
 
 ## The fleet — what agent-mgr deploys
 
-Four agents on one Linux host (`wakeup`), each with its own repo. All four are
-private: they hold live credentials, and one holds an operations wiki compiled
-from real guest conversations.
+Three agent repos on one Linux host (`wakeup`). All are private: they hold live
+credentials, and one holds an operations wiki compiled from real guest
+conversations.
 
 | repo | what the agent is | what makes it different |
 |---|---|---|
 | [`srosro/str-hermes-agent`](https://github.com/srosro/str-hermes-agent) | short-term rentals — messages guests, answers from the operations wiki, unlocks doors | the only one running its product end to end; carries a vault mount and a PMS |
-| [`srosro/sams-property-hermes-agent`](https://github.com/srosro/sams-property-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | holds almost nothing: scripts, store, map and browser all live on the Mac, reached through Latch |
-| [`srosro/rowans-life-hermes-agent`](https://github.com/srosro/rowans-life-hermes-agent) | life and family logistics — mail, calendar | **not the same person's agent** — keyed to a different Plow account, and the only one on `America/Chicago` |
-| [`srosro/sams-admin-hermes-agent`](https://github.com/srosro/sams-admin-hermes-agent) | the operator's mail and calendar | the thinnest of the four |
+| [`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | the skill and the agent are one checkout, mounted rather than pinned; the store, map and browser live on the Mac, reached through Latch |
+| [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar | serves someone who is **not the operator**, on their own Plow account and their own clock |
 
-Two repos in orbit around them:
+**A repo is not an agent — a registry row is.** Identity derives from the
+registered name, so one checkout serves as many people as have rows against it,
+each with its own home, container, project and timezone. That is why the repos
+above are named for what the agent *does* while the rows on `wakeup` are named
+for whose it is (`sam-property`), and why none of these descriptors declares an
+`AGENT_HOME`: a repo that declares one cannot be shared, and `require_own_home`
+refuses the second instance rather than letting the two collide.
 
-- [`plow-pbc/property-hunt`](https://github.com/plow-pbc/property-hunt) — the
-  house-hunting skill the property agent runs. Split out to be distributable
-  before that delivery path was retired; under the rule above it belongs in the
-  agent's own repo, and the split is being unwound rather than defended.
+One repo in orbit:
+
 - [`srosro/sams-str-vault`](https://github.com/srosro/sams-str-vault) — the STR
   agent's operations corpus, committed by hand and mounted beside its home.
 

@@ -22,7 +22,7 @@ agent repo, so every command works from any directory.
 ## Stand up a new agent
 
 ```sh
-agent-mgr new rowan ~/services/rowans-life-hermes-agent
+agent-mgr new rowan ~/services/rowan-hermes-agent
 agent-mgr restore rowan
 agent-mgr activate rowan      # prints a code -- text it from THAT agent's phone
 agent-mgr up rowan
