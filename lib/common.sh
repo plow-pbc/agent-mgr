@@ -126,6 +126,8 @@ usage: agent-mgr <command> [args]
   activate <name>             mint the Plow Chat credential pair
   sign-in <name>              model OAuth for this agent
 
+  backup <name>|--all         snapshot the home; AGENT_MGR_BACKUP_DIR says where
+
   up|down|restart|logs <name> lifecycle
   agent <name> "<prompt>"     run one turn in the running container
   check-latch <name>          prove the Latch relay credential

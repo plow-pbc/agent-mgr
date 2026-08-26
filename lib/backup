@@ -1,0 +1,68 @@
+#!/usr/bin/env bash
+# Snapshot one agent's home.
+#
+# The home is the volume half of the fleet -- repo = image, home = volume -- and
+# it is the half nothing can rebuild. `restore` reinstalls config.yaml, the
+# plugin and the pinned skills from git; auth.json, the dotenv, the sessions,
+# the memories and the kanban exist nowhere else. Four homes on this host held
+# 1.5 GB of exactly that with zero copies anywhere, and every home's own
+# backups/ directory existed and was empty.
+#
+# Invoked through `agent-mgr backup`, which resolves the descriptor first, so
+# AGENT_NAME and AGENT_HOME arrive already guarded.
+set -euo pipefail
+home="${1:?usage: backup <home> <dest> <keep>}"
+dest="${2:?}"; keep="${3:?}"
+
+# tar from the home's PARENT with a relative member path, so an archive restores
+# as `.hermes-rowan/...` wherever it is unpacked. An absolute path would make
+# every restore a decision about whether tar's --strip-components count is
+# still right.
+parent="$(dirname "$home")"
+base="$(basename "$home")"
+stamp="$(date -u +%Y%m%d)"
+archive="$dest/$base-$stamp.tar.gz"
+
+# Excluded because they are most of the bytes and none of the value: a home
+# restored without them is the same agent on its next boot. Carrying them
+# instead is how a backup becomes one nobody keeps enough copies of.
+tar --exclude="$base/logs" \
+    --exclude="$base/cache" \
+    --exclude="$base/lazy-packages" \
+    -C "$parent" -czf "$archive" "$base"
+
+# Retention, matched to the exact names this command writes. $dest is an
+# operator-named directory that may hold anything -- a bare `find -delete` over
+# it is a delete primitive pointed at their data -- so the glob is anchored to
+# THIS agent's basename and this command's own stamp format. Another agent's
+# archives are not this run's to prune either: `backup --all` prunes each one
+# under its own name, and a single-agent run must not reach a sibling's copies.
+#
+# By the stamp in the NAME, not by mtime. The name is what this command wrote
+# and cannot be rewritten by moving the archives around; mtime is reset by the
+# rsync or cp that carries a backup directory off this host, which would leave
+# retention silently never firing on exactly the copies that matter most.
+#
+# python3 for the date arithmetic, and UTC to match the stamp above: `date -d`
+# is GNU-only and BSD's spelling is `-v-14d`, the same portability class that
+# made 178 of 220 tests fail on a Mac (#19). Every python3 here takes -I.
+cutoff="$(python3 -I -c 'import datetime, sys
+days = int(sys.argv[1])
+today = datetime.datetime.now(datetime.timezone.utc).date()
+print((today - datetime.timedelta(days=days)).strftime("%Y%m%d"))' "$keep")"
+
+for old_archive in "$dest/$base-"[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9].tar.gz; do
+    # The unmatched glob arrives as itself; nullglob is not set because this
+    # script is sourced by nothing and setting a shell option for one loop is
+    # a wider change than the test it saves.
+    [ -f "$old_archive" ] || continue
+    stamp_of="${old_archive##*-}"
+    # An `if`, not `[[ ]] && rm`: under `set -e` the AND-list's status is the
+    # loop body's, and whether that exits depends on which operand failed. The
+    # prune must never be able to abort the run that just wrote a good archive.
+    if [[ "${stamp_of%.tar.gz}" < "$cutoff" ]]; then
+        rm -f "$old_archive"
+    fi
+done
+
+printf '%s (%s)\n' "$archive" "$(du -h "$archive" | cut -f1)"

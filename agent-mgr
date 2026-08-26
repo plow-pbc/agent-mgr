@@ -120,6 +120,48 @@ case "$cmd" in
         # gateway several times for one deploy.
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "what the restore installed"
         ;;
+    backup)
+        # A read-only command, so it takes no compose or transition guard: it
+        # never resolves an image, starts a container, or writes into a home.
+        [ -n "${AGENT_MGR_BACKUP_DIR:-}" ] \
+            || die "set AGENT_MGR_BACKUP_DIR to where the archives go -- a backup written somewhere nobody named ends up on the same disk as the thing it backs up"
+        [ -d "$AGENT_MGR_BACKUP_DIR" ] || die "no $AGENT_MGR_BACKUP_DIR -- create it, or point AGENT_MGR_BACKUP_DIR somewhere that exists"
+        keep=14
+        target=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --keep) keep="${2:?--keep needs a number of days}"; shift 2 ;;
+                --all)  target="--all"; shift ;;
+                *)      target="$1"; shift ;;
+            esac
+        done
+        case "$keep" in
+            ''|*[!0-9]*) die "--keep takes a whole number of days, got: $keep" ;;
+        esac
+        [ -n "$target" ] || die "usage: agent-mgr backup <name>|--all [--keep DAYS]"
+
+        if [ "$target" = "--all" ]; then
+            # Keep going, then fail loudly. Aborting on the first bad row would
+            # leave every healthy agent unbacked-up as well, and the whole point
+            # of --all is that a row missed is an agent with no copy at all.
+            failed=""
+            while IFS=$'\t' read -r name _; do
+                [ -n "$name" ] || continue
+                if ! ( load_agent "$name"
+                       [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
+                       "$AGENT_MGR_ROOT/lib/backup" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep" ); then
+                    failed="$failed $name"
+                fi
+            done <<EOF
+$(registry_list)
+EOF
+            [ -z "$failed" ] || die "these agents were NOT backed up:$failed"
+        else
+            load_agent "$target"
+            [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
+            "$AGENT_MGR_ROOT/lib/backup" "$AGENT_HOME" "$AGENT_MGR_BACKUP_DIR" "$keep"
+        fi
+        ;;
     install-plugin)
         load_agent "${1:-}"
         # Before the write, as in restore.

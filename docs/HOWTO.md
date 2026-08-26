@@ -59,12 +59,55 @@ agent-mgr up rowan / down rowan / restart rowan / logs rowan
 agent-mgr agent rowan "what's on today?"
 agent-mgr check-latch rowan
 agent-mgr check-connectors rowan
+agent-mgr backup rowan / backup --all
 ```
 
 Both `check-` commands ask **from inside the container**, because the container
 is what has to reach `api.plow.co`. Egress, DNS and CA config all differ between
 your shell and that network namespace, and every one of those failures is
 invisible to a host-side probe. There is deliberately no host fallback.
+
+## Backing up a home
+
+The repo is the image and the home is the volume. `restore` rebuilds the image
+half from git any time you like — `config.yaml`, the plugin, the pinned skills.
+Nothing rebuilds the volume half: `auth.json`, the dotenv, the sessions, the
+memories and the kanban exist in exactly one place.
+
+```sh
+export AGENT_MGR_BACKUP_DIR=/somewhere/not/this/disk
+agent-mgr backup --all              # one archive per registered agent
+agent-mgr backup rowan --keep 30    # default retention is 14 days
+```
+
+`AGENT_MGR_BACKUP_DIR` has no default on purpose. A backup written somewhere
+nobody named lands on the same disk as the thing it backs up, which is not a
+backup — it is a second copy of the same failure.
+
+`logs/`, `cache/` and `lazy-packages/` are excluded. They are most of the bytes
+and none of the value: a home restored without them is the same agent on its
+next boot, and an archive that carries them is one nobody keeps enough copies
+of.
+
+`--all` keeps going past a failure and then exits non-zero naming every agent it
+could not archive. Aborting on the first bad row would leave the healthy agents
+unbacked-up too, and the whole point of `--all` is that a row missed is an agent
+with no copy at all.
+
+To restore one, stop the agent first — unpacking under a live gateway gives two
+writers to one session database:
+
+```sh
+agent-mgr down rowan
+tar -C "$HOME" -xzf /path/to/.hermes-rowan-20260826.tar.gz
+agent-mgr up rowan
+```
+
+Retention prunes by the date in the archive's **name**, not by mtime, and only
+names this command itself wrote. The destination is a directory you chose and
+may hold anything else; and mtime is reset by the `rsync` or `cp` that carries a
+backup directory off this host, which would leave retention silently never
+firing on exactly the copies that matter most.
 
 ## Two layers: where does my code go?
 
