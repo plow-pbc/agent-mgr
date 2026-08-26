@@ -202,7 +202,13 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     loop = re.search(r"^\s*for _hook in ([A-Z_ ]+); do$",
                      (root / "lib" / "common.sh").read_text(), re.M)
     assert loop, "the hook loop moved -- this probe reads it to know what to check"
-    readme = (root / "README.md").read_text()
+    # The TABLE, not the file: a hook mentioned only in prose or an example block
+    # would satisfy a whole-README grep while the row the contract lives in stays
+    # missing -- which is the way a third hook would realistically land.
+    section = (root / "README.md").read_text().split("## What belongs in an instance repo")
+    assert len(section) == 2, "the instance-repo section moved -- this probe reads its table"
+    rows = "\n".join(l for l in section[1].splitlines() if l.startswith("|"))
+    assert rows, "the instance-repo section no longer has a table"
     for hook in loop.group(1).split():
-        assert f"`{hook}`" in readme, (
+        assert f"`{hook}`" in rows, (
             f"{hook} is a declared hook but the instance-repo table does not name it")
