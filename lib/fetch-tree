@@ -105,9 +105,6 @@ target="$home/$root/$dest"
 # INSIDE it, and the manifest check above already ran against $src -- so the
 # swap would publish a tree with its plugin.yaml one level down and exit 0
 # saying "installed". Reproduced against the live repo.
-staging="$target.incoming"
-backup_path="$target.previous"
-
 # One lock over this target, held from here through the publish.
 #
 # Fixed names and per-run isolation cannot both come from the NAME. Pid-suffixed
@@ -138,6 +135,14 @@ flock 9 || { echo "could not lock $lockfile" >&2; exit 1; }
 # complete, valid tree carrying `name: plow-chat-platform` sitting beside the
 # real one in the directory the gateway enumerates -- and the in-branch rm below
 # never reaches it, because on a first install that branch is skipped entirely.
+# Bound HERE, after the lock, not before it. cleanup() removes $staging
+# unconditionally, so a second run that dies before acquiring the lock -- killed
+# while blocked in flock, or exiting on the two failure branches above -- would
+# delete the LOCK HOLDER's live staging tree from outside the lock, leaving it
+# mid-`cp -a` into an unlinked directory. Empty until then, so cleanup has
+# nothing to remove.
+staging="$target.incoming"
+backup_path="$target.previous"
 rm -rf "$staging" "$backup_path"
 cp -a "$src" "$staging"
 # Scripts are invoked directly by the agent; an unreadable 644 fails from inside

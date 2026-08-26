@@ -158,12 +158,12 @@ case "$cmd" in
         # convention can never produce a bare `.hermes` at all.
         require_own_home
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
-        # Its OWN pin, not the plugin's. The activation script still lives in the
-        # archived seed while the adapter has moved to plow-pbc/hermes-plow-chat,
-        # so one shared ref would send a hermes-plow-chat SHA at a seed URL and
-        # 404 -- on the one command that is a one-time irreversible spend.
-        # Archived public repos stay readable, so this pin resolves indefinitely;
-        # it is frozen by construction rather than by discipline.
+        # Its OWN pin, not the plugin's. Same repo, two points in its history:
+        # `Strip the SEED ceremony` deleted ref/scripts/, so the plugin pin moves
+        # forward past it while create_plow_chat_curl.sh exists only BEFORE it.
+        # One shared ref would send the plugin's post-strip SHA at this URL and
+        # 404 -- on the one command that is a one-time irreversible spend. So
+        # this pin is frozen behind the strip by construction, not by discipline.
         ref="${AGENT_MGR_ACTIVATE_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-activate.ref")}"
         [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the activate ref must be a 40-char SHA, got: $ref"
         tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT

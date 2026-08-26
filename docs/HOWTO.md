@@ -181,7 +181,13 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 ## Bumping the plugin pin
 
 `agent-mgr restore <name>` installs the plugin as part of the whole deploy, and
-that is the normal path. After bumping `runtime/plow-chat-plugin.ref` alone,
+that is the normal path. Note there are **two** SHA pins and they name different
+repos: `runtime/plow-chat-plugin.ref` is the adapter, in
+`plow-pbc/hermes-plow-chat`, and `runtime/plow-chat-activate.ref` is the
+activation script, still in the archived `plow-pbc/seed-hermes-plow`. Bumping one
+does not move the other, and swapping them 404s `activate`.
+
+After bumping `runtime/plow-chat-plugin.ref` alone,
 `agent-mgr install-plugin <name>` does just that step — useful when an agent's
 restore hook is expensive (the rentals agent re-seeds a vault and rebuilds its
 property hubs) and nothing else changed.
