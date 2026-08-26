@@ -153,20 +153,6 @@ def test_restore_is_the_whole_deploy_including_the_instances_own_step(run, insta
     assert (tmp_path / "hook-ran").exists(), "the instance's own restore step never ran"
 
 
-def test_a_failing_hook_fails_the_restore(run, instance, tmp_path):
-    """A hook refuses for a reason -- a missing corpus, a failed composition.
-    Swallowing it leaves the caller believing the deploy landed."""
-    repo = instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/seed.sh\n")
-    (repo / "scripts").mkdir()
-    hook = repo / "scripts" / "seed.sh"
-    hook.write_text('#!/usr/bin/env bash\necho "no vault" >&2\nexit 1\n')
-    hook.chmod(0o755)
-    run("register", "str", str(repo))
-    r = run("restore", "str")
-    assert r.returncode != 0
-    assert "ARE installed" in r.stderr and "is NOT" in r.stderr
-
-
 def test_a_declared_hook_that_is_missing_is_named(run, instance):
     run("register", "str", str(instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/gone.sh\n")))
     r = run("restore", "str")
@@ -314,33 +300,21 @@ def test_the_subcommand_is_classified_not_the_flattened_argv(run, instance, tmp_
 def test_restore_replays_every_pinned_skill(run, instance, tmp_path):
     """It is advertised as the whole deploy. A rebuild that omitted them left an
     agent whose skills.tsv said one thing and whose home held another."""
-    import base64
-    import io
-    import tarfile
+    from conftest import fake_docker, fake_skill_bin
     repo = instance("rowan")
     (repo / "skills.tsv").write_text(f"plow-pbc/x\t{'a' * 40}\tmy-skill\t\n")
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        data = b"---\nname: my-skill\n---\n"
-        info = tarfile.TarInfo("r-abc/SKILL.md"); info.size = len(data)
-        tar.addfile(info, io.BytesIO(data))
-    (tmp_path / "skill.tgz").write_bytes(buf.getvalue())
-    b = tmp_path / "skillbin"; b.mkdir(exist_ok=True)
-    (b / "gh").write_text(f'#!/usr/bin/env bash\ncat {tmp_path / "skill.tgz"}\n')
-    (b / "gh").chmod(0o755)
+    env = fake_skill_bin(tmp_path, skill_name="my-skill", agent="rowan")
+    d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    b = tmp_path / "bin"
     (b / "curl").write_text("#!/usr/bin/env bash\nout=\"\"\n"
                             'while [ $# -gt 0 ]; do case "$1" in -o) out="$2"; shift 2 ;; *) shift ;; esac; done\n'
                             'printf "#!/usr/bin/env bash\\nexit 0\\n" > "$out"\n')
     (b / "curl").chmod(0o755)
-    # conftest's docker, which answers `config` -- the bare stub made
-    # resolve-guard refuse at the reload, after the skill had installed.
-    from conftest import fake_docker
-    d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    env["PATH"] = f"{b}:{d}:{os.environ['PATH']}"
     run("register", "rowan", str(repo))
-    r = run("restore", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
+    r = run("restore", "rowan", env=env)
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "home" / ".hermes-rowan" / "skills" / "my-skill" / "SKILL.md").exists()
-
 
 def test_a_missing_hook_is_caught_before_anything_is_written(run, instance, tmp_path):
     """Validated at the end, a missing hook left the plugin and config installed

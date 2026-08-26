@@ -1,44 +1,6 @@
-import base64
 import os
 
-from conftest import fake_docker
-
-
-def _fake_bin(tmp_path, skill_name="property-hunt", extra_files=(), agent="property",
-              subdirs=(), src=None):
-    """A `gh` that serves a real tarball, so the REAL fetch-skill runs end to end.
-
-    A tarball rather than a contents listing because that is what the installer
-    now asks for -- and it is the only shape that can carry the nested
-    directories the per-file version silently dropped.
-    """
-    import io
-    import tarfile
-
-    b = tmp_path / "bin"
-    b.mkdir(exist_ok=True)
-    root = "plow-pbc-repo-abc1234"
-    prefix = f"{root}/{src}/" if src else f"{root}/"
-    members = {f"{prefix}SKILL.md": f"---\nname: {skill_name}\n---\n# {skill_name}\n"}
-    for name, body in extra_files:
-        members[f"{prefix}{name}"] = body
-    for name, body in subdirs:
-        members[f"{prefix}{name}"] = body
-
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-        for name, body in members.items():
-            data = body.encode()
-            info = tarfile.TarInfo(name)
-            info.size = len(data)
-            tar.addfile(info, io.BytesIO(data))
-    (tmp_path / "skill.tgz").write_bytes(buf.getvalue())
-
-    (b / "gh").write_text(f'#!/usr/bin/env bash\ncat {tmp_path / "skill.tgz"}\n')
-    (b / "gh").chmod(0o755)
-    fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{agent}", name=agent,
-                running=False)
-    return {"PATH": f"{b}:{os.environ['PATH']}"}
+from conftest import fake_skill_bin as _fake_bin
 
 
 def test_add_skill_installs_into_the_agents_skills_directory(run, instance, tmp_path):
