@@ -23,11 +23,11 @@ sourced. Everything after that point is portable, and `python3` and `docker`
 have to be on `PATH`.
 
 ```sh
-agent-mgr new rowan ~/services/errands-hermes-agent   # scaffold its repo, both platforms wired
-agent-mgr restore rowan      # the whole deploy: config, plugin, restore hook
-agent-mgr activate rowan     # prints a code; text it from the agent's phone
-agent-mgr up rowan
-agent-mgr sign-in rowan
+agent-mgr new errands ~/services/errands-hermes-agent   # scaffold the repo
+agent-mgr restore errands    # the whole deploy: config, plugin, restore hook
+agent-mgr activate errands   # prints a code; text it from the agent's phone
+agent-mgr up errands
+agent-mgr sign-in errands
 ```
 
 ## Why it exists
