@@ -471,3 +471,21 @@ def test_a_home_symlinked_onto_another_disk_still_works(run, instance, tmp_path)
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"a symlinked home was refused: {r.stderr}"
+
+
+def test_two_homes_aliasing_one_directory_through_a_symlink_collide(run, instance, tmp_path):
+    """The shape check needs the home as DECLARED -- a home symlinked onto a
+    bigger disk is ordinary. This check asks a different question, "is it the
+    same directory", and two spellings reaching one directory through a symlink
+    is the aliasing the loop exists to catch. Normalising both lexically fixed
+    the first and reopened the second."""
+    target = tmp_path / "srv" / "shared"
+    target.mkdir(parents=True)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / ".hermes-rowan").symlink_to(target)
+    run("register", "rowan", str(instance("rowan")))
+    run("register", "copycat",
+        str(instance("copycat", descriptor=f"AGENT_HOME={target}\n")))
+    r = run("restore", "copycat")
+    assert r.returncode != 0, "two descriptors reached one directory undetected"
+    assert "rowan is already registered there" in r.stderr

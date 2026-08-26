@@ -188,4 +188,8 @@ def test_a_siblings_tag_pinned_descriptor_degrades_to_a_refusal(run, instance, t
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
     r = run("restore", "str")
     assert r.returncode != 0
-    assert "could not resolve bad" in r.stderr
+    # The REFUSAL, not the warning above it: that line is echoed before
+    # `continue` whether or not `skipped` is honoured, so deleting the
+    # fail-closed arm left this green.
+    assert "cannot prove no one else claims that home" in r.stderr
+    assert "could not resolve bad" in r.stderr, "the skipped sibling was not named"

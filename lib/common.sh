@@ -330,7 +330,11 @@ require_running_container_is_ours() {
     # Same canonicalisation as AGENT_HOME, or the comparison is between two
     # spellings again -- one of them from a source we do not control.
     [ -z "$mounted" ] || mounted="$(realpath -m -s -- "$mounted")"
-    if [ -n "$mounted" ] && [ "$mounted" = "$AGENT_HOME" ]; then continue; fi
+    # Same-directory question, so resolved on both sides like the collision loop.
+    if [ -n "$mounted" ] \
+        && [ "$(realpath -m -- "$mounted")" = "$(realpath -m -- "$AGENT_HOME")" ]; then
+        continue
+    fi
     # No removal command here, deliberately, and no branch that could produce
     # one. The obvious discriminator -- does the foreign home exist? -- is
     # evaluated as the invoking user on THIS host, while the mount is a path on
@@ -483,7 +487,13 @@ require_own_home() {
             echo "agent-mgr: could not resolve $other -- the collision check skipped that row" >&2
             continue
         fi
-        [ "$ohome" = "$AGENT_HOME" ] \
+        # Compared RESOLVED, unlike the shape check above. Two questions, two
+        # normalisations: the shape rule needs the home as declared, because a
+        # home symlinked onto a bigger disk is ordinary and following it would
+        # match neither accepted shape. This one asks "is it the same
+        # directory", and two spellings reaching one directory through a symlink
+        # is exactly the aliasing this loop exists to catch.
+        [ "$(realpath -m -- "$ohome")" = "$(realpath -m -- "$AGENT_HOME")" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)
 
