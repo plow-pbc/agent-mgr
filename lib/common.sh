@@ -195,11 +195,16 @@ compose() {
     docker compose -p "$AGENT_PROJECT" "${files[@]}" --env-file "$AGENT_DESCRIPTOR" "$@"
 }
 
-# Compose subcommands that stop or replace the container. `start`, `pause` and
-# `unpause` are here because they interrupt a running process just as surely as
-# `down` does -- the earlier list omitted them, and the earlier classification
-# flattened "$*", which matched the word anywhere in a prompt or a filename.
-COMPOSE_TRANSITIONS="up down start stop restart kill rm create pause unpause"
+# Compose subcommands that leave the container running as it is. `exec` is here
+# because it runs INSIDE a container without stopping or replacing one, which is
+# what the veto guards.
+#
+# Stated as what is safe rather than what is dangerous, which is the safe
+# direction and the reason this replaced the transition list it used to be: a
+# list of stoppers has to be complete to be correct, and it was not -- `scale
+# hermes=0` stops a container and appeared in neither list. Missing an entry
+# here costs a needless guard call; missing one there skipped the veto.
+COMPOSE_LEAVES_IT_RUNNING="logs ps config version top port images events ls exec"
 
 # Every route to a container transition goes through here, so the instance's
 # veto cannot be bypassed by adding a call site that forgets it.
@@ -208,15 +213,41 @@ compose_transition() {
     compose "$@"
 }
 
-# The subcommand of a compose argv, or empty. The first word that IS one --
-# what precedes it is the project name, file flags and their values.
-compose_subcommand() {
-    local w
-    for w in "$@"; do
-        case " $COMPOSE_TRANSITIONS logs ps config exec version " in
-            *" $w "*) printf '%s\n' "$w"; return ;;
+# Does this compose argv leave the container alone? The subcommand must be the
+# FIRST word, so there is nothing to search and nothing to mistake: agent-mgr
+# supplies the global options itself (-p, --env-file, -f), so a caller has none
+# to pass, and scanning for the first recognised word let a global option's
+# VALUE stand in for the subcommand -- `--project-name logs down` classified
+# as `logs`.
+compose_transitions_nothing() {
+    case " $COMPOSE_LEAVES_IT_RUNNING " in
+        *" ${1:-} "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# `run` must replace the image entrypoint, or s6 boots a gateway beside the live
+# one. --entrypoint has to come before the SERVICE, which is the first word
+# after `run` that is not a flag or a flag's value: docker treats a later one as
+# an argument to the service's own command, so the flag is present, s6 still
+# starts, and a substring check for it passes.
+run_replaces_the_entrypoint() {
+    shift  # the `run` subcommand itself
+    local a
+    while [ $# -gt 0 ]; do
+        a="$1"; shift
+        case "$a" in
+            --entrypoint|--entrypoint=*) return 0 ;;
+            # Flags that consume the next word. Anything else starting with `-`
+            # is a bare flag; anything not starting with `-` is the service, and
+            # by then it is too late.
+            -e|--env|-l|--label|-p|--publish|-u|--user|-v|--volume|-w|--workdir|--name)
+                shift || true ;;
+            -*) ;;
+            *) return 1 ;;
         esac
     done
+    return 1
 }
 
 # Refuse to act unless the resolved config is this agent's AND a gateway is up.
@@ -278,14 +309,19 @@ require_own_home() {
     # agent declares its bare `.hermes` and satisfies any name-shape test, being
     # self-consistent and wrong. Asking the registry catches it whatever the
     # home is called, so the shape rule below no longer has to carry the weight.
+    # Resolved by load_agent in a subshell, not by a second parser here. A peer
+    # parser has to re-derive quote stripping, ${HOME} expansion and the
+    # convention default, and the copy drifted immediately: this one stripped
+    # only double quotes, so a sibling declaring AGENT_HOME='"'"'$HOME/.hermes'"'"'
+    # compared unequal to the same path and the collision went undetected --
+    # which is the one thing this loop exists to catch. A sibling whose
+    # descriptor load_agent refuses yields nothing and falls through to the
+    # convention, which is the safe direction.
     local other odir ohome
     while IFS=$'\t' read -r other odir; do
         [ -n "$other" ] && [ "$other" != "$AGENT_NAME" ] || continue
-        [ -f "$odir/agent.env" ] || continue
-        ohome="$(sed -n 's/^[[:space:]]*AGENT_HOME=//p' "$odir/agent.env" | tail -1)"
-        ohome="${ohome%\"}"; ohome="${ohome#\"}"
-        ohome="${ohome//\$\{HOME\}/$HOME}"; ohome="${ohome//\$HOME/$HOME}"
-        [ -n "$ohome" ] || ohome="$HOME/.hermes-$other"
+        ohome="$( load_agent "$other" >/dev/null 2>&1 && printf '%s' "$AGENT_HOME" )"
+        [ -n "$ohome" ] || continue
         [ "$ohome" = "$AGENT_HOME" ] \
             && die "refusing to write to $AGENT_HOME -- $other is already registered there"
     done < <(registry_list)

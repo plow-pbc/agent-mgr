@@ -145,3 +145,51 @@ def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
     r = run("compose", "rowan", "ps", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
+
+
+@pytest.mark.parametrize("args, why", [
+    (("run", "--rm", "hermes", "--entrypoint", "bash"),
+     "--entrypoint after the service is an argument to the service's command, "
+     "so s6 still boots -- a substring check for the flag passed this"),
+    (("run", "--rm", "-e", "--entrypoint", "hermes"),
+     "--entrypoint as another flag's VALUE is not an entrypoint override"),
+])
+def test_run_needs_the_entrypoint_before_the_service(run, instance, tmp_path, args, why):
+    """The whole failure this tool exists to prevent, reached through the escape
+    hatch: without a replaced entrypoint the image's s6 boots a second gateway
+    against the live agent's home."""
+    import os
+    from conftest import fake_docker
+    run("register", "rowan", str(instance("rowan")))
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    r = run("compose", "rowan", *args, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, why
+    assert "without --entrypoint before the service" in r.stderr
+
+
+def test_a_subcommand_this_tool_has_not_heard_of_asks_the_veto(run, instance, tmp_path):
+    """`scale hermes=0` stops a container and was in neither list back when the
+    guard enumerated stoppers. Naming what is SAFE instead means an unknown
+    subcommand asks the veto rather than skipping it."""
+    import os
+    from conftest import fake_docker
+    from test_install import _guarded
+    _guarded(instance, run, tmp_path, refuses=True)
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    r = run("compose", "rowan", "scale", "hermes=0", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, "scale stopped a container past a refusing guard"
+    assert "refused" in r.stderr
+
+
+def test_a_global_options_value_cannot_stand_in_for_the_subcommand(run, instance, tmp_path):
+    """Scanning the argv for the first recognised word let `--project-name logs`
+    classify a later `down` as a read. The subcommand is $1 now."""
+    import os
+    from conftest import fake_docker
+    from test_install import _guarded
+    _guarded(instance, run, tmp_path, refuses=True)
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    r = run("compose", "rowan", "--project-name", "logs", "down",
+            env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0, "a down hid behind a global option's value"
+    assert "refused" in r.stderr

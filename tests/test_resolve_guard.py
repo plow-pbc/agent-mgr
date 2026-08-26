@@ -177,3 +177,15 @@ def test_sign_in_will_not_mint_into_a_siblings_home(run, instance, tmp_path):
     r = run("sign-in", "property")
     assert r.returncode != 0
     assert "refusing to write" in r.stderr
+
+
+def test_a_siblings_single_quoted_home_still_collides(run, instance, tmp_path):
+    """The collision check used to run its own descriptor parser, which stripped
+    only double quotes -- so a sibling declaring AGENT_HOME='$HOME/.hermes'
+    compared unequal to the same path and the collision it exists to catch went
+    through. One resolver now, so both spellings resolve identically."""
+    run("register", "str", str(instance("str", descriptor="AGENT_HOME='$HOME/.hermes'\n")))
+    run("register", "rowan", str(instance("rowan", descriptor='AGENT_HOME="$HOME/.hermes"\n')))
+    r = run("restore", "rowan")
+    assert r.returncode != 0, "a second agent claimed a home a sibling already declares"
+    assert "str is already registered there" in r.stderr

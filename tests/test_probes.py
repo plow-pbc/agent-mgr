@@ -80,6 +80,26 @@ def test_the_token_is_never_printed_in_full(run, instance, tmp_path):
     assert "lue" in r.stderr, "the last 3 characters identify it without disclosing it"
 
 
+def test_the_token_never_reaches_the_process_table(run, instance, tmp_path):
+    """A different disclosure than printing it. Passed as `-H "Authorization:
+    Bearer $tok"`, the live relay credential sits in the argv of `docker compose
+    exec` for the length of the probe -- readable by `ps` from any account on
+    the host. It goes in on stdin as a curl config instead, so the recorded argv
+    must not carry it."""
+    import os
+    from conftest import fake_docker
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("restore", "property")
+    _with_latch(tmp_path, "property", tok="supersecrettokenvalue")
+    log = tmp_path / "docker.log"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-property",
+                    name="property", exec_output="200", log=log)
+    run("check-latch", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    argv = log.read_text()
+    assert "exec" in argv, "the probe did not run, so this asserts nothing"
+    assert "supersecrettokenvalue" not in argv, "the token was passed in argv"
+
+
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
     run("restore", "property")

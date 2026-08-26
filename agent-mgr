@@ -233,10 +233,18 @@ case "$cmd" in
         # invisible to a host-side probe. There is deliberately no host
         # fallback: a host answer is exactly the evidence entering the namespace
         # was meant to stop accepting.
-        code="$(compose exec -T hermes \
-            curl -sS --max-time 30 -o /dev/null -w '%{http_code}' \
+        #
+        # The token goes in on STDIN as a curl config, never in argv. Spelled
+        # out because the argv form looked equivalent: `docker compose exec ...
+        # -H "Authorization: Bearer $tok"` puts the live relay credential in the
+        # process table of a shared host for the length of the probe, readable
+        # by `ps` from any account. printf is a shell builtin, so the host side
+        # forks nothing carrying it either.
+        code="$(printf 'header = "Authorization: Bearer %s"\n' "$tok" \
+            | compose exec -T hermes \
+            curl -sS --max-time 30 -o /dev/null -w '%{http_code}' --config - \
             -X POST "https://api.plow.co/v1/relay/devices/$uid/mcp" \
-            -H "Authorization: Bearer $tok" -H 'Content-Type: application/json' \
+            -H 'Content-Type: application/json' \
             -H 'Accept: application/json, text/event-stream' \
             -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' 2>"$err")" || true
         # A dead credential and a dead network need different fixes, so they must
@@ -331,21 +339,18 @@ EOF
         # failure this tool exists to prevent; with it, s6 never starts.
         load_agent "${1:-}"; shift
         [ $# -ge 1 ] || die "usage: agent-mgr compose <name> <docker compose args...>"
-        case " $* " in
-            *" run "*)
-                case " $* " in
-                    *" --entrypoint "*) ;;
-                    *) die "refusing 'compose run' without --entrypoint: the image's s6 entrypoint would start a second gateway against ${AGENT_NAME}'s home" ;;
-                esac ;;
-        esac
+        # The subcommand is $1, not a word found somewhere in the argv. agent-mgr
+        # supplies the global options itself, so a caller has none to pass.
+        [ "$1" = "run" ] && ! run_replaces_the_entrypoint "$@" \
+            && die "refusing 'compose run' without --entrypoint before the service: the image's s6 entrypoint would start a second gateway against ${AGENT_NAME}'s home"
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
-        # Classified on the actual subcommand, not a flattened "$*": the word
-        # "up" can appear in a prompt, a filename or a flag value.
-        sub="$(compose_subcommand "$@")"
-        case " $COMPOSE_TRANSITIONS " in
-            *" $sub "*) compose_transition "$@" ;;
-            *)          compose "$@" ;;
-        esac
+        # Leaves-it-running passes through; everything else is a transition and
+        # asks the veto, whether or not this tool has heard of it.
+        if compose_transitions_nothing "$1"; then
+            compose "$@"
+        else
+            compose_transition "$@"
+        fi
         ;;
     -h|--help|help) usage ;;
     *) printf 'agent-mgr: unknown command: %s\n\n' "$cmd" >&2; usage >&2; exit 2 ;;
