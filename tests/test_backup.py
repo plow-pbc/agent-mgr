@@ -215,11 +215,23 @@ def test_an_orphaned_stage_is_swept_rather_than_leaked_forever(run, instance, tm
     os.utime(orphan, (0, 0))
     live = backup_dir / ".rowan-ef34gh"
     live.write_text("another invocation's stage, running right now")
+    # $dest is an operator-named directory that may hold anything, and deleting
+    # a SIBLING's stage is not tidy-up: that run's `mv` then fails and its
+    # backup is lost. Both of these are old enough to be swept if the sweep
+    # were not anchored to this agent's own staging shape.
+    sibling = backup_dir / ".life-ab12cd"
+    sibling.write_text("another agent's orphan, not this run's to prune")
+    os.utime(sibling, (0, 0))
+    bystander = backup_dir / ".keep-me"
+    bystander.write_text("an operator's own dotfile")
+    os.utime(bystander, (0, 0))
 
     assert run("backup", "rowan",
                env={"AGENT_MGR_BACKUP_DIR": str(backup_dir)}).returncode == 0
     assert not orphan.exists(), "the orphaned stage was left to accumulate"
     assert live.exists(), "a concurrent invocation's live stage must survive the sweep"
+    assert sibling.exists(), "another agent's stage is not this run's to prune"
+    assert bystander.exists(), "a file this command never wrote must survive"
 
 
 def test_a_home_written_while_it_is_read_still_produces_an_archive(run, instance, tmp_path, backup_dir):

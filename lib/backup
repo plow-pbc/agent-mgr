@@ -120,6 +120,16 @@ done
 # every future backup's free space depends on: str's archive alone is 359 MB.
 # `-mtime +0` is what keeps a CONCURRENT invocation's live stage safe while
 # still bounding the orphans.
-find "$dest" -maxdepth 1 -type f -name ".$name-??????" -mtime +0 -delete
+# Best-effort, and this suppression is the same design decision as the `if`
+# guarding the archive prune above: the invariant is that nothing after a
+# successful `mv` may abort the run that just wrote a good archive. `find` exits
+# non-zero on any traversal or unlink error, and two are reachable normally --
+# a concurrent same-agent run `mv`s its stage away between readdir and the stat
+# `-mtime` needs (ENOENT), and an orphan this invocation cannot unlink. Either
+# would kill the script before it prints the archive path, and land the agent in
+# `--all`'s failed list, on a backup that in fact succeeded. A missed sweep is
+# retried the next night; a false failure is the cry-wolf this branch exists to
+# stop.
+find "$dest" -maxdepth 1 -type f -name ".$name-??????" -mtime +0 -delete || true
 
 printf '%s (%s)\n' "$archive" "$(du -h "$archive" | cut -f1)"
