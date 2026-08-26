@@ -309,6 +309,14 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     ({"build": True, "pull_policy": "always"}, True,
      "and a policy that refetches IS the hole -- it fetches over the top of "
      "what this host built", "sets pull_policy: always"),
+    ({"build": True, "pull_policy": "refresh"}, True,
+     "a real Compose policy that refetches and was absent from the denylist -- "
+     "which is why the arm is an allowlist", "sets pull_policy: refresh"),
+    ({"build": True, "pull_policy": "some_future_policy"}, True,
+     "anything the spec adds later is refused unnamed, rather than admitted",
+     "sets pull_policy: some_future_policy"),
+    ({"build": True, "pull_policy": "build"}, False,
+     "`build` leaves a built image alone", ""),
     ({"build": True, "pull_policy": "never"}, False,
      "an explicit never is fine too, just not required", ""),
 ])
