@@ -5,15 +5,16 @@ One CLI for the Hermes agent fleet. It brings up and manages containers running
 line — and **Plow Latch** — the Mac it is allowed to drive. Standing up a new
 agent is a command rather than a copy-paste of the last one.
 
-Install is a clone and a symlink — there is no release and no package. The CLI
-itself is still in review ([#8](https://github.com/plow-pbc/agent-mgr/pull/8));
-until it lands, `main` is these two documents and the clone has nothing to link.
+Install is a clone and a symlink — there is no release and no package:
 
 ```sh
 git clone git@github.com:plow-pbc/agent-mgr.git ~/services/agent-mgr
-mkdir -p ~/.local/bin                    # must be on PATH
+mkdir -p ~/.local/bin
 ln -sf ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
 ```
+
+`~/.local/bin` must be on your `PATH`. If the clone has no `agent-mgr` script at
+its root, the CLI has not landed on `main` yet.
 
 ```sh
 agent-mgr new rowan          # scaffold the agent's repo, both platforms wired
