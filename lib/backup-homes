@@ -27,21 +27,26 @@ dest="${1:?usage: agent-mgr backup-homes <dest>}"
 # guard was defeated one step later in the sequence, because write access to a
 # directory always wins the race. So: own it, and let nobody else write it.
 #
-# One expression covers all of it -- exists, is a directory, is ours, and
-# carries neither the group nor the other write bit. Both bits, the way ssh
-# refuses a group-readable key: a default umask of 002 makes `mkdir` produce
-# 0775, so the strict form is the one that does not depend on how the operator's
-# host is configured. It costs one `chmod go-w` at setup, and the HOWTO's
-# snippet creates the directory 0700 so nobody meets the error.
-[ -n "$(find "$dest" -maxdepth 0 -type d -user "$(id -un)" ! -perm -g+w ! -perm -o+w 2>/dev/null)" ] \
-    || { echo "backup-homes: $dest must be a directory you own that nobody else can write -- try: mkdir -m 700 -p $dest && chmod go-w $dest" >&2; exit 1; }
+# One expression covers exists, is a directory, is ours, and carries neither the
+# group nor the other write bit. Both bits, the way ssh refuses a group-readable
+# key: a default umask of 002 makes `mkdir` produce 0775, so the strict form is
+# the one that does not depend on how the operator's host is configured.
+#
+# `-H` resolves the starting point only, so a destination symlinked onto a
+# bigger disk is checked at its target rather than refused -- the same shape
+# this command already supports for a home.
+#
+# It is $dest ITSELF and no further: an ancestor another account can write lets
+# that account rename $dest away after this line, and walking every component to
+# a trust root is the syscall-guard sequence this check exists to stop chasing.
+# The path leading to $dest is the operator's to get right.
+[ -n "$(find -H "$dest" -maxdepth 0 -type d -user "$(id -un)" ! -perm -g+w ! -perm -o+w 2>/dev/null)" ] \
+    || { echo "backup-homes: $dest must be a directory you own that nobody else can write -- try: chmod 700 $dest" >&2; exit 1; }
 
-# One directory per run. Not a security boundary -- the line above is that --
+# One directory per run. Not a security boundary -- the check above is that --
 # but it is the uniqueness and the unit of pruning. The pid is there because
 # the stamp is only second-resolution, and two runs that did collide fail
-# loudly at `mkdir` rather than writing over each other. `mkdir`, not
-# `mkdir -p`: an unmounted NAS or a typo'd path must fail rather than have its
-# tree built locally under a run that reports success.
+# loudly here rather than writing over each other.
 umask 077
 run="$dest/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir "$run"

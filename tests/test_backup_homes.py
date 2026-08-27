@@ -15,16 +15,29 @@ import pytest
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 
 
-@pytest.fixture
-def dest(tmp_path):
-    """`backup-homes` refuses a destination anyone else can write, and the
-    runner's umask is not ours to assume — this host's default of 002 makes a
-    plain `mkdir` 0775. Pinning the mode here is the same move as forcing
-    `umask 022` on the child: it makes each test assert the script's behaviour
-    rather than the host's."""
+@pytest.fixture(params=["plain", "symlinked"])
+def dest(tmp_path, request):
+    """Two things at once, so neither needs its own near-identical test.
+
+    The mode: `backup-homes` refuses a destination anyone else can write, and
+    the runner's umask is not ours to assume — this host's default of 002 makes
+    a plain `mkdir` 0775. Pinning it is the same move as forcing `umask 022` on
+    the child, so each test asserts the script's behaviour rather than the
+    host's.
+
+    The shape: a destination symlinked onto a bigger disk is supported, the same
+    as a home, and the ownership check has to follow it to the target rather
+    than refuse the link. Running every test below against both is what pins
+    that."""
     d = tmp_path / "dest"
-    d.mkdir()
-    d.chmod(0o700)
+    if request.param == "plain":
+        d.mkdir()
+        d.chmod(0o700)
+    else:
+        target = tmp_path / "big" / "store"
+        target.mkdir(parents=True)
+        target.chmod(0o700)
+        d.symlink_to(target)
     return d
 
 
@@ -125,10 +138,10 @@ def test_each_run_gets_its_own_directory(tmp_path, dest):
     assert pids[0] != pids[1], "both runs used the same pid field"
 
 
-def test_a_destination_that_does_not_exist_fails_rather_than_being_created(tmp_path):
-    """`mkdir`, not `mkdir -p`. An unmounted NAS or a typo'd path is the case:
-    with `-p` the run builds the whole tree locally, reports success, and the
-    archives are on the wrong disk — or gone at the next mount."""
+def test_a_destination_that_does_not_exist_is_refused_and_not_created(tmp_path):
+    """An unmounted NAS or a typo'd path. The run must fail rather than build
+    the tree locally, report success, and leave the archives on the wrong disk
+    — or gone at the next mount."""
     root, dest = tmp_path / "home", tmp_path / "not" / "mounted"
     (root / ".hermes-rowan").mkdir(parents=True)
     (root / ".hermes-rowan" / ".env").write_text("x\n")

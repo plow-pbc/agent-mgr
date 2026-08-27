@@ -217,11 +217,22 @@ the command refuses one that is not. That is a precondition rather than
 something it defends against: write access to a directory is permission to
 unlink and rename its entries, so anything else able to write the destination
 can replace the run directory after it is created, and no sequence of syscalls
-inside the run wins that race. Create it strictly and you never meet the error:
+inside the run wins that race. It may be a symlink onto a bigger disk; the
+check follows it and lands on the target.
 
 ```sh
-mkdir -m 700 -p ~/agent-backups
+mkdir -p ~/agent-backups && chmod 700 ~/agent-backups
 ```
+
+The `chmod` is the load-bearing half and is needed on a destination that
+**already exists** — `mkdir -m 700` applies its mode only to directories it
+creates, so on an existing `~/agent-backups` it exits 0 and changes nothing. A
+default umask of 002 makes a plain `mkdir` produce 0775, so an existing one
+very likely needs it.
+
+The check covers that directory and no further. An ancestor another account can
+write is outside it, and outside what any check here could hold onto — the path
+leading to your destination is yours to get right.
 
 Nightly, with 14 days kept. The run directory is the unit to prune; the
 `-name` clause is there for archives written flat by an earlier shape, and
