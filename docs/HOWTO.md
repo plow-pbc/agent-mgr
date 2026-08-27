@@ -240,6 +240,15 @@ it, or delete them. Creating that directory yourself is refused: it carries a
 marker written when this command makes it, so a `backup-homes/` that happens to
 be *yours* is never adopted and never pruned.
 
+A `backup-homes/` written by an **earlier version** of this command has no
+marker either, and both halves refuse it rather than guess. Do not move that one
+aside — its runs would land in the destination where nothing prunes them.
+Adopt it:
+
+```sh
+touch ~/agent-backups/backup-homes/.written-by-backup-homes
+```
+
 `prune-backups` is its own command rather than a `find` written out here: it is
 an `rm -rf`, it shipped over-broad three times while it lived in this file, and
 the only way to test it here was to parse the snippet back out and re-run it.

@@ -36,7 +36,7 @@ runs="$dest/backup-homes"
 # have -- the class the child exists to close, reached by name collision. A
 # symlink is refused with it, for the same reason the other half refuses one.
 if [ -L "$runs" ] || [ ! -f "$runs/.written-by-backup-homes" ]; then
-    echo "prune-backups: $runs was not created by backup-homes -- refusing to delete anything in it" >&2
+    echo "prune-backups: $runs carries no marker -- refusing to delete anything in it. If an earlier version of backup-homes made it: touch $runs/.written-by-backup-homes" >&2
     exit 1
 fi
 
