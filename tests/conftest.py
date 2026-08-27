@@ -151,6 +151,16 @@ def _no_real_docker_on_path(tmp_path_factory):
         subprocess.Popen = real_popen
 
 
+# The latch declaration an agent's config carries, in one place: check-latch
+# reads it to decide whether an agent has a Mac at all, and set-latch refuses
+# without it, so two test modules need the same contract and had a copy each.
+LATCH_CONFIG = (
+    "model:\n  provider: openai-codex\n"
+    "mcp_servers:\n  latch:\n"
+    "    url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp\n"
+)
+
+
 @pytest.fixture
 def registry(tmp_path):
     """An isolated registry file; never the operator's real one."""
@@ -160,7 +170,7 @@ def registry(tmp_path):
 @pytest.fixture
 def run(registry, tmp_path):
     """Invoke the real agent-mgr CLI with an isolated registry and HOME."""
-    def _run(*args, env=None, check=False):
+    def _run(*args, env=None, check=False, input=None):
         e = dict(os.environ)
         e["AGENT_MGR_REGISTRY"] = str(registry)
         e["HOME"] = str(tmp_path / "home")
@@ -174,7 +184,9 @@ def run(registry, tmp_path):
         e["PATH"] = f"{b}:{e['PATH']}"
         if env:
             e.update(env)
-        return spawn([str(ROOT / "agent-mgr"), *args], e, check=check)
+        # `input` for the commands that read a credential on stdin rather than
+        # from argv -- set-latch is the first.
+        return spawn([str(ROOT / "agent-mgr"), *args], e, check=check, input=input)
 
     return _run
 

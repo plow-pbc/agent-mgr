@@ -125,6 +125,7 @@ usage: agent-mgr <command> [args]
   add-skill <name> <repo> [--ref SHA] [--dest PATH] [--src PATH]
   activate <name>             mint the Plow Chat credential pair
   sign-in <name>              model OAuth for this agent
+  set-latch <name>            read the Latch pair on stdin into its dotenv
 
   backup-homes <dest>         snapshot every agent home on this host
 
@@ -193,6 +194,14 @@ COMPOSE_KEYS="COMPOSE_PROJECT_NAME COMPOSE_FILE COMPOSE_ENV_FILE COMPOSE_ENV_FIL
 # that will not guess.
 parse_env_file() {
     local file="$1" allow="$2" role="$3" collect="" _lineno=0
+    # Named, because the redirection that opens this file below reports an
+    # unreadable one as a bare `line N: <path>: Permission denied` from the
+    # sourcing shell -- which names this file rather than the agent, and reads
+    # as a bug in agent-mgr rather than a permission problem on a dotenv the
+    # operator can fix. A `.env` written 600 under another account is the
+    # realistic way to get here. Same posture as the rest of this function:
+    # fatal, not guessing.
+    [ -r "$file" ] || die "cannot read $file"
     [ "$role" = descriptor ] && collect=hooks
     local line key value _rest
     # Expanded at its two call sites as ${AGENT_HOOK_ENV[@]+"..."} rather than
@@ -775,6 +784,54 @@ require_running() {
     # exec a turn inside PRODUCTION's gateway and answer into the live owners'
     # channel, which is worse than restarting it.
     require_running_container_is_ours
+}
+
+# The value the gateway would load for KEY.
+#
+# ONE spelling, deliberately: `KEY=value` at column 0. This tool writes every
+# DOMO_* and PLOW_CHAT_* line in an agent's dotenv -- set-latch here, activate
+# through the pinned script, restore from the skeleton -- so the canonical form
+# is the only one that gets produced, and owning it is what lets this be four
+# lines instead of a second implementation of Hermes's dotenv grammar.
+#
+# Measured before it was narrowed, not assumed: across all three dotenvs on this
+# host -- 23 keys, three different producers, including the rentals agent's
+# hand-added HOSTEX_TOKEN and SEAM_API_KEY -- every declaration is already this
+# form. No `export`, no indent, no quotes, no duplicates. The compatibility
+# matrix that used to live here parsed spellings nothing on the fleet emits.
+#
+# A hand edit in some other spelling reads as absent, and that is the loud
+# failure this repo prefers: check-latch says the key is empty and names
+# `agent-mgr set-latch` as the fix, which then writes the canonical line.
+#
+# Last-wins falls out of assigning as it reads rather than stopping at a match,
+# which is what the gateway does too (hermes_cli/config.py assigns into a dict).
+dotenv_read() {
+    # No readability guard here: load_agent parses this same file for AGENT_TZ
+    # before any caller reaches this, and parse_env_file names an unreadable one
+    # there. A second check could only fire if the mode changed mid-command,
+    # which nothing here does -- and an unreachable guard that a test appears to
+    # cover is worse than none, because it reads as protection.
+    # The separator is required BEFORE the key test. Under -F= a line carrying
+    # no `=` puts the whole line in $1, so a stray bare `DOMO_MCP_TOKEN` matched
+    # the key and then substr returned that line as its own value -- non-empty,
+    # so the guard passed and the relay got `Bearer DOMO_MCP_TOKEN`, answered
+    # 401, and check-latch told the operator to revoke a live credential over a
+    # malformed line. The parser this replaced skipped `=`-less lines outright.
+    key="$1" awk -F= '
+        index($0, "=") && $1 == ENVIRON["key"] { v = substr($0, index($0, "=") + 1) }
+        END { gsub(/^[ \t]+|[ \t]+$/, "", v); printf "%s", v }' "$2"
+}
+
+# Does the INSTALLED config declare a latch server? The config is the
+# declaration, not the dotenv: a leftover DOMO_* pair from an earlier experiment
+# sits in a dotenv long after the config stopped declaring a latch, and keying
+# off the credential then probes a relay for an agent that cannot reach it.
+#
+# Two callers now -- check-latch reports it, set-latch refuses on it -- so the
+# awk lives here rather than being written twice with one of the copies drifting.
+config_declares_latch() {
+    awk '/^mcp_servers:/{m=1;next} /^[^[:space:]]/{m=0} m && $1=="latch:"{found=1} END{exit !found}' "$1"
 }
 
 # The pinned Plow Chat plugin, into this agent's home. A function rather than

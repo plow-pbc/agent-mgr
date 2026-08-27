@@ -25,11 +25,13 @@ plugin through `gh api` for **every** agent, not only one shipping a
 `skills.tsv`.
 
 ```sh
-agent-mgr new rowan          # scaffold the agent's repo, both platforms wired
-agent-mgr restore rowan      # the whole deploy: config, plugin, restore hook
-agent-mgr activate rowan     # prints a code; text it from the agent's phone
-agent-mgr up rowan
-agent-mgr sign-in rowan
+agent-mgr new errands ~/services/errands-hermes-agent
+agent-mgr restore errands    # the whole deploy: config, plugin, restore hook
+agent-mgr activate errands   # prints a code; text it from the agent's phone
+agent-mgr up errands
+agent-mgr sign-in errands
+agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
+agent-mgr check-latch errands
 ```
 
 ## Why it exists
@@ -78,23 +80,24 @@ second consumer exists.
 
 ## The fleet — what agent-mgr deploys
 
-Four agents on one Linux host (`wakeup`), each with its own repo. All four are
-private: they hold live credentials, and one holds an operations wiki compiled
-from real guest conversations.
+Three agent repos on one Linux host (`wakeup`). All are private: they hold live
+credentials, and one holds an operations wiki compiled from real guest
+conversations.
 
 | repo | what the agent is | what makes it different |
 |---|---|---|
-| [`srosro/str-hermes-agent`](https://github.com/srosro/str-hermes-agent) | short-term rentals — messages guests, answers from the operations wiki, unlocks doors | the only one running its product end to end; carries a vault mount and a PMS |
-| [`srosro/sams-property-hermes-agent`](https://github.com/srosro/sams-property-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | holds almost nothing: scripts, store, map and browser all live on the Mac, reached through Latch |
-| [`srosro/rowans-life-hermes-agent`](https://github.com/srosro/rowans-life-hermes-agent) | life and family logistics — mail, calendar | **not the same person's agent** — keyed to a different Plow account, and the only one on `America/Chicago` |
-| [`srosro/sams-admin-hermes-agent`](https://github.com/srosro/sams-admin-hermes-agent) | the operator's mail and calendar | the thinnest of the four |
+| [`plow-pbc/str-hermes-agent`](https://github.com/plow-pbc/str-hermes-agent) | short-term rentals — messages guests, answers from the operations wiki, unlocks doors | the only one running its product end to end; carries a vault mount and a PMS |
+| [`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | the skill and the agent are one checkout, mounted rather than pinned; the store, map and browser live on the Mac, reached through Latch |
+| [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar | the thinnest: no vault, no product surface, nothing on the Mac |
 
-Two repos in orbit around them:
+**A repo is not an agent — a registry row is.** Identity derives from the
+registered name rather than the directory, so a row may be named for a person
+(`sam-property`) against a repo named for a capability — and one checkout can
+serve several rows at once. See
+[One repo, several people](#one-repo-several-people) for what makes that safe.
 
-- [`plow-pbc/property-hunt`](https://github.com/plow-pbc/property-hunt) — the
-  house-hunting skill the property agent runs. Split out to be distributable
-  before that delivery path was retired; under the rule above it belongs in the
-  agent's own repo, and the split is being unwound rather than defended.
+One repo in orbit:
+
 - [`srosro/sams-str-vault`](https://github.com/srosro/sams-str-vault) — the STR
   agent's operations corpus, committed by hand and mounted beside its home.
 
@@ -141,7 +144,7 @@ slip a pulled tag past it.) A moving ref re-points a running
 agent on the next upstream push, and these carry the chat token and drive a
 filesystem. Copying the artifact in instead makes the agent's repo a fork of it
 — which is what
-[`srosro/str-hermes-agent#138`](https://github.com/srosro/str-hermes-agent/pull/138)
+[`plow-pbc/str-hermes-agent#138`](https://github.com/plow-pbc/str-hermes-agent/pull/138)
 spent −1,311 LOC undoing, after a vendored plugin drifted until production was
 serving a working tree.
 
@@ -164,8 +167,8 @@ An agent repo is normally one person's. It does not have to be: `AGENT_HOME`,
 rows against the *same checkout* resolve to separate homes and containers.
 
 ```sh
-agent-mgr register life  ~/services/life-assistant-hermes-agent
-agent-mgr register rowan ~/services/life-assistant-hermes-agent   # same directory
+agent-mgr register alice ~/services/shared-hermes-agent
+agent-mgr register bob   ~/services/shared-hermes-agent   # same directory
 ```
 
 `require_own_home` already enforces what makes that safe: it accepts a home only
@@ -196,7 +199,8 @@ cannot resolve it from the dotenv the way it resolves everything else. So
 `load_agent` reads that one key from the same file:
 
 ```sh
-printf '\nAGENT_TZ=America/Chicago\n' >> "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')/.env"
+BOB_HOME=$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')
+printf '\nAGENT_TZ=America/Chicago\n' >> "${BOB_HOME:?resolve printed no home}/.env"
 ```
 
 The leading newline is not decoration. A dotenv the gateway or a person last

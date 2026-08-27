@@ -24,11 +24,11 @@ agent repo, so every command works from any directory.
 ## Stand up a new agent
 
 ```sh
-agent-mgr new rowan ~/services/rowans-life-hermes-agent
-agent-mgr restore rowan
-agent-mgr activate rowan      # prints a code -- text it from THAT agent's phone
-agent-mgr up rowan
-agent-mgr sign-in rowan       # device-code OAuth; hand the URL to whoever owns it
+agent-mgr new errands ~/services/errands-hermes-agent
+agent-mgr restore errands
+agent-mgr activate errands    # prints a code -- text it from THAT agent's phone
+agent-mgr up errands
+agent-mgr sign-in errands     # device-code OAuth; hand the URL to whoever owns it
 ```
 
 `activate` is the step only a person can finish. `POST /v1/auth/activate` carries
@@ -37,20 +37,29 @@ the code must be sent from the handset that should own the agent. A code texted
 by the wrong person binds the agent to the wrong account, and it is a one-time
 spend.
 
-To let it drive a Mac, put the pair from that Mac in that instance's dotenv —
-`$AGENT_HOME/.env`, which `agent-mgr resolve rowan` prints:
+To let it drive a Mac, mint the pair on that Mac and hand it to `set-latch`,
+which writes it into that instance's own dotenv — `$AGENT_HOME/.env`, the one
+`agent-mgr resolve errands` prints, not the conventional spelling:
 
 ```sh
-DOMO_DEVICE_UID=dev_...
-DOMO_MCP_TOKEN=...
-agent-mgr check-latch rowan   # "latch reachable ... (HTTP 200)"
+agent-mgr set-latch errands     # prompts for DOMO_DEVICE_UID, then DOMO_MCP_TOKEN
+agent-mgr check-latch errands   # "latch reachable ... (HTTP 200)"
 ```
 
-Minting them needs the `relay:device` scope, which only the Mac running Latch
-holds. **`DOMO_DEVICE_UID` decides which Mac an agent can drive** — Latch
-sandboxes and asks per action, but a credential minted against your Mac lets
-that agent drive *your* machine. Mint each agent's against the Mac it should
-have.
+Both are read on **stdin**, never argv, and the token does not echo — a flag
+would put a live relay credential in the process table of a shared host, where
+`ps` reads it from any account, which is the same reason `check-latch` hands it
+to curl as a config on stdin. `set-latch` carries every other key in the dotenv
+through untouched, so an agent that keeps a PMS token or a lock API key beside
+them keeps them.
+
+Minting the pair needs the `relay:device` scope, which only the Mac running
+Latch holds — so this is the one credential `agent-mgr` cannot fetch for you.
+**Mint each agent's pair on the Mac it should drive.** The relay refuses a
+`DOMO_DEVICE_UID` that is not the calling credential's own account, so the uid
+is inert on its own and the *token* is what binds — which is why reusing
+another person's pair, rather than reusing their uid, is what would point this
+agent at their machine.
 
 **An agent that drives no Mac deletes the `latch:` block from its
 `config.yaml`.** The config is the declaration — `check-latch` reads it, not the
@@ -58,14 +67,118 @@ dotenv — so a declared latch with blank `DOMO_*` is a broken agent, not an
 unconfigured one, and it is reported as such. With the block gone,
 `check-latch` says "no latch configured" and exits clean.
 
+## Onboarding someone who is not you
+
+An agent for another person is the same deployment with one difference that
+changes the procedure: **three of its steps happen on their devices, and you
+cannot do any of them.** The account binding, the model credential and the Latch
+credential are each held by hardware you do not have.
+
+It is `register`, not `new` — the repo already exists, and a second row against
+it is the whole mechanism (*One repo, several people* in the
+[README](../README.md)):
+
+```sh
+agent-mgr register bob ~/services/shared-hermes-agent
+agent-mgr restore bob
+agent-mgr resolve bob        # prints AGENT_HOME -- bob's dotenv is the .env in it
+```
+
+Put `AGENT_TZ=America/Chicago` in that file, on its own line, then:
+
+```sh
+agent-mgr up bob
+```
+
+**The zone goes after `restore` and before `up`.** *Where a per-person value
+goes* in the [README](../README.md) owns why the zone is special, and carries a
+ready-made append recipe if you would rather not open an editor.
+
+Both bounds have a reason, and only one of them is quiet. Before `restore`
+there is no home to write into — `register` only adds a registry row, and the
+home is deliberately created by `restore` — so an early attempt fails in front
+of you. (Do not get around that by making the directory yourself: `restore`
+writes the dotenv `0600` and only when it is absent, so a file you create first
+keeps your umask — 644 on a stock host — for a file that ends up holding the
+chat token.) After `up` is the bound that costs you silently: the zone reaches
+the container when the container is **created**, so changing it later needs
+another `agent-mgr up`, never `restart`, which does not recreate.
+
+Check it before moving on — `agent-mgr resolve bob` reads that dotenv back, so
+it prints your zone if the edit landed and the fleet default if it did not.
+
+`up` before the codes, not after: `sign-in` runs `hermes auth add` **inside the
+container**, so it refuses until one is running. `activate` does not care — it
+writes to the home and reloads only if something is up.
+
+Then a strictly sequential exchange — each step finishes before the next starts,
+because two of them block:
+
+| | who | what |
+|---|---|---|
+| 1 | you | `agent-mgr activate bob` — prints `Text Plow Activate: <code>` and the number, then **polls until it arrives** |
+| 2 | **them** | text that code **from the handset that should own the agent** |
+| 3 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code, then **waits on the browser** |
+| 4 | **them** | open the URL in *their* browser, enter the code |
+| 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
+| 6 | you | put the pair in that same dotenv — the one `agent-mgr resolve bob` names — then `check-latch bob` and `restart bob` |
+
+**Neither code can be sent ahead.** `activate` does not return when it prints
+the code; it polls `/v1/auth/activate/redeem` until the text arrives, and the
+credential it writes is what the gateway reload at the end of it loads. `sign-in`
+likewise holds a `compose exec` open until the browser step completes. So this
+is one conversation, not a batch — and both halves need the person present, the
+first at their handset and the second at a browser.
+
+**Nothing else touches this agent while either one is waiting.** `sign-in`'s
+session lives inside the container, and anything that restarts it drops that
+session — `activate` and `restore` both reload a running gateway, and `restart`
+is itself. The trap is `activate`'s own failure message, which tells you to run
+`agent-mgr restart`: do that *before* starting `sign-in`, never during. If a
+restart lands anyway, re-run `sign-in` — it costs nothing, unlike the step above
+it.
+
+**Start only when they are ready.** The activation code carries a server-side
+TTL, and `activate`'s poll window is sized to match it — long enough to be
+comfortable, short enough that minting it the night before does not work. It is
+also a **one-time spend**: mint it while they are away and you cannot mint it
+again.
+
+**Step 2 is the account boundary, and the handset decides it.** `POST
+/v1/auth/activate` carries no credential; the binding is whoever texts the code
+back. A code texted by the wrong person binds the agent to the wrong account,
+one time, permanently.
+
+Steps 5 and 6 assume **their** Mac is already running Plow Latch, which is a
+prerequisite you cannot satisfy for them. Confirm it before step 1 — not for
+correctness, since 5 and 6 are free to run late, but for their calendar. A
+missing Latch found at step 5 does not end when they install it: step 5 still
+has to run, which is a second sitting with them — 6 is yours and follows. And
+step 1 cannot be un-started, so the agent is live and Mac-less until 6 lands.
+
+**The pair in step 5 is copy-once by design.** Latch drops it from memory once
+they confirm they have saved it, which relaying it through a chat window
+defeats — it lands in two message stores and both their backups, and that token
+drives their Mac. Nothing here prevents that, and it is the ordinary route
+today; just treat it as disclosed and re-mint from Latch once the agent is up.
+Re-minting is free. The exposure is not.
+
+**Tell them where their credentials live**, before step 2 rather than after:
+their Plow token, and through it their mailbox, sit in that dotenv on this
+host — readable by whoever runs `agent-mgr`, which is not them.
+
+`check-latch` proves the Mac answered and `sign-in` proves the credential
+minted. Nothing proves the person understood what they authorised, so that part
+is a conversation, not a command.
+
 ## Day to day
 
 ```sh
 agent-mgr ls
-agent-mgr up rowan / down rowan / restart rowan / logs rowan
-agent-mgr agent rowan "what's on today?"
-agent-mgr check-latch rowan
-agent-mgr check-connectors rowan
+agent-mgr up errands / down errands / restart errands / logs errands
+agent-mgr agent errands "what's on today?"
+agent-mgr check-latch errands
+agent-mgr check-connectors errands
 agent-mgr backup-homes ~/agent-backups
 ```
 
@@ -142,11 +255,11 @@ it.
 Step 1 — verify the archive, stop the agent, resolve the home:
 
 ```sh
-a=~/agent-backups/hermes-rowan-20260826T040112Z-4171.tar.gz \
+a=~/agent-backups/hermes-errands-20260826T040112Z-4171.tar.gz \
   && gzip -t "$a" \
-  && agent-mgr down rowan \
-  && home=$(readlink -f "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')") \
-  && echo "move $home aside now — same disk, not /tmp, and a path that neither matches nor sits under ~/.hermes* (a sibling like .hermes-rowan.old matches it); keep it until the restored agent is verified running. Then run step 2."
+  && agent-mgr down errands \
+  && home=$(readlink -f "$(agent-mgr resolve errands | sed -n 's/^AGENT_HOME=//p')") \
+  && echo "move $home aside now — same disk, not /tmp, and a path that neither matches nor sits under ~/.hermes* (a sibling like .hermes-errands.old matches it); keep it until the restored agent is verified running. Then run step 2."
 ```
 
 Then move it. Step 2, **in the same shell** — `$home` and `$a` come from step 1:
@@ -154,8 +267,8 @@ Then move it. Step 2, **in the same shell** — `$home` and `$a` come from step 
 ```sh
 mkdir "$home" \
   && tar -C "$home" -xzf "$a" \
-  && agent-mgr restore rowan \
-  && agent-mgr up rowan
+  && agent-mgr restore errands \
+  && agent-mgr up errands
 ```
 
 `mkdir`, not `mkdir -p`: it fails with `File exists` if the home is still there,
@@ -209,10 +322,14 @@ whatever that instance resolved, which `agent-mgr resolve <name>` prints. See
 
 For a skill **another agent also wants**. One agent's own skill is just its
 code — it lives in that agent's repo and needs no pin, because there is no
-second copy to keep in step.
+second copy to keep in step. It reaches the container by a read-only mount
+declared in that repo's `compose.override.yml`, which makes `git pull` the
+update and `git rev-parse HEAD` the version;
+[`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent)
+is a worked example.
 
 ```sh
-agent-mgr add-skill rowan plow-pbc/hermes-plow-chat --dest plow-connectors \
+agent-mgr add-skill errands plow-pbc/hermes-plow-chat --dest plow-connectors \
     --src ref/hermes-skill/plow-connectors
 ```
 

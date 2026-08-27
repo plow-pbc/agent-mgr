@@ -6,7 +6,7 @@ themselves and is deliberately not restated here.
 
 ## Operating point
 
-Pre-PMF, a single operator, four agents on one Linux host — all of them running businesses or someone's daily life, which is why an accidental restart is not a cheap mistake here. Iteration speed beats
+Pre-PMF, a single operator, three registered agents on one Linux host — all of them running businesses or someone's daily life, which is why an accidental restart is not a cheap mistake here. Iteration speed beats
 hardening for scale: prefer loud failures to fallbacks, pragmatic DRY
 architecture to defensive layering, and don't guard edge cases that cannot
 trigger at this size. A handled case the intent never asked for is a cost.

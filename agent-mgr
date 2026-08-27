@@ -232,15 +232,65 @@ case "$cmd" in
         sort -o "$t" "$t"; mv "$t" "$tsv"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the skill just installed"
         ;;
+    set-latch)
+        load_agent "${1:-}"
+        # The same guard activate and sign-in take, for the same reason: this
+        # writes a credential into a home, and pointed at a sibling's it would
+        # hand that agent a relay credential minted against someone else's Mac.
+        require_own_home
+        installed="$AGENT_HOME/config.yaml"
+        [ -f "$installed" ] || die "no $installed -- run 'agent-mgr restore $AGENT_NAME' first"
+        # Refused before anything is written, not after. A pair written for an
+        # agent whose config declares no latch is a credential no gateway will
+        # ever read, sitting in a dotenv looking like working configuration --
+        # which is the state check-latch was written to stop reporting as a
+        # revoked token.
+        config_declares_latch "$installed" \
+            || die "$AGENT_NAME declares no latch server in $installed -- nothing would read this pair"
+        env_file="$AGENT_HOME/.env"
+        [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
+        # On stdin, never argv, and this is the whole reason the command exists
+        # in this shape: check-latch already hands the token to curl as a config
+        # on stdin because the argv form puts a live relay credential in the
+        # process table of a shared host, readable by `ps` from any account. A
+        # --token flag here would undo that one command earlier. Prompts go to
+        # stderr so a piped invocation stays clean.
+        printf 'DOMO_DEVICE_UID: ' >&2
+        IFS= read -r uid || die "no DOMO_DEVICE_UID on stdin"
+        printf 'DOMO_MCP_TOKEN: ' >&2
+        # -s so the token does not echo into a shared terminal or a scrollback
+        # that outlives it. A no-op when stdin is a pipe, which is why the
+        # prompt is unconditional rather than gated on a tty test.
+        IFS= read -rs tok || die "no DOMO_MCP_TOKEN on stdin"
+        printf '\n' >&2
+        # Stripped here as well as in the helper, which is authoritative -- what
+        # goes down the pipe is then what lands in the file, so the confirmation
+        # below reports the same last three characters check-latch will. Reading
+        # the raw value instead announced `...z  ` for a padded paste while
+        # check-latch's REVOKED line said `...xyz`, and two spellings of one
+        # credential is what sends an operator to revoke a live token.
+        uid="${uid#"${uid%%[![:space:]]*}"}"; uid="${uid%"${uid##*[![:space:]]}"}"
+        tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
+        # One process does the read, the upsert and the publish, all under a
+        # single directory FD on the home -- lib/set-latch-env. It also owns the
+        # value strip and the emptiness check, so there is one definition of
+        # what an empty credential is rather than a shell copy drifting from it.
+        #
+        # The three-process shell protocol this replaces could not hold that
+        # boundary: each stage re-opened `.env` by name, and the pipeline had to
+        # be split into captured stages so a dying transform could not publish
+        # truncated content over the file. One process needs neither.
+        printf '%s\n%s\n' "$uid" "$tok" \
+            | "$AGENT_MGR_ROOT/lib/set-latch-env" "$AGENT_HOME" \
+            || die "refusing to write ${AGENT_NAME}'s dotenv -- see above. Nothing was written."
+        echo "wrote DOMO_DEVICE_UID and DOMO_MCP_TOKEN (...${tok: -3}) to $env_file"
+        "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the credential just written"
+        echo "now prove it reaches the Mac: agent-mgr check-latch $AGENT_NAME"
+        ;;
     check-latch)
         load_agent "${1:-}"
         env_file="$AGENT_HOME/.env"
         [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
-        # `|| true` on the grep: under `set -e` a missing key exits 1 and kills
-        # the command, so the friendly branch below could never fire for the
-        # case it was written for. The sed strips surrounding quotes -- a normal
-        # dotenv line is KEY="..." and sending the quotes gets a 401.
-        read_key() { grep -m1 "^$1=" "$env_file" | cut -d= -f2- | sed -e 's/^"\(.*\)"$/\1/' -e "s/^'\(.*\)'\$/\1/" || true; }
         # The CONFIG is the declaration, not the dotenv. Keying off the
         # credential looked equivalent and is not: a leftover DOMO_* pair from an
         # earlier experiment sits in a dotenv long after the config stopped
@@ -250,13 +300,14 @@ case "$cmd" in
         # what the gateway loaded, for the same reason sign-in does.
         installed="$AGENT_HOME/config.yaml"
         [ -f "$installed" ] || die "no $installed -- run 'agent-mgr restore $AGENT_NAME' first"
-        if ! awk '/^mcp_servers:/{m=1;next} /^[^[:space:]]/{m=0} m && $1=="latch:"{found=1} END{exit !found}' "$installed"; then
+        if ! config_declares_latch "$installed"; then
             echo "no latch configured for $AGENT_NAME -- its config declares no latch server"
             exit 0
         fi
-        uid="$(read_key DOMO_DEVICE_UID)"; tok="$(read_key DOMO_MCP_TOKEN)"
-        [ -n "$uid" ] || die "DOMO_DEVICE_UID is empty in $env_file -- mint one from the Mac"
-        [ -n "$tok" ] || die "DOMO_MCP_TOKEN is empty in $env_file -- mint one from the Mac"
+        uid="$(dotenv_read DOMO_DEVICE_UID "$env_file")"
+        tok="$(dotenv_read DOMO_MCP_TOKEN "$env_file")"
+        [ -n "$uid" ] || die "DOMO_DEVICE_UID is empty in $env_file -- mint the pair on the Mac, then: agent-mgr set-latch $AGENT_NAME"
+        [ -n "$tok" ] || die "DOMO_MCP_TOKEN is empty in $env_file -- mint the pair on the Mac, then: agent-mgr set-latch $AGENT_NAME"
         require_running
         err="$(mktemp)"; trap 'rm -f "$err"' EXIT
         # Asked from INSIDE the container, because the container is what has to
@@ -283,7 +334,7 @@ case "$cmd" in
         # not collapse into one message.
         case "$code" in
             200) echo "latch reachable from ${AGENT_NAME}'s container (HTTP 200)" ;;
-            401) die "DOMO_MCP_TOKEN (...${tok: -3}) is REVOKED -- mint a fresh agent credential from the Mac" ;;
+            401) die "DOMO_MCP_TOKEN (...${tok: -3}) is REVOKED -- mint a fresh pair on the Mac, then: agent-mgr set-latch $AGENT_NAME" ;;
             000) die "no answer from api.plow.co -- the credential was NOT tested: $(tr '\n' ' ' < "$err")" ;;
             *)   die "relay returned HTTP ${code:-<none>}: $(tr '\n' ' ' < "$err")" ;;
         esac
@@ -352,8 +403,8 @@ bring it up:
   agent-mgr up $name
   agent-mgr sign-in $name          # model OAuth, in a browser
 
-then, if it drives a Mac through Latch, put DOMO_DEVICE_UID and DOMO_MCP_TOKEN
-in $AGENT_HOME/.env and run:
+then, if it drives a Mac through Latch, mint the pair on that Mac and:
+  agent-mgr set-latch $name        # prompts for the pair; nothing on argv
   agent-mgr check-latch $name
 EOF
         ;;
