@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""Upsert the Latch pair into an agent's dotenv, contained to its home.
+
+    printf '%s\n%s\n' "$uid" "$tok" | lib/set-latch-env <home>
+
+The home is bind-mounted at /opt/data with the gateway running as the
+operator's uid (templates/compose.yml), so `.env` is container-writable. A
+host-side tool that opens it by path is doing check-then-use however carefully
+it checks first: resolving proves what the path pointed at a moment ago, not
+what it points at when the read happens. Issue #25 names the containment-complete
+form -- hold the home as a directory FD and work relative to it with no-follow
+semantics -- and that is what this does.
+
+Purpose-built rather than a general read/write API. A generic leaf helper was
+tried and argued for on the grounds that `lib/fetch-tree` could share it; it
+cannot. That seam does `mkdir -p`, `rm -rf`, `cp -a` of a whole tree and two
+directory renames, none of which a flat-leaf primitive expresses. With no
+second consumer the generality bought nothing and cost surface, so the read,
+the upsert and the publish live here behind one directory FD instead of being
+a three-process shell protocol around a generic one.
+
+Reads the uid and token as the first two lines of stdin -- never argv, which on
+a shared host puts a live relay credential in the process table where `ps`
+reads it from any account.
+
+What this buys is containment of the whole operation. The leaf is opened
+no-follow under the directory FD, the replacement is staged outside the mount
+entirely, and the rename into place is relative to that same FD -- so a link
+planted at `.env` is refused rather than followed, and there is never a
+container-visible staging name for a gateway to swap.
+"""
+
+import os
+import stat
+import sys
+
+KEYS = (b"DOMO_DEVICE_UID", b"DOMO_MCP_TOKEN")
+
+
+def die(message):
+    sys.stderr.write("set-latch-env: %s\n" % message)
+    raise SystemExit(1)
+
+
+def upsert(data, values):
+    """Canonical `KEY=value` at column 0 -- the one spelling this tool writes
+    and `dotenv_read` is the only reader of. The first declaration of each key
+    is rewritten and any later one dropped, so a file that arrived with two
+    (appending a line at the bottom is how that happens) leaves with one.
+
+    Bytes end to end, and every other line copied verbatim. This file holds
+    credentials this tool does not own -- a PMS token, a lock API key -- and
+    decoding to str to edit two of its lines would rewrite the rest: a
+    non-UTF-8 byte in a password becomes U+FFFD unrecoverably, and str
+    splitting treats \x0b, \x0c, \x85, U+2028 and friends as line breaks, so
+    one of those inside a value would cut it in half and leave the tail as a
+    bogus config line. Split on b"\n" alone rather than bytes.splitlines(),
+    which still breaks on \r.
+    """
+    lines = data.split(b"\n")
+    trailing_newline = lines and lines[-1] == b""
+    if trailing_newline:
+        lines.pop()
+    out, seen = [], set()
+    for line in lines:
+        key = line.split(b"=", 1)[0] if b"=" in line else None
+        if key in KEYS:
+            if key not in seen:
+                seen.add(key)
+                out.append(key + b"=" + values[key])
+            continue
+        out.append(line)
+    for key in KEYS:
+        if key not in seen:
+            out.append(key + b"=" + values[key])
+    return b"\n".join(out) + b"\n"
+
+
+def main(argv):
+    if len(argv) != 1:
+        die("usage: set-latch-env <home>  (uid and token on stdin)")
+    home = argv[0]
+
+    fields = sys.stdin.buffer.read().split(b"\n")
+    if len(fields) < 2:
+        die("expected DOMO_DEVICE_UID and DOMO_MCP_TOKEN on stdin, one per line")
+    # Stripped, so what lands in the file is what the gateway loads -- it strips
+    # the value too, and a pasted credential routinely arrives with a trailing
+    # space. Empty is then the parser's empty, not the shell's.
+    values = {KEYS[0]: fields[0].strip(), KEYS[1]: fields[1].strip()}
+    for key in KEYS:
+        if not values[key]:
+            die("%s was empty -- mint the pair on the Mac running Latch"
+                % key.decode("ascii"))
+
+    try:
+        dir_fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError as exc:
+        die("cannot open %s: %s" % (home, exc))
+
+    try:
+        try:
+            # O_NONBLOCK because O_NOFOLLOW rules out a symlink and nothing
+            # else: a FIFO planted at the leaf would park this open forever,
+            # wedging the command with no diagnostic, and a character device
+            # would hand back attacker-chosen bytes to republish into the home.
+            fd = os.open(".env", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
+        except OSError as exc:
+            die("cannot read %s/.env: %s" % (home, exc))
+        with os.fdopen(fd, "rb") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                die("refusing to read %s/.env: not a regular file" % home)
+            current = handle.read()
+
+        updated = upsert(current, values)
+
+        # Staged OUTSIDE the mount, which is the only place a name is safe.
+        # The home's CONTENTS are bind-mounted at /opt/data, so any name inside
+        # it -- however unguessable -- is one a compromised gateway can watch
+        # for, rename away, and re-create as a symlink before the publish.
+        # Randomness stops it planting ahead of time; it does not stop it
+        # reacting. The home's parent is not mounted and is on the same
+        # filesystem, so a rename from there is still atomic and there is never
+        # a container-visible name at all.
+        #
+        # Resolved first: a home symlinked onto a bigger disk is ordinary here
+        # -- the relocation load_agent supports -- so it is the TARGET's parent
+        # that has to share the filesystem, not the link's. A home that is a
+        # MOUNTPOINT is not a layout anything here creates; it would fail loudly
+        # at the rename with `.env` unchanged, which is the right amount of
+        # handling for a shape that does not exist.
+        #
+        # One path, both platforms. This is what retires the O_TMPFILE split --
+        # that branch existed to avoid a nameable staging file, which staging
+        # off-mount does outright, and it left macOS on a fallback Linux never
+        # exercised.
+        resolved = os.path.realpath(home)
+        tmp_path = os.path.join(
+            os.path.dirname(resolved),
+            ".%s.set-latch.%s" % (os.path.basename(resolved), os.urandom(8).hex()))
+        try:
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError as exc:
+            die("cannot stage a replacement beside %s: %s. Nothing was written."
+                % (resolved, exc))
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                # On the descriptor, never the name: a path-based chmod is a
+                # re-lookup. O_CREAT's mode is masked by umask, so this is what
+                # actually pins 0600 on a file about to hold credentials.
+                os.fchmod(handle.fileno(), 0o600)
+                handle.write(updated)
+                handle.flush()
+                os.fsync(handle.fileno())
+            # Destination relative to the directory FD, so it cannot be
+            # redirected out of the home; rename does not follow its
+            # destination, so a planted `.env` link is replaced, not written
+            # through.
+            os.rename(tmp_path, ".env", dst_dir_fd=dir_fd)
+        except OSError as exc:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            die("cannot publish %s/.env: %s. %s/.env is unchanged."
+                % (home, exc, home))
+        return
+    finally:
+        os.close(dir_fd)
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])

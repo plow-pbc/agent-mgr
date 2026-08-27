@@ -35,20 +35,29 @@ the code must be sent from the handset that should own the agent. A code texted
 by the wrong person binds the agent to the wrong account, and it is a one-time
 spend.
 
-To let it drive a Mac, put the pair from that Mac in that instance's dotenv —
-`$AGENT_HOME/.env`, which `agent-mgr resolve errands` prints:
+To let it drive a Mac, mint the pair on that Mac and hand it to `set-latch`,
+which writes it into that instance's own dotenv — `$AGENT_HOME/.env`, the one
+`agent-mgr resolve errands` prints, not the conventional spelling:
 
 ```sh
-DOMO_DEVICE_UID=dev_...
-DOMO_MCP_TOKEN=...
+agent-mgr set-latch errands     # prompts for DOMO_DEVICE_UID, then DOMO_MCP_TOKEN
 agent-mgr check-latch errands   # "latch reachable ... (HTTP 200)"
 ```
 
-Minting them needs the `relay:device` scope, which only the Mac running Latch
-holds. **`DOMO_DEVICE_UID` decides which Mac an agent can drive** — Latch
-sandboxes and asks per action, but a credential minted against your Mac lets
-that agent drive *your* machine. Mint each agent's against the Mac it should
-have.
+Both are read on **stdin**, never argv, and the token does not echo — a flag
+would put a live relay credential in the process table of a shared host, where
+`ps` reads it from any account, which is the same reason `check-latch` hands it
+to curl as a config on stdin. `set-latch` carries every other key in the dotenv
+through untouched, so an agent that keeps a PMS token or a lock API key beside
+them keeps them.
+
+Minting the pair needs the `relay:device` scope, which only the Mac running
+Latch holds — so this is the one credential `agent-mgr` cannot fetch for you.
+**Mint each agent's pair on the Mac it should drive.** The relay refuses a
+`DOMO_DEVICE_UID` that is not the calling credential's own account, so the uid
+is inert on its own and the *token* is what binds — which is why reusing
+another person's pair, rather than reusing their uid, is what would point this
+agent at their machine.
 
 **An agent that drives no Mac deletes the `latch:` block from its
 `config.yaml`.** The config is the declaration — `check-latch` reads it, not the

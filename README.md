@@ -28,6 +28,8 @@ agent-mgr restore errands    # the whole deploy: config, plugin, restore hook
 agent-mgr activate errands   # prints a code; text it from the agent's phone
 agent-mgr up errands
 agent-mgr sign-in errands
+agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
+agent-mgr check-latch errands
 ```
 
 ## Why it exists

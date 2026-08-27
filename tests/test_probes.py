@@ -1,7 +1,9 @@
 from pathlib import Path
 import os
 
-from conftest import fake_docker
+import pytest
+
+from conftest import LATCH_CONFIG, fake_docker
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -12,12 +14,11 @@ def _bin(tmp_path, name, **kw):
 
 
 def _with_latch(tmp_path, name, uid="dev_123", tok="tok_abc"):
+    # Canonical `KEY=value`, the one spelling this tool writes and reads.
     (tmp_path / "home" / f".hermes-{name}" / ".env").write_text(
-        f'DOMO_DEVICE_UID={uid}\nDOMO_MCP_TOKEN="{tok}"\n')
+        f"DOMO_DEVICE_UID={uid}\nDOMO_MCP_TOKEN={tok}\n")
 
 
-LATCH_CONFIG = ("model:\n  provider: openai-codex\nmcp_servers:\n  latch:\n"
-                "    url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp\n")
 NO_LATCH_CONFIG = ("model:\n  provider: openai-codex\nmcp_servers:\n  hostex:\n"
                    "    url: https://example.invalid\n")
 
@@ -83,30 +84,49 @@ def test_the_token_is_never_printed_in_full(run, instance, tmp_path):
     assert "lue" in r.stderr, "the last 3 characters identify it without disclosing it"
 
 
-def test_the_token_never_reaches_the_process_table(run, instance, tmp_path):
-    """A different disclosure than printing it. Passed as `-H "Authorization:
-    Bearer $tok"`, the live relay credential sits in the argv of `docker compose
-    exec` for the length of the probe -- readable by `ps` from any account on
-    the host. It goes in on stdin as a curl config instead, so the recorded argv
-    must not carry it."""
-    import os
-    from conftest import fake_docker
+@pytest.mark.parametrize(
+    "dotenv,expected",
+    [
+        ("DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=supersecrettokenvalue\n",
+         "supersecrettokenvalue"),
+        # Two canonical declarations plus a bare `=`-less line. Appending at the
+        # bottom is how a duplicate happens, and the gateway takes the LAST --
+        # it assigns as it reads. Probing the first would report REVOKED for a
+        # live credential. The bare line used to match the key under -F= and
+        # hand back its own name, which the relay 401s the same way.
+        ("DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=stale_first\n"
+         "DOMO_MCP_TOKEN=live_last\nDOMO_MCP_TOKEN\n", "live_last"),
+    ],
+    ids=["ordinary", "duplicate-and-bare"],
+)
+def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance, tmp_path, dotenv, expected):
+    """Two properties of one probe, so one setup.
+
+    The credential must not reach argv: passed as `-H "Authorization: Bearer
+    $tok"` it would sit in the argv of `docker compose exec` for the length of
+    the probe, readable by `ps` from any account on the host. It goes in as a
+    curl config on stdin instead.
+
+    And it must be the value the GATEWAY loaded. Asserted on the bytes that
+    reached curl rather than the exit code, because the fake relay answers 200
+    to anything -- an exit-code assertion pins that a line was found, never that
+    the right one was."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
     run("restore", "property")
-    _with_latch(tmp_path, "property", tok="supersecrettokenvalue")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(dotenv)
     log = tmp_path / "docker.log"
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-property",
-                    name="property", exec_output="200", log=log)
-    run("check-latch", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
+    assert r.returncode == 0, r.stderr
     argv = log.read_text()
     assert "exec -T" in argv, "no -T, so docker would allocate a TTY and refuse the pipe"
-    assert "supersecrettokenvalue" not in argv, "the token was passed in argv"
-    # And the other half: it must still REACH curl. Misspell the config keyword
-    # or lose the -T and the probe gets an unauthenticated 401, which check-latch
-    # reports as REVOKED -- sending the operator to mint a replacement for a
-    # credential that was never sent.
+    assert expected not in argv, "the token was passed in argv"
+    # It must still REACH curl. Misspell the config keyword or lose the -T and
+    # the probe gets an unauthenticated 401, which check-latch reports as
+    # REVOKED -- sending the operator to replace a credential never sent.
     stdin = (tmp_path / "docker.log.stdin").read_text()
-    assert 'header = "Authorization: Bearer supersecrettokenvalue"' in stdin
+    assert 'header = "Authorization: Bearer %s"' % expected in stdin
+    assert "stale_first" not in stdin
+    assert "Bearer DOMO_MCP_TOKEN" not in stdin
 
 
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):
@@ -227,6 +247,51 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
         # scaffolded repo could not discover the veto it is entitled to.
         assert hook in descriptor, (
             f"{hook} is a declared hook but templates/agent.env does not document it")
+
+
+def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, instance, tmp_path):
+    """`KEY=   ` is a key with no credential. Sending it probes the relay with an
+    empty bearer and reports the 401 as REVOKED, which sends the operator to
+    replace a credential that was never set."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("restore", "property")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
+        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=   \n")
+    r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
+    assert r.returncode != 0
+    assert "DOMO_MCP_TOKEN is empty" in r.stderr
+
+
+def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credential(
+        run, instance, tmp_path):
+    """A dotenv check-latch cannot READ is not a dotenv with no credential in it.
+    Swallowing the errno reported "DOMO_MCP_TOKEN is empty ... mint the pair",
+    which sends the operator to mint a replacement and revoke a live one over a
+    permission problem -- a `.env` written 600 under another account being the
+    realistic way to get here.
+
+    The diagnosis comes from parse_env_file, which load_agent runs over this
+    same file for AGENT_TZ before check-latch reads a credential out of it --
+    so this pins the resolver's read, not dotenv_read's. The negative assertion
+    is the load-bearing one: it is what fails if the errno is ever swallowed
+    back into a bare shell redirection error, which names lib/common.sh rather
+    than the agent and reads as a bug in the tool rather than a permission
+    problem on a file the operator can fix."""
+    # Asserted rather than skipped: root reads a 000 file, so the test would
+    # pass while proving nothing, and a skip hides that.
+    assert os.geteuid() != 0, "run the suite unprivileged; root reads a 000 file"
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("restore", "property")
+    _with_latch(tmp_path, "property")
+    env_file = tmp_path / "home" / ".hermes-property" / ".env"
+    env_file.chmod(0o000)
+    try:
+        r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
+    finally:
+        env_file.chmod(0o600)
+    assert r.returncode != 0
+    assert "cannot read" in r.stderr
+    assert "is empty" not in r.stderr
 
 
 def test_no_doc_hardcodes_the_conventional_dotenv_path():
