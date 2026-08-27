@@ -206,8 +206,10 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
     rather than the nightly quietly pruning nothing while reporting success.
 
     One entry per clause: the two name globs keep the operator's own `photos/`
-    and `photos-2019.tar.gz`, and each `-type` keeps the same-named impostor of
-    the wrong kind — which is why those two are named to match the other arm."""
+    and `photos-2019.tar.gz`, each `-type` keeps the same-named impostor of the
+    wrong kind, `-maxdepth` keeps a matching name *nested* inside a directory of
+    theirs, and `-mtime` keeps a run taken since. Every one of those is named to
+    match some other clause's predicate, so it tests the clause it exists for."""
     root = tmp_path / "home"
     (root / ".hermes-rowan").mkdir(parents=True)
     (root / ".hermes-rowan" / ".env").write_text("x\n")
@@ -217,6 +219,10 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
     (dest / "hermes-errands-20260101.tar.gz").write_text("what an earlier shape wrote\n")
     (dest / "photos-2019.tar.gz").write_text("the operator's own\n")
     (dest / "photos").mkdir()
+    # Only `-maxdepth 1` protects this: it matches the flat arm's glob exactly,
+    # and a top-level name glob does nothing for a nested file.
+    nested = dest / "photos" / "hermes-2019.tar.gz"
+    nested.write_text("inside the operator's own directory\n")
     # The two impostors, one per `-type`. Named to MATCH the other arm's glob,
     # which is the whole point: a trap the name globs already exclude tests
     # nothing about `-type`.
@@ -226,6 +232,7 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
     old = time.time() - 20 * 86400
     for p in dest.iterdir():
         os.utime(p, (old, old))
+    os.utime(nested, (old, old))  # the loop above walks top level only
 
     # A second run AFTER the ageing, so the fixture holds something recent. With
     # everything aged, the survivor set is identical whether the line says
@@ -245,6 +252,7 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
 
     assert not aged_run.exists(), "it kept the run directory it was meant to prune"
     assert fresh_run.exists(), "-mtime is not bounding the window: it took a fresh run"
+    assert nested.exists(), "-maxdepth is not bounding it: it descended into photos/"
     assert {p.name for p in dest.iterdir()} == {
         "20260101T000000Z-9", "hermes-trap.tar.gz", "photos", "photos-2019.tar.gz",
         fresh_run.name}

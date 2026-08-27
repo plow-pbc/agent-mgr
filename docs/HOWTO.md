@@ -236,8 +236,10 @@ entirely — a `photos/` matches neither, and a `photos-2019.tar.gz` matches
 neither, because the flat arm is `hermes-*.tar.gz` and not `*.tar.gz`. Each
 `-type` then stops the *same-named impostor of the wrong kind*: `-type f` stops
 a **directory** called `hermes-something.tar.gz` from being recursed into, and
-`-type d` stops a plain file named like a run stamp. Add a third arm and it
-needs both halves, not one.
+`-type d` stops a plain file named like a run stamp. `-maxdepth 1` keeps all of
+that at the top level — the globs say nothing about a `hermes-2019.tar.gz` you
+have *inside* a directory of your own. Add a third arm and it needs every one of
+those, not one.
 
 ### What an archive is worth
 
