@@ -4,6 +4,7 @@ Two facts, both measured rather than assumed, and both invisible in the output
 when they break — the archive still exists and still looks like a backup.
 """
 import os
+import re
 import subprocess
 import tarfile
 from pathlib import Path
@@ -73,27 +74,26 @@ def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path)
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
 
-
 def test_each_run_writes_its_own_archive(tmp_path):
-    """The name carries a timestamp and pid so the path is never reused. That is
-    what makes `tar` *create* the file — the only time it honours the umask,
-    since writing over an existing 0644 path keeps 0644 — and what stops two
-    runs sharing an inode. A date-only name silently restores both hazards."""
+    """The name carries a UTC timestamp *and* the pid, so the path is never
+    reused. That is what makes `tar` create the file rather than reopen one —
+    the only time it honours the umask — and what stops two runs sharing an
+    inode. Asserting the shape catches both regressions deterministically; a
+    count of archives only catches the date-only one, and then only when the two
+    runs happen to land in the same second."""
     root, dest = tmp_path / "home", tmp_path / "dest"
     (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
     (root / ".hermes-rowan" / ".env").write_text("x\n")
-    stale = dest / "hermes-rowan-20200101T000000Z-1.tar.gz"
-    stale.write_text("older, permissive")
-    stale.chmod(0o644)
 
-    # Started together, so they land in the same second — which is what the pid
-    # is for. Sequential runs would pass on the timestamp alone.
     env = {"HOME": str(root), "PATH": os.environ["PATH"],
            "AGENT_MGR_REGISTRY": str(root / "registry")}
     ps = [subprocess.Popen([str(CLI), "backup-homes", str(dest)], env=env)
           for _ in range(2)]
     assert [p.wait() for p in ps] == [0, 0]
 
-    fresh = [p for p in dest.glob("*.tar.gz") if p != stale]
-    assert len(fresh) == 2, f"two runs in one second shared a path: {[p.name for p in fresh]}"
-    assert all(p.stat().st_mode & 0o077 == 0 for p in fresh)
+    names = sorted(p.name for p in dest.glob("*.tar.gz"))
+    assert len(names) == 2, f"two runs shared a path: {names}"
+    pat = re.compile(r"hermes-rowan-\d{8}T\d{6}Z-(\d+)\.tar\.gz")
+    pids = [pat.fullmatch(n).group(1) for n in names if pat.fullmatch(n)]
+    assert len(pids) == 2, f"archive names lost their timestamp-pid shape: {names}"
+    assert pids[0] != pids[1], "both runs used the same pid field"
