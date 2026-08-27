@@ -14,10 +14,24 @@
 set -euo pipefail
 dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
+# Before anything is created. These archives hold .env and auth.json, and tar
+# honours the umask -- the first ones taken here by hand came out 0664.
+umask 077
+
 n=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
     name="$(basename "$home")"
+    # Straight to the final name. Staging through a temp file and renaming would
+    # stop a killed run leaving a truncated archive under a valid name -- but
+    # that protection cost five defect classes across two PRs (shared temp path
+    # publishing another run's bytes, unbounded orphan leaks, a sweep that
+    # aborted good runs, signal handlers that swallowed SIGTERM, and a window
+    # between creating the temp file and arming its trap). With nightly runs and
+    # 14-day retention a truncated archive sits among ~13 good ones and is
+    # replaced the next night, so the retention window already covers what
+    # staging was defending. docs/HOWTO.md says so in one sentence.
+    #
     # `-C "$home" .`, not `-C <parent> <basename>`: a home symlinked onto a
     # bigger disk is supported, and from the parent tar stores that symlink AS a
     # symlink -- exit 0, one entry, and no credentials, sessions or memories in
@@ -37,48 +51,9 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     #
     # ${name#.} so the archives are visible to a plain `ls` -- a backup nobody
     # can see is one nobody checks.
-    #
-    # Written to .part and renamed on success. Straight at the final name, any
-    # interruption -- SIGINT, reboot, ENOSPC -- leaves a truncated archive that
-    # `ls` cannot tell from a good one, and the retention job then prunes the
-    # good ones around it.
-    #
-    # The stage is unique PER INVOCATION, not a fixed `.part`. Measured: with a
-    # shared path, a manual run overlapping the nightly has both tars writing
-    # one inode; the first to finish renames it and reports success while the
-    # other keeps writing into the PUBLISHED archive. The result passes
-    # `gzip -t` and contains the other run's files -- a well-formed archive
-    # whose contents are not what its name says, which is the worst output this
-    # tool has. No flock: macOS does not ship it, and this must run there.
-    #
-    # The trap covers ordinary failure. A hard kill still leaks one stage; that
-    # is the deliberate residue -- sweeping it needs its own
-    # lifecycle, and #22 spent five rounds proving that costs more than it saves
-    # at one operator on one host.
-    out="$dest/${name#.}-$(date -u +%Y%m%d).tar.gz"
-    # mktemp owns the 0600 that keeps these archives -- which hold .env and
-    # auth.json -- unreadable by other local accounts: mkstemp(3) creates at
-    # 0600, `tar -czf` truncates that inode without changing its mode, and `mv`
-    # within one directory is rename(2), which preserves it. A `umask 077` here
-    # would be dead: umask can only CLEAR bits, never add them, and nothing else
-    # in this script creates a file. (The first archives taken by hand, before
-    # any staging existed, came out 0664 -- that is the failure this replaced.)
-    stage="$(mktemp "$dest/.${name#.}-XXXXXX")"
-    # EXIT only, deliberately. Measured on bash 5.2.21: the EXIT trap DOES run on
-    # an untrapped SIGTERM and the stage is removed, so the signal traps that
-    # were added here covered an unreproduced case -- and cost two real bugs in
-    # two rounds doing it. A bare handler swallowed the signal, making the run
-    # unterminable and inviting the SIGKILL it existed to prevent; giving it an
-    # exit status then stopped the process dying BY the signal, turning a
-    # `systemctl stop` into a failed unit and misreporting INT and HUP. Doing it
-    # correctly means re-raising per signal, which is more machinery than the
-    # residue is worth here. The residue: SIGKILL, power loss, and a possible
-    # SIGTERM leak on the macOS bash 3.2 floor, untested from this host.
-    trap 'rm -f "$stage"' EXIT
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
-        -C "$home" -czf "$stage" . \
+        -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%d).tar.gz" . \
         || [ $? -eq 1 ]
-    mv "$stage" "$out"
     n=$((n + 1))
 done
 

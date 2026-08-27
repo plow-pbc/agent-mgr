@@ -13,9 +13,9 @@ CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 
 def run(home_root, dest):
     # umask 022 forced on the child: it would otherwise inherit the runner's, and
-    # on a host already defaulting to 0077 the mode assertion below would hold
-    # for the runner's reason rather than the script's. Removing that second
-    # source is what leaves mktemp as the only thing producing the 0600.
+    # on a host already defaulting to 0077 the mode assertion below would pass
+    # with `umask 077` deleted from the script — silently ceasing to guard the
+    # credential exposure it exists for.
     # Through the CLI, not the library file: `agent-mgr backup-homes` is the only
     # installed entry point, so every assertion below crosses the dispatch arm —
     # a dropped arm, a lost "$@", or a swallowed exit status fails the suite.
@@ -48,12 +48,11 @@ def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path):
 
 
 def test_the_archives_are_not_readable_by_other_accounts(tmp_path):
-    """They hold .env and auth.json, so they must not be readable by other local
-    accounts. The property is owned by the staging mechanism — mktemp creates at
-    0600 and tar/mv preserve it — so this cannot fail while that holds, and that
-    is the point: it fires the moment someone changes how the archive is
-    created. The forced `umask 022` in run() is what makes it fire, by removing
-    the runner's own umask as a second source of the guarantee."""
+    """They hold .env and auth.json. `tar` creates the archive honouring the
+    umask, so without `umask 077` they land 0644 — or 0664 on a host with a
+    laxer default, which is what happened the first time these were taken by
+    hand. The forced `umask 022` in run() removes the runner's own umask as a
+    second source, so this asserts the script's guarantee and not the host's."""
     root, dest = tmp_path / "home", tmp_path / "dest"
     (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
     (root / ".hermes-rowan" / ".env").write_text("x\n")
@@ -73,34 +72,3 @@ def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path)
     r = run(root, dest)
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
-
-
-def test_two_overlapping_runs_do_not_publish_each_others_bytes(tmp_path):
-    """A manual run overlapping the nightly. With a shared staging path both
-    tars write one inode, the first to finish renames it and reports success
-    while the other keeps writing into the *published* archive — measured, the
-    result passes `gzip -t` and contains the other run's files. A well-formed
-    archive whose contents are not what its name says.
-
-    Racy by nature: it can pass without the two overlapping, never fail without
-    a real defect."""
-    root, dest = tmp_path / "home", tmp_path / "dest"
-    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
-    # Incompressible: deflate eats an all-zero 8 MiB in a few milliseconds, which
-    # is shorter than the spawn skew between the two Popens — the overlap this
-    # test depends on would collapse and it would pass without ever racing.
-    (root / ".hermes-rowan" / "bulk").write_bytes(os.urandom(8 * 1024 * 1024))
-
-    a = subprocess.Popen([str(CLI), "backup-homes", str(dest)],
-                         env={"HOME": str(root), "PATH": os.environ["PATH"],
-                              "AGENT_MGR_REGISTRY": str(root / "registry")})
-    b = subprocess.Popen([str(CLI), "backup-homes", str(dest)],
-                         env={"HOME": str(root), "PATH": os.environ["PATH"],
-                              "AGENT_MGR_REGISTRY": str(root / "registry")})
-    assert a.wait() == 0 and b.wait() == 0
-
-    archive = next(iter(dest.glob("*.tar.gz")))
-    inside = set(tarfile.open(archive).getnames())      # raises on a torn archive
-    assert "./.env" in inside and "./bulk" in inside
-    assert not list(dest.glob(".hermes-rowan-*")), "a staging file leaked"

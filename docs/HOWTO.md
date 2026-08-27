@@ -103,6 +103,11 @@ clean read would cost more than the session tail is worth, and refusing status 1
 would make the nightly fail every night. For a consistent copy,
 `agent-mgr down <name>` first.
 
+A run killed partway leaves a truncated archive under a valid name; the next
+night replaces it, and with 14-day retention it sits among roughly thirteen good
+ones. That is deliberate — writing to a temp file and renaming would prevent it,
+and across two PRs that protection produced five distinct defects of its own.
+
 It also only sees homes under `~/.hermes*`. A descriptor may declare
 `AGENT_HOME` anywhere — nothing today does — and such a home would not be
 archived, silently, while the run still reported success on the others.
