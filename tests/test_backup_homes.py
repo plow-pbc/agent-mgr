@@ -129,7 +129,7 @@ def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path, dest):
 
 
 def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(home, dest):
-    """They hold .env and auth.json. Both modes come from `umask 077` and both
+    """They hold .env and auth.json. All three modes come from `umask 077` and
     fail open without it — archives land 0644, or 0664 on a host with a laxer
     default, which is what happened the first time these were taken by hand. The
     directory matters as much: it is what stands between a predictable archive
@@ -137,9 +137,16 @@ def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(home,
     in run() removes the runner's own umask as a second source, so this asserts
     the script's guarantee and not the host's."""
 
+    # Pre-created loose, which is the documented migration: the operator makes
+    # `backup-homes/` by hand to move older runs into it, and a default umask of
+    # 022 gives them 0755. Nothing else pins the `chmod` that fixes it — under
+    # the suite's own umask the directory would be 0700 either way.
+    (dest / "backup-homes").mkdir()
+    (dest / "backup-homes").chmod(0o755)
+
     assert run(home, dest).returncode == 0
     archive = next(dest.glob("backup-homes/*/*.tar.gz"))
-    for path in (archive, archive.parent):
+    for path in (archive, archive.parent, archive.parent.parent):
         mode = path.stat().st_mode & 0o777
         assert mode & 0o077 == 0, f"{path.name} is {oct(mode)}"
 
@@ -374,8 +381,13 @@ def test_prune_takes_runs_and_nothing_beside_them(tmp_path, home, dest):
     os.utime(boundary, (edge, edge))
     # After the ageing, so something recent exists: with everything aged the
     # survivor set is identical whether or not the command bounds a window.
+    known = {p.name for p in runs.iterdir()}
     assert run(home, dest).returncode == 0
-    fresh_run = next(p for p in runs.iterdir() if p != aged_run)
+    # By difference, not by "not the aged one": `runs/` also holds the stray and
+    # the boundary run by now, so `next()` would bind to whichever `scandir`
+    # happened to yield — passing vacuously on the stray, or failing on the
+    # boundary, which is *supposed* to be deleted.
+    fresh_run = next(p for p in runs.iterdir() if p.name not in known)
 
     link = tmp_path / "link"           # the symlinked destination the docs invite
     link.symlink_to(dest)
@@ -392,8 +404,30 @@ def test_prune_takes_runs_and_nothing_beside_them(tmp_path, home, dest):
     assert not boundary.exists(), "it kept a run at the retention boundary"
 
 
-@pytest.mark.parametrize("days", ["-1", "14 -o -true", "abc", "1.5"],
-                         ids=["negative", "injected", "word", "fraction"])
+def test_prune_reaches_runs_when_the_child_is_itself_a_symlink(tmp_path, home, dest):
+    """`mkdir -p` and `chmod` both succeed quietly when `backup-homes/` is
+    already a symlink, so an operator can point it at another disk — a natural
+    variant of the symlinked destination the HOWTO invites. Under `find`'s
+    default `-P` a symlinked *starting point* is not descended, `-mindepth 1`
+    matches nothing, and retention exits 0 having pruned nothing, forever."""
+    target = tmp_path / "elsewhere"
+    target.mkdir()
+    target.chmod(0o700)
+    (dest / "backup-homes").symlink_to(target)
+
+    assert run(home, dest).returncode == 0
+    aged = next(target.iterdir())
+    old = time.time() - 20 * 86400
+    os.utime(aged, (old, old))
+
+    assert subprocess.run([str(CLI), "prune-backups", str(dest), "14"],
+                          capture_output=True, text=True).returncode == 0
+    assert not aged.exists(), "it silently pruned nothing through the symlink"
+
+
+@pytest.mark.parametrize("days", ["-1", "0", "00", "14 -o -true", "abc", "1.5"],
+                         ids=["negative", "zero", "padded-zero", "injected",
+                              "word", "fraction"])
 def test_prune_refuses_a_retention_argument_it_cannot_trust(tmp_path, home, dest, days):
     """`days` lands inside `find`'s own expression. `-1` becomes `-mtime +-1`,
     which GNU findutils 4.9 matches against a *fresh* directory — measured — so
@@ -405,7 +439,7 @@ def test_prune_refuses_a_retention_argument_it_cannot_trust(tmp_path, home, dest
     r = subprocess.run([str(CLI), "prune-backups", str(dest), days],
                        capture_output=True, text=True)
     assert r.returncode != 0, r.stdout
-    assert "whole number" in r.stderr, r.stderr
+    assert "days must be" in r.stderr, r.stderr
     assert {p.name for p in (dest / "backup-homes").iterdir()} == before
 
 

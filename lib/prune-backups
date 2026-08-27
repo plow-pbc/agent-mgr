@@ -14,9 +14,13 @@ days="${2:-14}"
 # `-1` becomes `-mtime +-1`, which GNU findutils 4.9 happily matches against a
 # FRESH directory -- measured -- so one typo'd argument sends the whole backup
 # set to `rm -rf`.
+# Zero is rejected with the rest: `! -mtime -0` is true of EVERY directory, so
+# `prune-backups <dest> 0` deletes the run `backup-homes` wrote seconds earlier
+# in the same `&&` and exits 0, which the cron reads as a completed night.
 case "$days" in
     ''|*[!0-9]*) echo "prune-backups: days must be a whole number, not '$days'" >&2; exit 1 ;;
 esac
+[ "$days" -ge 1 ] || { echo "prune-backups: days must be at least 1, not '$days'" >&2; exit 1; }
 
 # Everything under here is ours: `backup-homes` creates this directory and
 # writes nothing else into it. That is the whole guard, and it replaces a
@@ -36,8 +40,10 @@ runs="$dest/backup-homes"
 # archives, so nothing below one can match `-type d` anyway -- but this is an
 # `rm -rf` and it costs nothing to say how deep it may reach.
 #
-# No `-H`: the starting point is a directory this tool creates, so it is never
-# itself a symlink. A symlinked DESTINATION still works, because the link is
-# then an interior component of the path and `find` follows those regardless --
-# which is one more thing the child removed rather than answered.
-find "$runs" -mindepth 1 -maxdepth 1 -type d ! -mtime "-$days" -exec rm -rf {} +
+# `-H` after all. I had reasoned that the starting point is a directory this
+# tool creates and so is never a symlink -- but nothing enforces that, and
+# `mkdir -p` and `chmod` both succeed quietly when `$dest/backup-homes` already
+# IS a symlink onto another disk, which is a natural variant of the symlinked
+# destination the HOWTO invites. Under the default `-P` that makes `-mindepth 1`
+# match nothing, so retention exits 0 having pruned nothing, forever.
+find -H "$runs" -mindepth 1 -maxdepth 1 -type d ! -mtime "-$days" -exec rm -rf {} +
