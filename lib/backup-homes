@@ -2,62 +2,51 @@
 # Snapshot every agent home on this host.
 #
 # The repo is the image and the home is the volume. `agent-mgr restore` rebuilds
-# the image half from git whenever you like -- config.yaml, the plugin, the
-# pinned skills. Nothing rebuilds the volume half: auth.json, the dotenv, the
-# sessions, the memories and the kanban exist in exactly one place.
+# the image half from git whenever you like. Nothing rebuilds the volume half:
+# auth.json, the dotenv, the sessions, the memories and the kanban exist in
+# exactly one place.
 #
 #   agent-mgr backup-homes /somewhere/not/this/disk
 #
-# A glob rather than the registry, deliberately. It needs no row to be current,
-# so it also catches a home whose agent is mid-migration or not registered yet:
-# measured on this host, it found two the registry did not have.
+# A glob rather than the registry: it needs no row to be current, so it catches
+# a home mid-migration or not registered yet -- two, measured on this host.
+#
+# What an archive is and is not worth -- live-copy consistency, retention, a
+# home declared outside the glob -- is docs/HOWTO.md § "What an archive is
+# worth". Here: only what a maintainer needs before editing the tar call.
 set -euo pipefail
 dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
-# These archives hold .env and auth.json, and tar honours the umask only when it
-# CREATES the file -- writing over an existing 0644 path keeps 0644, measured. The
-# timestamp-and-pid name below is what guarantees a fresh path every run, so the
-# two together are the 0600, not the umask alone. The pid is there because the
-# timestamp is only second-resolution: two runs starting in the same second
-# would otherwise share a path, which is exactly the concurrent case.
+# These archives hold .env and auth.json. tar honours the umask only when it
+# CREATES the file -- writing over an existing 0644 keeps 0644, measured -- so
+# the 0600 is the umask AND the timestamp-and-pid name below, which is what
+# makes the path fresh every run. The pid because the stamp is second-resolution.
 umask 077
 
 n=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
     name="$(basename "$home")"
-    # Straight to the final name -- staging introduced more failure modes than it
-    # prevented here; plow-pbc/agent-mgr#34 has the rejected shapes.
-    # docs/HOWTO.md § "What an archive is worth" owns the operator-facing
-    # limits; keep the two in step.
+    # Straight to the final name: staging introduced more failure modes than it
+    # prevented; plow-pbc/agent-mgr#34 has the rejected shapes.
     #
     # `-C "$home" .`, not `-C <parent> <basename>`: a home symlinked onto a
     # bigger disk is supported, and from the parent tar stores that symlink AS a
-    # symlink -- exit 0, one entry, and no credentials, sessions or memories in
-    # the archive at all. Measured.
+    # symlink -- exit 0, one entry, no credentials in the archive at all.
     #
     # `|| [ $? -eq 1 ]`: tar exits 1 for "file changed as we read it", which a
-    # running gateway provokes on essentially every nightly run. The file it was
-    # reading may have been captured mid-rewrite and can restore partially --
-    # measured on a plain file, not only on a database -- so this is a trade,
-    # not a no-op: refusing status 1 would instead fail the nightly EVERY night,
-    # and a backup that cries wolf is one nobody reads. Status 2 stays a real
-    # failure. docs/HOWTO.md § "What an archive is worth"
-    # owns the operator-facing version of this; keep the two in step.
+    # running gateway provokes nightly; refusing it would fail the nightly EVERY
+    # night. Status 2 stays a real failure.
     #
-    # logs/, cache/ and lazy-packages/ are most of the bytes and none of the
-    # value: 1.5 GB of homes becomes 439 MB of archives.
-    #
-    # ${name#.} so the archives are visible to a plain `ls` -- a backup nobody
-    # can see is one nobody checks.
+    # The excludes are most of the bytes and none of the value -- 1.5 GB of
+    # homes becomes 439 MB; ${name#.} so a plain `ls` shows the archives.
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
         -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz" . \
         || [ $? -eq 1 ]
     n=$((n + 1))
 done
 
-# A run that matches nothing must not report success. Under the nightly cron the
-# likely cause is a crontab installed under a different account, so $HOME is not
-# the operator's -- and every run would then report success having written
-# nothing, discovered only at restore time.
+# A run that matches nothing must not report success: under the nightly cron the
+# cause is likely a crontab installed under a different account, so $HOME is not
+# the operator's -- every run then reports success having written nothing.
 [ "$n" -gt 0 ] || { echo "backup-homes: no homes matched $HOME/.hermes*" >&2; exit 1; }
