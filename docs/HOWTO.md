@@ -125,7 +125,7 @@ inside the nightly's `~/.hermes*` glob (so the cron archived a dead home as
 live), a fixed name that moved the home *inside* the previous copy on a re-run,
 and a unique name the operator could not refer to from a later shell.
 
-Where it goes, decided before you run anything: **outside `~/.hermes*`, on the
+Where it goes, decided before you run anything: **a name that does not match `~/.hermes*`, on the
 same disk, not `/tmp`.** That copy is the only thing holding state newer than the
 archive — everything written since 04:00, the `-wal` and `-shm` sidecars, any
 turn the agent took this morning — so a `/tmp` that is reaped on reboot loses
@@ -139,7 +139,7 @@ a=~/agent-backups/hermes-rowan-20260826.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down rowan \
   && home=$(readlink -f "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')") \
-  && echo "move $home aside now — same disk, not /tmp, not under ~/.hermes*; keep it until the restored agent is verified running. Then run step 2."
+  && echo "move $home aside now — same disk, not /tmp, and a name that does not match ~/.hermes* (a sibling like .hermes-rowan.old matches it); keep it until the restored agent is verified running. Then run step 2."
 ```
 
 Then move it. Step 2, **in the same shell** — `$home` and `$a` come from step 1:
