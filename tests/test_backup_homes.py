@@ -24,17 +24,19 @@ def documented_prune(dest):
     pins the copy, which is what lets the real one drift."""
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
-    # The `&&` is load-bearing and cannot survive the slice below, so assert it
-    # here: it gates the prune on the backup having SUCCEEDED. Split the cron
-    # entry in two, or swap it for `;`, and a run of failed nights prunes the
-    # destination empty while writing nothing.
-    assert "&& find -H" in line, f"the prune is no longer gated on the backup: {line}"
-    cmd = line[line.index("find -H"):].replace("~/agent-backups", str(dest))
-    # Fail loudly rather than open. `~/agent-backups` is the one part still
-    # hand-copied here, so an ordinary docs rename makes `replace` match nothing
-    # — and `sh` tilde-expands, so the command would run `rm -rf` against the
-    # operator's REAL backups on the host this suite runs on. The assertions
-    # below would then fail, but only after the deletion.
+    # Taken from the BACKUP half rather than hand-copied, so nothing in this file
+    # is a second copy of the doc that could drift from it. That makes one
+    # assertion cover three things: the `&&` is still there gating the prune on a
+    # SUCCEEDED backup (split the entry in two, or use `;`, and a run of failed
+    # nights prunes the destination empty while writing nothing), and both halves
+    # still name the SAME destination — rename one and the cron backs up to A
+    # while `rm -rf`-ing B, silently, in either direction.
+    backup_dest = line.split("backup-homes", 1)[1].split()[0]
+    assert f"&& find -H {backup_dest} " in line, f"the two halves have parted: {line}"
+    cmd = line[line.index("find -H"):].replace(backup_dest, str(dest))
+    # And fail loudly rather than open: `sh` tilde-expands, so a retarget that
+    # missed would run `rm -rf` against the operator's REAL backups on this host.
+    # The assertions below would fail too, but only after the deletion.
     assert str(dest) in cmd and "~" not in cmd, f"retarget missed the destination: {cmd}"
     return cmd
 
