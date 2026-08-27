@@ -51,12 +51,23 @@ umask 077
 # resolution, and two runs that did collide fail loudly at `mkdir` rather than
 # writing over each other.
 runs="$dest/backup-homes"
-# Refused here too, and for the same reason `prune-backups` refuses it: `mkdir
-# -p` and `chmod` both succeed quietly on an existing link, so this would
-# silently adopt -- and re-mode -- whatever it points at.
-[ -L "$runs" ] && { echo "backup-homes: $runs is a symlink -- point $dest at another disk instead" >&2; exit 1; }
-mkdir -p "$runs"
-chmod 700 "$runs"
+marker="$runs/.written-by-backup-homes"
+# "Everything in here is ours" was an assumption, and `mkdir -p` made it one
+# this could not check: a destination that already held an ordinary
+# `backup-homes/` of the operator's was adopted, re-moded, and then had its aged
+# children pruned. So provenance is written down, once, when this creates the
+# directory -- and anything already there without the marker is refused rather
+# than adopted. A symlink is refused with it: `mkdir -p` and `chmod` both
+# succeed quietly through one.
+if [ -e "$runs" ] || [ -L "$runs" ]; then
+    if [ -L "$runs" ] || [ ! -f "$marker" ]; then
+        echo "backup-homes: $runs already exists and was not created by this command -- move it aside; runs must live in a directory nothing else does" >&2
+        exit 1
+    fi
+else
+    mkdir "$runs"   # 0700 from the umask above; nothing else may own this
+    : > "$marker"
+fi
 run="$runs/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir "$run"
 

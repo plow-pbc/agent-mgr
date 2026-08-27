@@ -235,7 +235,10 @@ retention away from your own files: `prune-backups` deletes directories *inside*
 that child and nothing outside it, so what protects a `photos/` you keep beside
 the backups is the layout rather than a pattern that has to be right. A run
 written before the child existed sits directly in the destination and is never
-pruned — move any you have into `backup-homes/`, once, or delete them.
+pruned — let the first run create `backup-homes/`, then move any you have into
+it, or delete them. Creating that directory yourself is refused: it carries a
+marker written when this command makes it, so a `backup-homes/` that happens to
+be *yours* is never adopted and never pruned.
 
 `prune-backups` is its own command rather than a `find` written out here: it is
 an `rm -rf`, it shipped over-broad three times while it lived in this file, and
@@ -286,7 +289,7 @@ exits non-zero, so the cron's `&&` still holds retention back.
 **That gate is not free, and it is the thing to watch.** A home that fails
 *every* night — a permission problem nobody fixes, a diagnostic not yet on the
 benign list — makes every run exit non-zero, so the prune never runs and the
-`-mtime +14` retention in the crontab **above** stops being true. The
+documented 14-day retention stops being true. The
 destination then grows by a full sweep a night until the disk fills, at which
 point every home starts failing. From the outside it looks healthy the whole
 time: a new run directory each night with current archives in it.

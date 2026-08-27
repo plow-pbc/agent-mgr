@@ -30,12 +30,15 @@ esac
 # answering it again.
 runs="$dest/backup-homes"
 [ -d "$runs" ] || { echo "prune-backups: no runs at $runs -- if $dest is a mount point, it is not mounted" >&2; exit 1; }
-# And it must be a real directory, not a link. A link the operator made onto a
-# disk that already holds their things puts those things inside the namespace,
-# where this deletes any directory older than $days -- which is the class the
-# child exists to close, reopened one indirection out. Refusing costs nothing:
-# the DESTINATION may be a symlink, which is how runs reach a bigger disk.
-[ -L "$runs" ] && { echo "prune-backups: $runs is a symlink -- point $dest at another disk instead, so the runs directory stays one nothing else lives in" >&2; exit 1; }
+# And it must be the directory `backup-homes` made, proved by the marker it
+# wrote there, not merely a directory with the right name. Without that this
+# deletes the aged children of any `backup-homes/` the operator happened to
+# have -- the class the child exists to close, reached by name collision. A
+# symlink is refused with it, for the same reason the other half refuses one.
+if [ -L "$runs" ] || [ ! -f "$runs/.written-by-backup-homes" ]; then
+    echo "prune-backups: $runs was not created by backup-homes -- refusing to delete anything in it" >&2
+    exit 1
+fi
 
 # `! -mtime -N` rather than `-mtime +N`: `+N` means STRICTLY more than N full
 # days, so it keeps a fifteenth daily run under a documented fourteen --

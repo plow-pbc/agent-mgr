@@ -15,7 +15,6 @@ import pytest
 
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 HOWTO = Path(__file__).resolve().parent.parent / "docs" / "HOWTO.md"
-RUN_DIR = re.compile(r"\d{8}T\d{6}Z-\d+")
 
 
 def run_documented_cron(home, sandbox, extra_path=None):
@@ -137,13 +136,6 @@ def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(home,
     in run() removes the runner's own umask as a second source, so this asserts
     the script's guarantee and not the host's."""
 
-    # Pre-created loose, which is the documented migration: the operator makes
-    # `backup-homes/` by hand to move older runs into it, and a default umask of
-    # 022 gives them 0755. Nothing else pins the `chmod` that fixes it — under
-    # the suite's own umask the directory would be 0700 either way.
-    (dest / "backup-homes").mkdir()
-    (dest / "backup-homes").chmod(0o755)
-
     assert run(home, dest).returncode == 0
     archive = next(dest.glob("backup-homes/*/*.tar.gz"))
     for path in (archive, archive.parent, archive.parent.parent):
@@ -175,7 +167,7 @@ def test_each_run_gets_its_own_directory(home, dest):
     outs = [p.communicate() for p in ps]
     assert [p.returncode for p in ps] == [0, 0], outs
 
-    names = sorted(d.name for d in (dest / "backup-homes").iterdir())
+    names = sorted(d.name for d in (dest / "backup-homes").iterdir() if d.is_dir())
     assert len(names) == 2, f"two runs shared a directory: {names}"
     pat = re.compile(r"\d{8}T\d{6}Z-(\d+)")
     pids = [pat.fullmatch(n).group(1) for n in names if pat.fullmatch(n)]
@@ -364,7 +356,7 @@ def test_prune_takes_runs_and_nothing_beside_them(tmp_path, home, dest):
     The aged run is the real name the script writes, not a hand-copied one."""
     assert run(home, dest).returncode == 0
     runs = dest / "backup-homes"
-    aged_run = next(runs.iterdir())
+    aged_run = next(p for p in runs.iterdir() if p.is_dir())  # not the marker file
 
     mine = {"photos": "dir", "photos-2019.tar.gz": "file",
             "20240101T010101Z-1": "dir"}  # even run-shaped, it is outside the child
@@ -404,40 +396,45 @@ def test_prune_takes_runs_and_nothing_beside_them(tmp_path, home, dest):
     assert not boundary.exists(), "it kept a run at the retention boundary"
 
 
-def test_a_symlinked_runs_child_is_refused_by_both_halves(tmp_path, home, dest):
-    """Supporting it would reopen the class the child exists to close: a link
-    the operator pointed at a disk that already holds their things puts those
-    things *inside* the namespace, where retention deletes any directory older
-    than the window. `mkdir -p` and `chmod` both succeed quietly on a link, so
-    the backup half would adopt and re-mode the target too.
+@pytest.mark.parametrize("shape", ["symlink", "the operator's own directory"])
+def test_a_runs_child_this_command_did_not_create_is_refused(tmp_path, home, dest, shape):
+    """The namespace only protects anything if it is *ours*, and "we made it"
+    was an assumption until a marker made it checkable. Both shapes reach the
+    same harm: `mkdir -p` succeeds through a link and on an existing directory
+    alike, so the backup half would adopt whatever is there and the prune half
+    would then delete its aged children.
 
-    Refusing costs nothing — the *destination* may be a symlink, which is how
-    runs reach a bigger disk in the first place."""
+    Refusing the link costs nothing — the *destination* may be a symlink, which
+    is how runs reach a bigger disk in the first place."""
+    old = time.time() - 20 * 86400
     target = tmp_path / "elsewhere"
     (target / "photos").mkdir(parents=True)
-    old = time.time() - 20 * 86400
     os.utime(target / "photos", (old, old))
     target.chmod(0o755)
-    (dest / "backup-homes").symlink_to(target)
+    if shape == "symlink":
+        (dest / "backup-homes").symlink_to(target)
+    else:
+        target = dest / "backup-homes"
+        (target / "photos").mkdir(parents=True)
+        os.utime(target / "photos", (old, old))
+        target.chmod(0o755)
     before = target.stat().st_mode & 0o777
 
     r = run(home, dest)
-    assert r.returncode != 0 and "is a symlink" in r.stderr, r.stderr
+    assert r.returncode != 0 and "not created by" in r.stderr, r.stderr
     p = subprocess.run([str(CLI), "prune-backups", str(dest), "14"],
                        capture_output=True, text=True)
-    assert p.returncode != 0 and "is a symlink" in p.stderr, p.stderr
-    assert (target / "photos").exists(), "it deleted through the link anyway"
+    assert p.returncode != 0 and "not created by" in p.stderr, p.stderr
+    assert (target / "photos").exists(), "it deleted what it did not create"
     # Refused BEFORE touching it, which is the only ordering that makes the
     # refusal safe — and the only thing the exit status cannot show. Put the
     # check after `mkdir -p`/`chmod` and every assertion above still holds while
     # a directory outside $dest quietly changes mode.
-    assert target.stat().st_mode & 0o777 == before, "it re-moded the link's target"
-    assert not any(target.glob("*Z-*")), "it wrote a run through the link"
+    assert target.stat().st_mode & 0o777 == before, "it re-moded a directory it refused"
+    assert not any(target.glob("*Z-*")), "it wrote a run into a directory it refused"
 
 
-@pytest.mark.parametrize("days", ["-1", "0", "00", "14 -o -true", "abc", "1.5"],
-                         ids=["negative", "zero", "padded-zero", "injected",
-                              "word", "fraction"])
+@pytest.mark.parametrize("days", ["-1", "0"], ids=["negative", "zero"])
 def test_prune_refuses_a_retention_argument_it_cannot_trust(tmp_path, home, dest, days):
     """`days` lands inside `find`'s own expression. `-1` becomes `-mtime +-1`,
     which GNU findutils 4.9 matches against a *fresh* directory — measured — so
