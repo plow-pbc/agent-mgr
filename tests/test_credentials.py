@@ -303,7 +303,12 @@ def test_the_publish_path_macos_takes_works(tmp_path):
     (home / ".env").chmod(0o600)
     forced = (
         "import os, runpy, sys\n"
-        "del os.O_TMPFILE\n"
+        # pop, not del: `del` raises AttributeError where the attribute is
+        # already absent, which is macOS -- so the test guarding the macOS path
+        # would be the one test guaranteed to fail there, accusing a fallback
+        # that is in fact the only thing working. pop is also the honest
+        # expression of "force the branch this platform already takes".
+        "os.__dict__.pop('O_TMPFILE', None)\n"
         "sys.argv = ['set-latch-env', %r]\n"
         "runpy.run_path(%r, run_name='__main__')\n" % (str(home), str(ROOT / "lib" / "set-latch-env"))
     )
