@@ -227,13 +227,15 @@ changes nothing — and a default umask of 002 makes a plain `mkdir` produce 077
 Nightly, with 14 days kept:
 
 ```sh
-0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( \( -type d -name '[0-9]*T[0-9]*Z-[0-9]*' \) -o -name '*.tar.gz' \) -mtime +14 -exec rm -rf {} +
+0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( \( -type d -name '[0-9]*T[0-9]*Z-[0-9]*' \) -o \( -type f -name 'hermes-*.tar.gz' \) \) -mtime +14 -exec rm -rf {} +
 ```
 
-Every clause in that `rm -rf` is load-bearing: `-H` so a symlinked destination
-resolves at all, the run-name glob so it takes *its own* directories and not a
-`photos/` you keep alongside them, and `-name '*.tar.gz'` for archives an
-earlier shape wrote flat, which matches nothing once they age out.
+Every clause in that `rm -rf` is load-bearing, and **both** arms are name-scoped
+so it only ever takes files it wrote: `-H` so a symlinked destination resolves
+at all, the run-name glob for its own directories, and `hermes-*.tar.gz` for
+archives an earlier shape wrote flat, which matches nothing once they age out.
+The `-type` on each is what stops a directory named `photos.tar.gz` — or a
+`photos/` you keep alongside the backups — from matching the other one's arm.
 
 ### What an archive is worth
 
