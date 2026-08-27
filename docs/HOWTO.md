@@ -118,16 +118,22 @@ night's.
 
 ### Restoring one
 
-**Move the existing home aside first, yourself.** The recipe deliberately does
-not do it for you: naming that copy is a decision, and three attempts at
-automating it each produced a worse hazard than the last — a name inside the
-nightly's `~/.hermes*` glob (so the cron archived a dead home as live), a fixed
-name that moved the home *inside* the previous copy on a re-run, and a unique
-name the operator could not refer to from a later shell. Put it wherever you
-will remember, outside `~/.hermes*`.
+**You move the existing home aside — but not until step 1 has run.** The recipe
+deliberately does not move it for you: naming that copy is a decision, and three
+attempts at automating it each produced a worse hazard than the last — a name
+inside the nightly's `~/.hermes*` glob (so the cron archived a dead home as
+live), a fixed name that moved the home *inside* the previous copy on a re-run,
+and a unique name the operator could not refer to from a later shell.
 
-Two steps, because the move between them is yours and must not happen until the
-archive is known good and the agent is stopped.
+Where it goes, decided before you run anything: **outside `~/.hermes*`, on the
+same disk, not `/tmp`.** That copy is the only thing holding state newer than the
+archive — everything written since 04:00, the `-wal` and `-shm` sidecars, any
+turn the agent took this morning — so a `/tmp` that is reaped on reboot loses
+it. Keep it until you have watched the restored agent actually run, then delete
+it.
+
+The two blocks are separate pastes, in order, in **one shell** — `$home` is bound
+by the first and used by the second.
 
 ```sh
 # 1 — verify the archive, then stop the agent
@@ -174,11 +180,7 @@ would move the link, the restore would land on the wrong volume, and step 2's
 `mkdir` would fail on the name regardless, since `mkdir` does not follow a
 trailing symlink.
 
-**The copy you moved aside is the only thing holding state newer than the
-archive** — everything written since 04:00, the `-wal` and `-shm` sidecars, any
-turn the agent took this morning. Put it on the same disk, not `/tmp`, which is
-reaped on reboot. Keep it until you have watched the restored agent actually
-run, not merely until step 2 exits, and delete it only then.
+
 
 ## Two layers: where does my code go?
 
