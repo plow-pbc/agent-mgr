@@ -71,16 +71,24 @@ it is the whole mechanism (*One repo, several people* in the
 agent-mgr register bob ~/services/shared-hermes-agent
 agent-mgr restore bob
 BOB_HOME=$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')
-printf '\nAGENT_TZ=America/Chicago\n' >> "${BOB_HOME:?resolve printed no home}/.env"
+printf '\nAGENT_TZ=America/Chicago\n' >> "${BOB_HOME:?resolve printed no home}/.env" &&
 agent-mgr up bob
 ```
 
-**The zone goes in before `up`, and it is the one per-person value that has to** —
-*Where a per-person value goes* in the [README](../README.md) owns why, including
-the leading newline. What matters to the order here: it is applied when the
-container is **created**, so setting it later needs another `agent-mgr up`.
-`restart` will not do, because `restart` does not recreate. The `:?` is there
-because an empty home would append to `/.env`.
+**The zone goes after `restore` and before `up`, and both bounds bite.**
+*Where a per-person value goes* in the [README](../README.md) owns why the zone
+is special, including the leading newline; what this runbook owns is where it
+sits. Earlier than `restore` and there is no dotenv skeleton — `restore` writes
+one only when the file is absent, so creating it yourself means the
+`PLOW_CHAT_*` and `DOMO_*` placeholders never land. Later than `up` and it is
+simply not applied, because the zone reaches the container when the container is
+**created**; changing it after that needs another `agent-mgr up`, never
+`restart`, which does not recreate.
+
+The `:?` and the `&&` are both load-bearing: without them a `resolve` that
+printed nothing appends to `/.env`, and `up` then starts the agent anyway — on
+the fleet default zone, quietly, which is the failure this whole step exists to
+prevent.
 
 `up` before the codes, not after: `sign-in` runs `hermes auth add` **inside the
 container**, so it refuses until one is running. `activate` does not care — it
@@ -96,7 +104,7 @@ because two of them block:
 | 3 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code, then **waits on the browser** |
 | 4 | **them** | open the URL in *their* browser, enter the code |
 | 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
-| 6 | you | put the pair in **their** instance's dotenv — `$AGENT_HOME/.env`, which `agent-mgr resolve bob` prints — then `check-latch bob` and `restart bob` |
+| 6 | you | put the pair in `"$BOB_HOME/.env"` — **their** instance's dotenv, bound above — then `check-latch bob` and `restart bob` |
 
 **Neither code can be sent ahead.** `activate` does not return when it prints
 the code; it polls `/v1/auth/activate/redeem` until the text arrives, and the
