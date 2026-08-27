@@ -423,7 +423,11 @@ def test_the_howtos_run_directory_examples_match_what_the_script_writes(tmp_path
     assert run(root, dest).returncode == 0
     assert RUN_DIR.fullmatch(next(dest.iterdir()).name), "the script's own name drifted"
 
-    examples = [m for m in re.findall(r"agent-backups/(\S+?)/", HOWTO.read_text())]
+    # Every path under the destination, whether or not it continues into a
+    # further component — anchoring on a trailing `/` would silently skip an
+    # example that names the directory alone, which is the shape most likely to
+    # be added next.
+    examples = re.findall(r"agent-backups/([^/\s`)\"]+)", HOWTO.read_text())
     assert examples, "no run-directory example left in the HOWTO to pin"
     for name in examples:
         assert RUN_DIR.fullmatch(name), \
