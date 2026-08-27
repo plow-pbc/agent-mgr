@@ -206,7 +206,7 @@ still reported success on the others — nothing does that today. It skips
 Each run gets its own directory, named for the UTC second and the pid:
 
 ```
-~/agent-backups/20260827T040112Z-4171/hermes-errands.tar.gz
+~/agent-backups/backup-homes-20260827T040112Z-4171.run/hermes-errands.tar.gz
 ```
 
 That directory is mode 0700 and the archives inside it 0600, because they hold
@@ -229,6 +229,11 @@ Nightly, with 14 days kept:
 ```sh
 0 4 * * * { ~/.local/bin/agent-mgr backup-homes ~/agent-backups && ~/.local/bin/agent-mgr prune-backups ~/agent-backups 14 ; } >> ~/backup-homes.log 2>&1
 ```
+
+The `backup-homes-` prefix and the `.run` tail are not decoration: they are how
+`prune-backups` tells this tool's runs from anything you keep beside them. A run
+directory written before they existed is not matched, so it is never pruned —
+rename any you have to the shape above, once, or delete them.
 
 `prune-backups` is its own command rather than a `find` written out here. That
 predicate is the difference between deleting this tool's runs and deleting
@@ -303,7 +308,7 @@ hazard than the last.
 Step 1 — verify the archive, stop the agent, resolve the home:
 
 ```sh
-a=~/agent-backups/20260826T040112Z-4171/hermes-errands.tar.gz \
+a=~/agent-backups/backup-homes-20260826T040112Z-4171.run/hermes-errands.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down errands \
   && home=$(readlink -f "$(agent-mgr resolve errands | sed -n 's/^AGENT_HOME=//p')") \

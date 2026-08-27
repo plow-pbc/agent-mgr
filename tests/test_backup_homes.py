@@ -252,12 +252,13 @@ def tar_shim(directory, message, only_for=None):
     ("tar: ./sessions.db: file changed as we read it", True),
     ("tar: ./kanban.db-wal: File removed before we read it", True),
     ("tar: ./auth.json: File removed before we read it", False),
+    ("tar: ./sessions.db-journal: File removed before we read it", True),
     ("tar: ./app.log: File shrank by 4096 bytes; padding with zeros", True),
     ("tar: ./sessions.db: file changed as we read it\ntar: ./app.log: File shrank by 8 bytes; padding with zeros", True),
     ("tar: Can't open 'auth.json': Permission denied", False),
     ("tar: ./x: Cannot stat: No such file or directory", False),
     ("", False),
-], ids=["read-race", "volatile-removed", "credential-removed", "shrank",
+], ids=["read-race", "wal-removed", "credential-removed", "journal-removed", "shrank",
         "race-and-shrank", "unreadable-member", "unstattable",
         "no-diagnostic-at-all"])
 def test_tar_status_1_is_judged_by_its_message_not_its_number(

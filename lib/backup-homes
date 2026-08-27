@@ -66,11 +66,13 @@ mkdir "$run"
 # which is the direction that cannot lose a credential quietly.
 benign='file changed as we read it|file shrank by'
 # A REMOVAL is different, and only benign for a path meant to come and go. The
-# gateway's SQLite sidecars are checkpointed away mid-run on an ordinary night;
+# gateway's SQLite sidecars are checkpointed away mid-run on an ordinary night
+# -- `-journal` as much as `-wal`, since rollback-journal mode is SQLite's
+# default and deletes its journal on every commit;
 # `auth.json` is not, and an atomic rewrite (write-temp-then-rename) makes even
 # that one momentarily absent. Tolerating removals path-agnostically would
 # publish an archive missing exactly the credential this command exists to keep.
-volatile='(-wal|-shm|\.tmp|\.lock|~): file removed before we read it'
+volatile='(-wal|-shm|-journal|\.tmp|\.lock|~): file removed before we read it'
 err="$(mktemp)"
 trap 'rm -f "$err"' EXIT
 
