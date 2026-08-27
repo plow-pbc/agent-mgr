@@ -7,7 +7,6 @@ exist and still look like backups.
 import os
 import re
 import subprocess
-import tempfile
 import time
 import tarfile
 from pathlib import Path
@@ -19,20 +18,23 @@ HOWTO = Path(__file__).resolve().parent.parent / "docs" / "HOWTO.md"
 RUN_DIR = re.compile(r"\d{8}T\d{6}Z-\d+")
 
 
-def run_documented_cron(home, extra_path=None):
+def run_documented_cron(home, sandbox, extra_path=None):
     """Run the entry as written — schedule stripped, installed path substituted,
     nothing else — with `~` resolving through `home`.
 
     The running, not just the building, because the line ends in `rm -rf` over a
-    `~` this deliberately leaves unexpanded. Handing that string to a caller is
-    a loaded gun; refusing any `home` outside the temp root is the safety."""
-    # realpath both sides: on macOS `gettempdir()` is /var/folders/... while
-    # pytest hands back /private/var/folders/..., and a prefix test on the
-    # unresolved pair refuses every run on the platform this entry is checked
-    # for. A guard that fails closed everywhere protects nothing.
-    tmp_root = os.path.realpath(tempfile.gettempdir())
-    assert os.path.realpath(home).startswith(tmp_root + os.sep), \
-        f"refusing to run a documented `rm -rf` with HOME={home}"
+    `~` this deliberately leaves unexpanded. Handing that string back to a
+    caller is a loaded gun; `home` must be inside `sandbox`, this test's own
+    `tmp_path`.
+
+    Anchored to that rather than to the system temp root, which is what it
+    actually means and what survives `--basetemp` pointed elsewhere. Resolved on
+    both sides: on macOS `gettempdir()` is `/var/folders/…` while pytest
+    `resolve()`s its basetemp to `/private/var/folders/…`, so comparing the
+    unresolved pair refuses every run on the platform this entry exists for —
+    measured. A guard that fails closed everywhere protects nothing."""
+    assert Path(home).resolve().is_relative_to(Path(sandbox).resolve()), \
+        f"refusing to run a documented `rm -rf` with HOME={home}, outside {sandbox}"
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
     # The group and its redirect are the whole point of the entry: without them
@@ -405,10 +407,10 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
     if case == "a home fails":
         (root / "agent-backups").mkdir()
         (root / "agent-backups").chmod(0o700)
-        shim = tmp_path / "bin"
-        tar_shim(shim, "tar: Cannot open: Permission denied", only_for="alpha")
+        shim = tar_shim(tmp_path / "bin", "tar: Cannot open: Permission denied",
+                        only_for="alpha")
 
-    r = run_documented_cron(root, extra_path=str(shim) if shim else None)
+    r = run_documented_cron(root, tmp_path, extra_path=shim)
 
     assert r.returncode != 0, "a failed night must hold the prune back"
     log = (root / "backup-homes.log").read_text()
