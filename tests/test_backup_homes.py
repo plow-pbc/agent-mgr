@@ -420,11 +420,18 @@ def test_a_runs_child_this_command_did_not_create_is_refused(tmp_path, home, des
         target.chmod(0o755)
     before = target.stat().st_mode & 0o777
 
+    # The remedy has to match the shape: `touch`ing a marker cannot rescue a
+    # symlink — it is refused first, and the file would land in whatever the
+    # link points at, outside `$dest`.
+    expected = "is a symlink" if shape == "symlink" else "carries no marker"
     r = run(home, dest)
-    assert r.returncode != 0 and "carries no marker" in r.stderr, r.stderr
+    assert r.returncode != 0 and expected in r.stderr, r.stderr
     p = subprocess.run([str(CLI), "prune-backups", str(dest), "14"],
                        capture_output=True, text=True)
-    assert p.returncode != 0 and "carries no marker" in p.stderr, p.stderr
+    assert p.returncode != 0 and expected in p.stderr, p.stderr
+    if shape == "symlink":
+        assert "touch" not in r.stderr and "touch" not in p.stderr, \
+            "it offered an adoption that cannot work for a link"
     assert (target / "photos").exists(), "it deleted what it did not create"
     # Refused BEFORE touching it, which is the only ordering that makes the
     # refusal safe — and the only thing the exit status cannot show. Put the
@@ -471,10 +478,11 @@ def test_two_first_runs_against_a_fresh_destination_both_succeed(tmp_path, home,
     What this pins is the observable end state. It does **not** pin the
     interleaving: swapping the staged `mv` back for a plain `mkdir` passes here
     on every attempt, because the window is a few syscalls wide and nothing
-    external can force two processes into it. The atomicity is structural —
-    `rename(2)` either replaces the name or fails, so `$runs` is never visible
-    without its marker — and that is an argument, not a measurement. Said out
-    loud because a green test here would otherwise read as proof."""
+    external can force two processes into it. `$runs` is never visible without
+    its marker because it is built complete and moved in — an argument, not a
+    measurement. Said out loud because a green test here would otherwise read as
+    proof, and because the first version of that argument was simply wrong: `mv`
+    onto an existing directory does not fail, it moves the source inside."""
     ps = [spawn(home, dest) for _ in range(2)]
     outs = [p.communicate() for p in ps]
     assert [p.returncode for p in ps] == [0, 0], outs
@@ -483,6 +491,11 @@ def test_two_first_runs_against_a_fresh_destination_both_succeed(tmp_path, home,
     assert (runs / ".written-by-backup-homes").is_file(), "the marker was left behind"
     assert len([p for p in runs.iterdir() if p.is_dir()]) == 2
     assert not list(dest.glob(".backup-homes.*")), "a staged directory was orphaned"
+    # `mv` onto an existing directory moves the source INSIDE it and exits 0 --
+    # so the loser plants `.backup-homes.<pid>/` in the one namespace whose
+    # contract is that everything in it is a run, where the pruner would later
+    # `rm -rf` it as though it were one.
+    assert not list(runs.glob(".backup-homes.*")), "the loser's staging landed inside"
 
 
 def test_a_child_from_before_the_marker_is_adopted_by_the_documented_touch(tmp_path, home, dest):

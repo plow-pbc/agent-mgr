@@ -60,21 +60,35 @@ marker="$runs/.written-by-backup-homes"
 # than adopted. A symlink is refused with it: `mkdir -p` and `chmod` both
 # succeed quietly through one.
 if [ ! -e "$runs" ] && [ ! -L "$runs" ]; then
-    # Built complete under a private name and moved into place, so `$runs`
-    # never exists without its marker. A plain `mkdir` here would be worse than
-    # the `mkdir -p` it replaced: two first runs against the same destination
-    # both take this branch, the loser dies on "File exists", and one that
-    # looked between the winner's mkdir and its marker would refuse -- telling
-    # the operator to move aside a directory this command had just made.
+    # Built complete under a private name and moved into place, so `$runs` never
+    # exists without its marker. A plain `mkdir` here would be worse than the
+    # `mkdir -p` it replaced: two first runs both take this branch, the loser
+    # dies on "File exists", and one that looked between the winner's mkdir and
+    # its marker would refuse -- telling the operator to move aside a directory
+    # this command had just made.
+    #
+    # Both outcomes of the `mv` are cleaned up explicitly, because it is NOT a
+    # bare rename: when the target already exists as a directory, `mv` moves the
+    # source INSIDE it and exits 0 -- measured -- so the loser would otherwise
+    # plant `$runs/.backup-homes.<pid>/` in the one namespace whose whole
+    # contract is that everything in it is a run. `mv -T` says what is meant
+    # here, and is GNU-only; this repo supports macOS.
     staged="$dest/.backup-homes.$$"
     mkdir "$staged"   # 0700 from the umask above; nothing else may own this
     : > "$staged/.written-by-backup-homes"
-    mv "$staged" "$runs" 2>/dev/null || rm -rf "$staged"   # lost the race; theirs is fine
+    mv "$staged" "$runs" 2>/dev/null || true
+    rm -rf "$staged" "$runs/.backup-homes.$$"   # refused, or moved inside theirs
 fi
-if [ -L "$runs" ] || [ ! -f "$marker" ]; then
-    # "Carries no marker", not "was not created by this command" -- for a child
-    # an EARLIER version of this command wrote, the second is false and points
-    # the operator at destroying their own run set.
+# "Carries no marker", not "was not created by this command" -- for a child an
+# EARLIER version of this command wrote, the second is false and points the
+# operator at destroying their own run set. The remedies differ by shape, too: a
+# marker cannot rescue a symlink, since that is refused first and the `touch`
+# would only drop a dotfile in whatever it points at.
+if [ -L "$runs" ]; then
+    echo "backup-homes: $runs is a symlink -- replace it with a real directory; no marker will make it usable. To put runs on another disk, point $dest there instead." >&2
+    exit 1
+fi
+if [ ! -f "$marker" ]; then
     echo "backup-homes: $runs carries no marker, so this will not write into it. If an earlier version of this command made it: touch $marker. Otherwise move it aside -- runs must live in a directory nothing else does." >&2
     exit 1
 fi
