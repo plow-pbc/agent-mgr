@@ -1,0 +1,11 @@
+# Repos a reviewer of THIS repo may search and cite, materialized under
+# .siblings/<owner>/<repo>. Declared rather than left to the fallback so
+# the set is the one this repo actually depends on.
+#
+# One per line. The reviewer host must also carry a SOURCE_PATHS entry for
+# each, or the sibling reports as `missing` and is never searched.
+
+plow-pbc/hermes-plow-chat
+plow-pbc/str-hermes-agent
+plow-pbc/property-hunt-hermes-agent
+plow-pbc/life-assistant-hermes-agent
