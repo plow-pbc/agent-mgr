@@ -158,7 +158,17 @@ def test_each_run_gets_its_own_directory(home, dest):
     """The run directory carries a UTC timestamp *and* the pid, so no two runs
     share one and no archive path is ever reused. Asserting the shape catches
     both regressions deterministically; counting directories only catches the
-    date-only one, and then only when the two runs land in the same second."""
+    date-only one, and then only when the two runs land in the same second.
+
+    These are also two *first* runs against a fresh destination, so they race to
+    create `backup-homes/` — which is why that is built complete under a private
+    name and moved in rather than `mkdir`'d. What follows pins the end state,
+    not the interleaving: swapping the staged `mv` back for a plain `mkdir`
+    passes here every time, because the window is a few syscalls wide and
+    nothing external can force two processes into it. Said out loud because a
+    green result would otherwise read as proof — and the first version of that
+    argument was wrong, since `mv` onto an existing directory does not fail, it
+    moves the source inside."""
 
     ps = [spawn(home, dest) for _ in range(2)]
     # communicate(), not wait(): spawn() gives the children pipes, and wait()
@@ -167,7 +177,12 @@ def test_each_run_gets_its_own_directory(home, dest):
     outs = [p.communicate() for p in ps]
     assert [p.returncode for p in ps] == [0, 0], outs
 
-    names = sorted(d.name for d in (dest / "backup-homes").iterdir() if d.is_dir())
+    runs = dest / "backup-homes"
+    assert (runs / ".written-by-backup-homes").is_file(), "the marker was not published"
+    assert not list(dest.glob(".backup-homes.*")), "a staged directory was orphaned"
+    assert not list(runs.glob(".backup-homes.*")), "the loser's staging landed inside"
+
+    names = sorted(d.name for d in runs.iterdir() if d.is_dir())
     assert len(names) == 2, f"two runs shared a directory: {names}"
     pat = re.compile(r"\d{8}T\d{6}Z-(\d+)")
     pids = [pat.fullmatch(n).group(1) for n in names if pat.fullmatch(n)]
@@ -466,38 +481,6 @@ def test_prune_refuses_a_destination_it_has_never_written_to(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode != 0
     assert "no runs" in r.stderr and "not mounted" in r.stderr, r.stderr
-
-
-def test_two_first_runs_against_a_fresh_destination_both_succeed(tmp_path, home, dest):
-    """Creating the runs child is on the hot path of every run, so it has to be
-    idempotent. A plain `mkdir` there is worse than the `mkdir -p` it replaced:
-    both first runs take the create branch, the loser dies on `File exists`, and
-    one looking between the winner's `mkdir` and its marker refuses — telling
-    the operator to move aside a directory this command had just made.
-
-    What this pins is the observable end state. It does **not** pin the
-    interleaving: swapping the staged `mv` back for a plain `mkdir` passes here
-    on every attempt, because the window is a few syscalls wide and nothing
-    external can force two processes into it. `$runs` is never visible without
-    its marker because it is built complete and moved in — an argument, not a
-    measurement. Said out loud because a green test here would otherwise read as
-    proof, and because the first version of that argument was simply wrong: `mv`
-    onto an existing directory does not fail, it moves the source inside."""
-    ps = [spawn(home, dest) for _ in range(2)]
-    outs = [p.communicate() for p in ps]
-    assert [p.returncode for p in ps] == [0, 0], outs
-
-    runs = dest / "backup-homes"
-    assert (runs / ".written-by-backup-homes").is_file(), "the marker was left behind"
-    assert len([p for p in runs.iterdir() if p.is_dir()]) == 2
-    assert not list(dest.glob(".backup-homes.*")), "a staged directory was orphaned"
-    # `mv` onto an existing directory moves the source INSIDE it and exits 0 --
-    # so the loser plants `.backup-homes.<pid>/` in the one namespace whose
-    # contract is that everything in it is a run, where the pruner would later
-    # `rm -rf` it as though it were one.
-    assert not list(runs.glob(".backup-homes.*")), "the loser's staging landed inside"
-
-
 def test_a_child_from_before_the_marker_is_adopted_by_the_documented_touch(tmp_path, home, dest):
     """A `backup-homes/` an earlier version of this command wrote carries no
     marker, so both halves refuse it — correctly, since they cannot tell it from
