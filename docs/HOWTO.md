@@ -132,18 +132,19 @@ turn the agent took this morning — so a `/tmp` that is reaped on reboot loses
 it. Keep it until you have watched the restored agent actually run, then delete
 it.
 
-The two blocks are separate pastes, in order, in **one shell** — `$home` is bound
-by the first and used by the second.
+Step 1 — verify the archive, stop the agent, resolve the home:
 
 ```sh
-# 1 — verify the archive, then stop the agent
 a=~/agent-backups/hermes-rowan-20260826.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down rowan \
   && home=$(readlink -f "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')") \
-  && echo "move $home aside now, then run step 2"
+  && echo "move $home aside now — same disk, not /tmp, not under ~/.hermes*; keep it until the restored agent is verified running. Then run step 2."
+```
 
-# 2 — after you have moved it
+Then move it. Step 2, **in the same shell** — `$home` and `$a` come from step 1:
+
+```sh
 mkdir "$home" \
   && tar -C "$home" -xzf "$a" \
   && agent-mgr restore rowan \
