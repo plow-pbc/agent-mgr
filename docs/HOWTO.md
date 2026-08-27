@@ -126,12 +126,19 @@ name that moved the home *inside* the previous copy on a re-run, and a unique
 name the operator could not refer to from a later shell. Put it wherever you
 will remember, outside `~/.hermes*`.
 
+Two steps, because the move between them is yours and must not happen until the
+archive is known good and the agent is stopped.
+
 ```sh
+# 1 — verify the archive, then stop the agent
 a=~/agent-backups/hermes-rowan-20260826.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down rowan \
-  && home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p') \
-  && mkdir "$home" \
+  && home=$(readlink -f "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')") \
+  && echo "move $home aside now, then run step 2"
+
+# 2 — after you have moved it
+mkdir "$home" \
   && tar -C "$home" -xzf "$a" \
   && agent-mgr restore rowan \
   && agent-mgr up rowan
@@ -160,9 +167,18 @@ cannot splat into `$HOME`; `logs/`, `cache/` and `lazy-packages/` are excluded
 from it and are not recreated, which is expected rather than a truncated
 archive.
 
-**If `$home` is a symlink** — supported, though nothing uses it today — move and
-recreate its *target*, not the link: `readlink -f` resolves it. Moving the link
-leaves the restore landing on the wrong volume.
+`readlink -f` in the binding is what makes a **symlinked home** work — supported,
+though nothing uses it today. It resolves `$home` to the real directory, so you
+move and recreate the *target* and the link keeps pointing at it. Without it you
+would move the link, the restore would land on the wrong volume, and step 2's
+`mkdir` would fail on the name regardless, since `mkdir` does not follow a
+trailing symlink.
+
+**The copy you moved aside is the only thing holding state newer than the
+archive** — everything written since 04:00, the `-wal` and `-shm` sidecars, any
+turn the agent took this morning. Put it on the same disk, not `/tmp`, which is
+reaped on reboot. Keep it until you have watched the restored agent actually
+run, not merely until step 2 exits, and delete it only then.
 
 ## Two layers: where does my code go?
 
