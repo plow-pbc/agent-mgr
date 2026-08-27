@@ -192,7 +192,11 @@ whatever that instance resolved, which `agent-mgr resolve <name>` prints. See
 
 For a skill **another agent also wants**. One agent's own skill is just its
 code — it lives in that agent's repo and needs no pin, because there is no
-second copy to keep in step.
+second copy to keep in step. It reaches the container by a read-only mount
+declared in that repo's `compose.override.yml`, which makes `git pull` the
+update and `git rev-parse HEAD` the version;
+[`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent)
+is a worked example.
 
 ```sh
 agent-mgr add-skill errands plow-pbc/hermes-plow-chat --dest plow-connectors \
