@@ -16,8 +16,10 @@ dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
 # These archives hold .env and auth.json, and tar honours the umask only when it
 # CREATES the file -- writing over an existing 0644 path keeps 0644, measured. The
-# timestamped name below is what guarantees a fresh path every run, so the two
-# together are the 0600, not the umask alone.
+# timestamp-and-pid name below is what guarantees a fresh path every run, so the
+# two together are the 0600, not the umask alone. The pid is there because the
+# timestamp is only second-resolution: two runs starting in the same second
+# would otherwise share a path, which is exactly the concurrent case.
 umask 077
 
 n=0
@@ -25,7 +27,7 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
     name="$(basename "$home")"
     # Straight to the final name -- staging introduced more failure modes than it
-    # prevented here, and the rejected shapes are in this branch's history.
+    # prevented here; plow-pbc/agent-mgr#34 has the rejected shapes.
     # docs/HOWTO.md § "What an archive is worth" owns the operator-facing
     # limits; keep the two in step.
     #
@@ -49,7 +51,7 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # ${name#.} so the archives are visible to a plain `ls` -- a backup nobody
     # can see is one nobody checks.
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
-        -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" . \
+        -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz" . \
         || [ $? -eq 1 ]
     n=$((n + 1))
 done

@@ -72,3 +72,22 @@ def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path)
     r = run(root, dest)
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
+
+
+def test_each_run_writes_its_own_archive(tmp_path):
+    """The name carries a timestamp and pid so the path is never reused. That is
+    what makes `tar` *create* the file — the only time it honours the umask,
+    since writing over an existing 0644 path keeps 0644 — and what stops two
+    runs sharing an inode. A date-only name silently restores both hazards."""
+    root, dest = tmp_path / "home", tmp_path / "dest"
+    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    stale = dest / "hermes-rowan-20200101T000000Z-1.tar.gz"
+    stale.write_text("older, permissive")
+    stale.chmod(0o644)
+
+    assert run(root, dest).returncode == 0
+    assert run(root, dest).returncode == 0
+    fresh = [p for p in dest.glob("*.tar.gz") if p != stale]
+    assert len(fresh) == 2, f"a run reused a path: {[p.name for p in fresh]}"
+    assert all(p.stat().st_mode & 0o077 == 0 for p in fresh)

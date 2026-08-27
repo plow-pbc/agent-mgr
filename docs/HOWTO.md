@@ -112,7 +112,8 @@ truncated archive. Nothing repairs or replaces it — archive names carry a UTC
 timestamp, so every run writes a **new** file and the truncated one stays the
 newest until retention prunes it at 14 days.
 
-That timestamp is doing two other jobs. It means two runs can never share a path,
+That name is doing two other jobs. The timestamp is second-resolution, so it
+carries the pid too — with both, two runs can never share a path,
 so they cannot splice into one file; and it guarantees `tar` always *creates* the
 archive, which is the only time it honours the umask — writing over an existing
 `0644` path would keep `0644`, measured. Running the command twice in a day is
@@ -141,7 +142,7 @@ it.
 Step 1 — verify the archive, stop the agent, resolve the home:
 
 ```sh
-a=~/agent-backups/hermes-rowan-20260826T040112Z.tar.gz \
+a=~/agent-backups/hermes-rowan-20260826T040112Z-4171.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down rowan \
   && home=$(readlink -f "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')") \
