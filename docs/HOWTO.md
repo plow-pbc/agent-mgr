@@ -230,8 +230,14 @@ Nightly, with 14 days kept:
 0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( \( -type d -name '[0-9]*T[0-9]*Z-[0-9]*' \) -o \( -type f -name 'hermes-*.tar.gz' \) \) -mtime +14 -exec rm -rf {} +
 ```
 
-Every clause in that `rm -rf` is load-bearing. `-H` so a symlinked destination
-resolves at all. The two **name globs** are what keep your own entries out
+The `&&` comes first in importance: retention runs only if the backup it is
+pruning *for* succeeded. Split that into two crontab lines, or use `;`, and a
+run of failed nights — a full disk, a destination whose mode changed, `no homes
+matched` under the wrong account — prunes the destination empty while writing
+nothing.
+
+Inside the `find`, every clause but one is load-bearing. `-H` so a symlinked
+destination resolves at all. The two **name globs** are what keep your own entries out
 entirely — a `photos/` matches neither, and a `photos-2019.tar.gz` matches
 neither, because the flat arm is `hermes-*.tar.gz` and not `*.tar.gz`. Each
 `-type` then stops the *same-named impostor of the wrong kind*: `-type f` stops
@@ -240,6 +246,10 @@ a **directory** called `hermes-something.tar.gz` from being recursed into, and
 that at the top level — the globs say nothing about a `hermes-2019.tar.gz` you
 have *inside* a directory of your own. Add a third arm and it needs every one of
 those, not one.
+
+The exception is `-mindepth 1`, which is belt and braces: neither glob can match
+a destination named `agent-backups`, and every run rewrites that directory's own
+mtime, so `-mtime +14` excludes the starting point anyway.
 
 ### What an archive is worth
 

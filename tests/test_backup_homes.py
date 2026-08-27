@@ -24,6 +24,11 @@ def documented_prune(dest):
     pins the copy, which is what lets the real one drift."""
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
+    # The `&&` is load-bearing and cannot survive the slice below, so assert it
+    # here: it gates the prune on the backup having SUCCEEDED. Split the cron
+    # entry in two, or swap it for `;`, and a run of failed nights prunes the
+    # destination empty while writing nothing.
+    assert "&& find -H" in line, f"the prune is no longer gated on the backup: {line}"
     cmd = line[line.index("find -H"):].replace("~/agent-backups", str(dest))
     # Fail loudly rather than open. `~/agent-backups` is the one part still
     # hand-copied here, so an ordinary docs rename makes `replace` match nothing
