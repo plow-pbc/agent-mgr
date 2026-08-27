@@ -258,51 +258,18 @@ case "$cmd" in
         # prompt is unconditional rather than gated on a tty test.
         IFS= read -rs tok || die "no DOMO_MCP_TOKEN on stdin"
         printf '\n' >&2
-        # Stripped, so what lands in the file IS what the gateway loads -- it
-        # strips the value too, and a pasted credential routinely arrives with a
-        # trailing space or newline from whatever it was copied out of.
-        uid="${uid#"${uid%%[![:space:]]*}"}"; uid="${uid%"${uid##*[![:space:]]}"}"
-        tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
-        # And empty means the parser's empty, not the shell's: `[ -n "   " ]` is
-        # true, so an all-whitespace paste used to be written out as a key the
-        # gateway then loads as nothing -- the half-configured state check-latch
-        # exists to report, created by the command meant to prevent it.
-        [ -n "$uid" ] || die "DOMO_DEVICE_UID was empty -- mint the pair on the Mac running Latch"
-        [ -n "$tok" ] || die "DOMO_MCP_TOKEN was empty -- mint the pair on the Mac running Latch"
-        # Through lib/owned-file, which holds the home as a directory FD and
-        # opens the leaf under it with O_NOFOLLOW. That is containment the
-        # kernel enforces, rather than a resolve-then-use check that only ever
-        # proved what the path pointed at a moment earlier -- the leaf lives in
-        # a mount the gateway writes, and the agents that most need a latch are
-        # the ones reading attacker-controlled input. #25 named this form; the
-        # helper is general because fetch-tree's publication seam needs it too.
+        # One process does the read, the upsert and the publish, all under a
+        # single directory FD on the home -- lib/set-latch-env. It also owns the
+        # value strip and the emptiness check, so there is one definition of
+        # what an empty credential is rather than a shell copy drifting from it.
         #
-        # The read is isolated before the transform rather than piped into it:
-        # in one pipeline a refused read still lets awk reach its END block and
-        # publish a two-line file over the real dotenv.
-        current="$("$AGENT_MGR_ROOT/lib/owned-file" read "$AGENT_HOME" .env)" \
+        # The three-process shell protocol this replaces could not hold that
+        # boundary: each stage re-opened `.env` by name, and the pipeline had to
+        # be split into captured stages so a dying transform could not publish
+        # truncated content over the file. One process needs neither.
+        printf '%s\n%s\n' "$uid" "$tok" \
+            | "$AGENT_MGR_ROOT/lib/set-latch-env" "$AGENT_HOME" \
             || die "refusing to write ${AGENT_NAME}'s dotenv -- see above. Nothing was written."
-        # One spelling in, one spelling out -- the same `KEY=value` at column 0
-        # that dotenv_read is the only reader of. Every other key is carried
-        # through untouched: this agent's PMS token and lock API key live here.
-        updated="$(printf '%s\n' "$current" \
-            | uid="$uid" tok="$tok" awk -F= '
-                $1 == "DOMO_DEVICE_UID" { if (!u) { print "DOMO_DEVICE_UID=" ENVIRON["uid"]; u=1 } next }
-                $1 == "DOMO_MCP_TOKEN"  { if (!t) { print "DOMO_MCP_TOKEN="  ENVIRON["tok"]; t=1 } next }
-                { print }
-                END {
-                    if (!u) print "DOMO_DEVICE_UID=" ENVIRON["uid"]
-                    if (!t) print "DOMO_MCP_TOKEN="  ENVIRON["tok"]
-                }')" \
-            || die "refusing to write ${AGENT_NAME}'s dotenv -- the upsert failed. Nothing was written."
-        # The transform is isolated for the same reason the read is, and it is
-        # the more expensive half to get wrong: in one pipeline an awk that dies
-        # mid-stream still leaves `owned-file write` reading its stdin to EOF and
-        # atomically publishing the truncated result over the real dotenv --
-        # taking this agent's PMS token and lock API key with it, unrecoverably,
-        # with pipefail reporting the failure only after the replacement landed.
-        printf '%s\n' "$updated" \
-            | "$AGENT_MGR_ROOT/lib/owned-file" write "$AGENT_HOME" .env 600
         echo "wrote DOMO_DEVICE_UID and DOMO_MCP_TOKEN (...${tok: -3}) to $env_file"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the credential just written"
         echo "now prove it reaches the Mac: agent-mgr check-latch $AGENT_NAME"

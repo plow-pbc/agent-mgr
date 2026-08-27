@@ -239,58 +239,19 @@ def test_set_latch_accepts_a_home_symlinked_onto_another_disk(run, instance, tmp
     assert "DOMO_MCP_TOKEN=tok_xyz" in (target / ".env").read_text().splitlines()
 
 
-def test_a_failed_upsert_leaves_the_dotenv_alone(run, instance, tmp_path):
-    """The transform is isolated from the publish, and this is the failure that
-    buys. Piped straight into `owned-file write`, an awk that dies mid-stream
-    still leaves the writer reading its stdin to EOF and atomically publishing
-    the truncated result over the real dotenv -- taking every other credential
-    in the home with it, unrecoverably, with pipefail reporting the failure only
-    after the replacement landed.
-
-    A stub awk that exits non-zero stands in for that. What matters is not the
-    message but that the file is byte-for-byte what it was."""
-    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
-    env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
-    original = "HOSTEX_TOKEN=pms-secret\nSEAM_API_KEY=lock-secret\nDOMO_MCP_TOKEN=\n"
-    env_file.write_text(original)
-    # Fails the UPSERT only. A stub that fails every awk dies in
-    # config_declares_latch instead and never reaches the transform -- which is
-    # how the first version of this test passed against the very pipeline it was
-    # written to reject.
-    real_awk = shutil.which("awk")
-    stub = tmp_path / "stub-bin"
-    stub.mkdir()
-    (stub / "awk").write_text(
-        "#!/bin/sh\n"
-        'case "$*" in *DOMO_DEVICE_UID*) exit 1 ;; esac\n'
-        f'exec {real_awk} "$@"\n')
-    (stub / "awk").chmod(0o755)
-    r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n",
-            env={"PATH": f"{stub}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    # The upsert's own `|| die` message, for the same reason as above: without
-    # this the clause could be deleted and only the abort would remain.
-    assert "Nothing was written" in r.stderr
-    assert env_file.read_text() == original, "a failed upsert republished over the dotenv"
-
-
-@pytest.mark.parametrize("plant", ["fifo", "symlink"])
-def test_owned_file_reads_only_a_regular_leaf(plant, tmp_path):
-    """Straight at the helper, because set-latch's `-f` gate hides half of this.
+def test_set_latch_env_reads_only_a_regular_leaf(tmp_path):
+    """Straight at the helper, because set-latch's `-f` gate hides this one: a
+    FIFO is not a regular file, so the gate turns it away before the helper is
+    reached. The symlink direction needs no row here -- set-latch's own
+    swapped-dotenv test covers it through the production path.
 
     O_NOFOLLOW rules out a symlink and nothing else. A FIFO planted at the leaf
-    would park the open forever -- a wedged command with no diagnostic, which is
-    worse than a refusal -- and a character device would hand back
-    attacker-chosen bytes to republish into the home. Both are named."""
+    would park the open forever, a wedged command with no diagnostic, which is
+    worse than a refusal."""
     home = tmp_path / "home"
     home.mkdir()
-    if plant == "fifo":
-        os.mkfifo(home / "leaf")
-    else:
-        (home / "leaf").symlink_to(tmp_path / "elsewhere")
-    r = subprocess.run([str(ROOT / "lib" / "owned-file"), "read", str(home), "leaf"],
-                       capture_output=True, text=True, timeout=10)
+    os.mkfifo(home / ".env")
+    r = subprocess.run([str(ROOT / "lib" / "set-latch-env"), str(home)],
+                       input="dev_abc\ntok_xyz\n", capture_output=True, text=True, timeout=10)
     assert r.returncode != 0
-    assert "owned-file:" in r.stderr
-    assert r.stdout == ""
+    assert "not a regular file" in r.stderr
