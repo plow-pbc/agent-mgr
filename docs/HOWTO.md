@@ -210,17 +210,25 @@ Each run gets its own directory, named for the UTC second and the pid:
 ```
 
 That directory is mode 0700 and the archives inside it 0600, because they hold
-`auth.json` and the dotenv. It is also the reason the destination can be a
-shared mount: `mkdir` is one atomic syscall that refuses a path that already
-exists and never follows a symlink, so nothing can be lying in wait inside a
-directory that did not exist until the run made it. (`noclobber` on the archive
-itself is *not* enough — bash applies `O_EXCL` only when the target is absent,
-so a planted FIFO gets opened and written through. Measured.)
+`auth.json` and the dotenv.
 
-Nightly, with 14 days kept — the run directory is the unit to prune:
+**The destination must be a directory you own that nobody else can write**, and
+the command refuses one that is not. That is a precondition rather than
+something it defends against: write access to a directory is permission to
+unlink and rename its entries, so anything else able to write the destination
+can replace the run directory after it is created, and no sequence of syscalls
+inside the run wins that race. Create it strictly and you never meet the error:
 
 ```sh
-0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find ~/agent-backups -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} +
+mkdir -m 700 -p ~/agent-backups
+```
+
+Nightly, with 14 days kept. The run directory is the unit to prune; the
+`-name` clause is there for archives written flat by an earlier shape, and
+matches nothing once they age out:
+
+```sh
+0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find ~/agent-backups -mindepth 1 -maxdepth 1 \( -type d -o -name '*.tar.gz' \) -mtime +14 -exec rm -rf {} +
 ```
 
 ### What an archive is worth

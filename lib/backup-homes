@@ -17,23 +17,31 @@
 set -euo pipefail
 dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
-# One directory per run, and it is what makes the archives safe. $dest is
-# operator-chosen and the docs say "not this disk", so it may be a mount
-# something else can write; an archive name there is predictable, and tar
-# honours the umask only when it CREATES a file -- writing over an existing
-# 0644 keeps 0644, measured. `mkdir` is one atomic syscall that refuses a path
-# that already exists and never follows a symlink at the final component:
-# measured against a planted symlink, a FIFO and an existing directory. Nothing
-# can be waiting inside a directory that did not exist until we made it 0700.
+# These archives hold .env and auth.json, so who else can write $dest is the
+# whole question -- and it is a PRECONDITION, checked once here, not something
+# the script can defend against further in. Three rounds tried: a unique name
+# (predictable), `noclobber` (bash applies O_EXCL only when the target is
+# absent, so a planted FIFO is opened and written THROUGH -- measured, the
+# payload reached a reader), then a private run directory (write access to the
+# parent is permission to rmdir and replace it between `mkdir` and `tar`). Each
+# guard was defeated one step later in the sequence, because write access to a
+# directory always wins the race. So: own it, and let nobody else write it.
 #
-# `noclobber` was tried here and is not enough: bash only applies O_EXCL when
-# the target does not exist, so a planted FIFO -- or a symlink to one -- is
-# opened and written through. Measured: the payload reached a reader on the
-# other side, and with no reader the open blocks forever.
-#
-# It carries the uniqueness too. The pid is there because the stamp is only
-# second-resolution, and two runs that did collide fail loudly at `mkdir`
-# rather than writing over each other.
+# One expression covers all of it -- exists, is a directory, is ours, and
+# carries neither the group nor the other write bit. Both bits, the way ssh
+# refuses a group-readable key: a default umask of 002 makes `mkdir` produce
+# 0775, so the strict form is the one that does not depend on how the operator's
+# host is configured. It costs one `chmod go-w` at setup, and the HOWTO's
+# snippet creates the directory 0700 so nobody meets the error.
+[ -n "$(find "$dest" -maxdepth 0 -type d -user "$(id -un)" ! -perm -g+w ! -perm -o+w 2>/dev/null)" ] \
+    || { echo "backup-homes: $dest must be a directory you own that nobody else can write -- try: mkdir -m 700 -p $dest && chmod go-w $dest" >&2; exit 1; }
+
+# One directory per run. Not a security boundary -- the line above is that --
+# but it is the uniqueness and the unit of pruning. The pid is there because
+# the stamp is only second-resolution, and two runs that did collide fail
+# loudly at `mkdir` rather than writing over each other. `mkdir`, not
+# `mkdir -p`: an unmounted NAS or a typo'd path must fail rather than have its
+# tree built locally under a run that reports success.
 umask 077
 run="$dest/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir "$run"

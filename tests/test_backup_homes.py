@@ -10,7 +10,22 @@ import subprocess
 import tarfile
 from pathlib import Path
 
+import pytest
+
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
+
+
+@pytest.fixture
+def dest(tmp_path):
+    """`backup-homes` refuses a destination anyone else can write, and the
+    runner's umask is not ours to assume — this host's default of 002 makes a
+    plain `mkdir` 0775. Pinning the mode here is the same move as forcing
+    `umask 022` on the child: it makes each test assert the script's behaviour
+    rather than the host's."""
+    d = tmp_path / "dest"
+    d.mkdir()
+    d.chmod(0o700)
+    return d
 
 
 def spawn(home_root, dest):
@@ -38,13 +53,13 @@ def run(home_root, dest):
     return subprocess.CompletedProcess(p.args, p.returncode, out, err)
 
 
-def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path):
+def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path, dest):
     """A home symlinked onto a bigger disk is supported. Archived from the
     PARENT, tar stores that symlink as a symlink and exits 0 with an archive
     holding one entry and no credentials at all. And logs/ is most of the bytes
     and none of the value."""
-    root, target, dest = tmp_path / "home", tmp_path / "big" / "state", tmp_path / "dest"
-    target.mkdir(parents=True), root.mkdir(), dest.mkdir()
+    root, target = tmp_path / "home", tmp_path / "big" / "state"
+    target.mkdir(parents=True), root.mkdir()
     (root / ".hermes-rowan").symlink_to(target)
     (target / ".env").write_text("PLOW_CHAT_TOKEN=x\n")
     (target / "logs").mkdir()
@@ -56,7 +71,7 @@ def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path):
     assert not any("logs" in m for m in inside)
 
 
-def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(tmp_path):
+def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(tmp_path, dest):
     """They hold .env and auth.json. Both modes come from `umask 077` and both
     fail open without it — archives land 0644, or 0664 on a host with a laxer
     default, which is what happened the first time these were taken by hand. The
@@ -64,8 +79,8 @@ def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(tmp_p
     name and anything else able to write the destination. The forced `umask 022`
     in run() removes the runner's own umask as a second source, so this asserts
     the script's guarantee and not the host's."""
-    root, dest = tmp_path / "home", tmp_path / "dest"
-    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
+    root = tmp_path / "home"
+    (root / ".hermes-rowan").mkdir(parents=True)
     (root / ".hermes-rowan" / ".env").write_text("x\n")
 
     assert run(root, dest).returncode == 0
@@ -75,24 +90,24 @@ def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(tmp_p
         assert mode & 0o077 == 0, f"{path.name} is {oct(mode)}"
 
 
-def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path):
+def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path, dest):
     """Under the nightly cron the likely cause is a crontab installed under a
     different account, so $HOME is not the operator's. Exiting 0 there means
     every run reports success having written nothing, discovered at restore."""
-    root, dest = tmp_path / "empty-home", tmp_path / "dest"
-    root.mkdir(), dest.mkdir()
+    root = tmp_path / "empty-home"
+    root.mkdir()
 
     r = run(root, dest)
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
 
-def test_each_run_gets_its_own_directory(tmp_path):
+def test_each_run_gets_its_own_directory(tmp_path, dest):
     """The run directory carries a UTC timestamp *and* the pid, so no two runs
     share one and no archive path is ever reused. Asserting the shape catches
     both regressions deterministically; counting directories only catches the
     date-only one, and then only when the two runs land in the same second."""
-    root, dest = tmp_path / "home", tmp_path / "dest"
-    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
+    root = tmp_path / "home"
+    (root / ".hermes-rowan").mkdir(parents=True)
     (root / ".hermes-rowan" / ".env").write_text("x\n")
 
     ps = [spawn(root, dest) for _ in range(2)]
@@ -112,10 +127,8 @@ def test_each_run_gets_its_own_directory(tmp_path):
 
 def test_a_destination_that_does_not_exist_fails_rather_than_being_created(tmp_path):
     """`mkdir`, not `mkdir -p`. An unmounted NAS or a typo'd path is the case:
-    with `-p` the run happily builds the whole tree locally, reports success,
-    and the archives are on the wrong disk — or gone at the next mount. The
-    same one-syscall `mkdir` is what refuses a symlink, a FIFO or a directory
-    planted at the run path by anything else able to write the destination."""
+    with `-p` the run builds the whole tree locally, reports success, and the
+    archives are on the wrong disk — or gone at the next mount."""
     root, dest = tmp_path / "home", tmp_path / "not" / "mounted"
     (root / ".hermes-rowan").mkdir(parents=True)
     (root / ".hermes-rowan" / ".env").write_text("x\n")
@@ -123,3 +136,22 @@ def test_a_destination_that_does_not_exist_fails_rather_than_being_created(tmp_p
     r = run(root, dest)
     assert r.returncode != 0, r.stdout
     assert not dest.exists(), "it created the destination instead of failing"
+
+
+@pytest.mark.parametrize("mode", [0o775, 0o757], ids=["group-writable", "other-writable"])
+def test_a_destination_others_can_write_is_refused(tmp_path, mode):
+    """The archives hold `.env` and `auth.json`, and anything able to write the
+    destination can redirect one — by planting at a predictable name, or by
+    replacing the run directory after `mkdir` made it, since write access to a
+    directory is permission to unlink and rename its entries. No sequence of
+    syscalls inside the run wins that race, so ownership of the destination is
+    the precondition and this is where it is enforced."""
+    root, dest = tmp_path / "home", tmp_path / "loose-dest"
+    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    dest.chmod(mode)  # not mkdir(mode=), which the umask masks
+
+    r = run(root, dest)
+    assert r.returncode != 0, r.stdout
+    assert "nobody else can write" in r.stderr
+    assert not any(dest.iterdir()), "it wrote archives anyway"
