@@ -123,7 +123,8 @@ a=~/agent-backups/hermes-rowan-20260826.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down rowan \
   && home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p') \
-  && mv "$home" "$home.old" \
+  && aside="$(dirname "$home")/restoring-$(basename "$home")-$(date -u +%s)" \
+  && mv "$home" "$aside" \
   && mkdir -p "$home" \
   && tar -C "$home" -xzf "$a" \
   && agent-mgr restore rowan \
@@ -150,7 +151,10 @@ needs `-C` and cannot splat into `$HOME`; `logs/`, `cache/` and
 `lazy-packages/` are excluded from it and are not recreated, which is expected
 rather than a truncated archive.
 
-Keep `$home.old` until the restore is verified, then delete it. **If the chain
+Keep `$aside` until the restore is verified, then delete it. Its name is
+deliberate: the `restoring-` prefix keeps it out of the nightly's `~/.hermes*`
+glob, which would otherwise archive a dead home as though it were live, and the
+timestamp stops a second attempt moving the new home *inside* the first. **If the chain
 stops part-way, look before undoing anything** — the stop may have come before
 the `mv`, in which case `$home` is still your live home.
 

@@ -49,7 +49,7 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # measured on a plain file, not only on a database -- so this is a trade,
     # not a no-op: refusing status 1 would instead fail the nightly EVERY night,
     # and a backup that cries wolf is one nobody reads. Status 2 stays a real
-    # failure. docs/HOWTO.md § "What the archive does and does not guarantee"
+    # failure. docs/HOWTO.md § "What an archive is worth"
     # owns the operator-facing version of this; keep the two in step.
     #
     # logs/, cache/ and lazy-packages/ are most of the bytes and none of the
