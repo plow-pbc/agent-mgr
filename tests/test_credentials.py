@@ -128,13 +128,20 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
     # In bytes, because a key this command does not own may not be valid UTF-8.
     assert b"DOMO_DEVICE_UID=dev_abc" in body.split(b"\n")
     assert b"DOMO_MCP_TOKEN=tok_xyz" in body.split(b"\n")
-    # The exact surviving set, in order, not membership -- `line in lines` is
-    # satisfied however many OTHER lines are there, so a loop cannot see an
-    # ADDITION. An implementation that carried every original line through and
-    # also emitted a spurious one (a duplicated key, a stray blank from joining
-    # an already-terminated body) passed a membership check. This fails on the
-    # length for an addition and on the value for a rewritten byte.
-    survivors = tuple(l for l in body.split(b"\n") if l and not l.startswith(b"DOMO_"))
+    # The exact surviving set, in order -- not membership, which is satisfied
+    # however many OTHER lines are present and so cannot see an ADDITION.
+    #
+    # Empties are asserted rather than filtered. A `if l` guard drops every
+    # blank, which silently exempts one of the additions this is here to catch:
+    # a stray blank from joining an already-terminated body. Dropping the
+    # trailing-newline pop in upsert() produces exactly that, and the suite
+    # stayed green on it until this line counted the terminator instead.
+    lines = body.split(b"\n")
+    assert lines.pop() == b"", "the dotenv must end in exactly one newline"
+    # By owned key, not by a DOMO_ prefix: a user's own DOMO_REGION would
+    # otherwise be exempted from the set this is meant to be guarding.
+    survivors = tuple(l for l in lines
+                      if l.split(b"=", 1)[0] not in (b"DOMO_DEVICE_UID", b"DOMO_MCP_TOKEN"))
     assert survivors == preserved, "a line this command does not own was rewritten or added"
     # One declaration each, in any spelling -- not a second appended beside the
     # one it was meant to replace, and no stale value left underneath.
