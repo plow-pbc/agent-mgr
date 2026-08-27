@@ -103,7 +103,8 @@ clean read would cost more than the session tail is worth, and refusing status 1
 would make the nightly fail every night. For a consistent copy,
 `agent-mgr down <name>` first.
 
-**Two ways an archive can be bad, both accepted deliberately.** A run killed
+**Two further ways an archive can be bad**, beyond the mid-rewrite case above,
+and both accepted deliberately. A run killed
 partway leaves a truncated archive under a valid name — and nothing replaces it:
 the names are date-stamped, so the next night writes a *new* file and the
 truncated one persists as the **most recent** until retention prunes it at 14
@@ -133,8 +134,8 @@ databases you are rolling back. That is a mixture of two points in time,
 reported as a success.
 
 ```sh
-gzip -t ~/agent-backups/hermes-rowan-20260826.tar.gz   # not the newest by default — see above
-agent-mgr down rowan \
+gzip -t ~/agent-backups/hermes-rowan-20260826.tar.gz \
+  && agent-mgr down rowan \
   && home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p') \
   && real=$(readlink -f "$home") \
   && b=$(basename "$real") \
