@@ -213,36 +213,27 @@ That directory is mode 0700 and the archives inside it 0600, because they hold
 `auth.json` and the dotenv.
 
 **The destination must be a directory you own that nobody else can write**, and
-the command refuses one that is not. That is a precondition rather than
-something it defends against: write access to a directory is permission to
-unlink and rename its entries, so anything else able to write the destination
-can replace the run directory after it is created, and no sequence of syscalls
-inside the run wins that race. It may be a symlink onto a bigger disk; the
-check follows it and lands on the target.
+the command refuses one that is not. It may be a symlink onto a bigger disk;
+the check follows it to the target.
 
 ```sh
 mkdir -p ~/agent-backups && chmod 700 ~/agent-backups
 ```
 
-The `chmod` is the load-bearing half and is needed on a destination that
-**already exists** — `mkdir -m 700` applies its mode only to directories it
-creates, so on an existing `~/agent-backups` it exits 0 and changes nothing. A
-default umask of 002 makes a plain `mkdir` produce 0775, so an existing one
-very likely needs it.
+The `chmod` is the load-bearing half: `mkdir -m 700` sets a mode only on
+directories it *creates*, so on an existing `~/agent-backups` it exits 0 and
+changes nothing — and a default umask of 002 makes a plain `mkdir` produce 0775.
 
-The check covers that directory and no further. An ancestor another account can
-write is outside it, and outside what any check here could hold onto — the path
-leading to your destination is yours to get right.
-
-Nightly, with 14 days kept. The run directory is the unit to prune; the
-`-name` clause is there for archives written flat by an earlier shape, and
-matches nothing once they age out. `-H` for the same reason the command uses
-it — without it `find` does not resolve a symlinked starting point, so
-`-mindepth 1` matches nothing and the prune silently removes nothing, forever:
+Nightly, with 14 days kept:
 
 ```sh
-0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( -type d -o -name '*.tar.gz' \) -mtime +14 -exec rm -rf {} +
+0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( \( -type d -name '[0-9]*T[0-9]*Z-[0-9]*' \) -o -name '*.tar.gz' \) -mtime +14 -exec rm -rf {} +
 ```
+
+Every clause in that `rm -rf` is load-bearing: `-H` so a symlinked destination
+resolves at all, the run-name glob so it takes *its own* directories and not a
+`photos/` you keep alongside them, and `-name '*.tar.gz'` for archives an
+earlier shape wrote flat, which matches nothing once they age out.
 
 ### What an archive is worth
 

@@ -18,33 +18,21 @@ set -euo pipefail
 dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
 # These archives hold .env and auth.json, so who else can write $dest is the
-# whole question -- and it is a PRECONDITION, checked once here, not something
-# the script can defend against further in. Three rounds tried: a unique name
-# (predictable), `noclobber` (bash applies O_EXCL only when the target is
-# absent, so a planted FIFO is opened and written THROUGH -- measured, the
-# payload reached a reader), then a private run directory (write access to the
-# parent is permission to rmdir and replace it between `mkdir` and `tar`). Each
-# guard was defeated one step later in the sequence, because write access to a
-# directory always wins the race. So: own it, and let nobody else write it.
+# whole question -- and it is a PRECONDITION rather than something the run can
+# defend against, because write access to a directory is permission to rename
+# and unlink its entries and no syscall sequence inside the run beats that.
+# Three in-run guards were tried and each was defeated one step later;
+# plow-pbc/agent-mgr#34 has them.
 #
-# One expression covers exists, is a directory, is ours, and carries neither the
-# group nor the other write bit. Both bits, the way ssh refuses a group-readable
-# key: a default umask of 002 makes `mkdir` produce 0775, so the strict form is
-# the one that does not depend on how the operator's host is configured.
+# One expression: exists, is a directory, is ours, neither write bit. Both bits
+# the way ssh treats a private key, since a default umask of 002 makes `mkdir`
+# produce 0775. `-H` resolves the starting point, so a destination symlinked
+# onto a bigger disk is checked at its target. $dest itself and no further --
+# an ancestor someone else can write is outside what this could hold onto.
 #
-# `-H` resolves the starting point only, so a destination symlinked onto a
-# bigger disk is checked at its target rather than refused -- the same shape
-# this command already supports for a home.
-#
-# It is $dest ITSELF and no further: an ancestor another account can write lets
-# that account rename $dest away after this line, and walking every component to
-# a trust root is the syscall-guard sequence this check exists to stop chasing.
-# The path leading to $dest is the operator's to get right.
-# Missing and loose are separate messages because their remedies differ, and the
-# missing one carries BOTH of its branches: creating it is right on a first run
-# and wrong under an unmounted mount point, where mkdir builds the tree on the
-# local disk and reports success. Naming only one of those is how an operator
-# learns to ignore this line.
+# Two messages, because a missing destination and a loose one want opposite
+# remedies, and the missing one carries both of its branches: creating it is
+# right on a first run and wrong under an unmounted mount point.
 [ -e "$dest" ] \
     || { echo "backup-homes: $dest does not exist. To create it: mkdir -p $dest && chmod 700 $dest -- but if it is a mount point, or a link to one, mount it instead; mkdir would put the archives on the local disk" >&2; exit 1; }
 [ -n "$(find -H "$dest" -maxdepth 0 -type d -user "$(id -un)" ! -perm -g+w ! -perm -o+w 2>/dev/null)" ] \

@@ -15,29 +15,16 @@ import pytest
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 
 
-@pytest.fixture(params=["plain", "symlinked"])
-def dest(tmp_path, request):
-    """Two things at once, so neither needs its own near-identical test.
-
-    The mode: `backup-homes` refuses a destination anyone else can write, and
-    the runner's umask is not ours to assume — this host's default of 002 makes
-    a plain `mkdir` 0775. Pinning it is the same move as forcing `umask 022` on
-    the child, so each test asserts the script's behaviour rather than the
-    host's.
-
-    The shape: a destination symlinked onto a bigger disk is supported, the same
-    as a home, and the ownership check has to follow it to the target rather
-    than refuse the link. Running every test below against both is what pins
-    that."""
+@pytest.fixture
+def dest(tmp_path):
+    """`backup-homes` refuses a destination anyone else can write, and the
+    runner's umask is not ours to assume — this host's default of 002 makes a
+    plain `mkdir` 0775. Pinning the mode here is the same move as forcing
+    `umask 022` on the child: it makes each test assert the script's behaviour
+    rather than the host's."""
     d = tmp_path / "dest"
-    if request.param == "plain":
-        d.mkdir()
-        d.chmod(0o700)
-    else:
-        target = tmp_path / "big" / "store"
-        target.mkdir(parents=True)
-        target.chmod(0o700)
-        d.symlink_to(target)
+    d.mkdir()
+    d.chmod(0o700)
     return d
 
 
@@ -155,6 +142,21 @@ def test_a_destination_that_does_not_exist_is_refused_and_not_created(tmp_path):
     # and a backup written to the local disk under an unmounted mount point.
     assert "does not exist" in r.stderr, r.stderr
     assert "mount it instead" in r.stderr, r.stderr
+
+
+def test_a_destination_symlinked_onto_another_disk_is_followed(tmp_path, dest):
+    """Supported, the same as a symlinked home — the ownership check has to
+    resolve the link and judge the target rather than refuse it for not being a
+    directory. One case, not a suite-wide parametrization: the empty-sweep and
+    two-runs assertions do not become different questions under a symlink."""
+    root, target = tmp_path / "home", tmp_path / "big" / "store"
+    (root / ".hermes-rowan").mkdir(parents=True), target.mkdir(parents=True)
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    target.chmod(0o700)
+    dest.rmdir(), dest.symlink_to(target)
+
+    assert run(root, dest).returncode == 0
+    assert next(target.glob("*/*.tar.gz")).stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.parametrize("mode", [0o775, 0o757], ids=["group-writable", "other-writable"])
