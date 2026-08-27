@@ -195,7 +195,8 @@ cannot resolve it from the dotenv the way it resolves everything else. So
 `load_agent` reads that one key from the same file:
 
 ```sh
-printf '\nAGENT_TZ=America/Chicago\n' >> "$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')/.env"
+BOB_HOME=$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')
+printf '\nAGENT_TZ=America/Chicago\n' >> "${BOB_HOME:?resolve printed no home}/.env"
 ```
 
 The leading newline is not decoration. A dotenv the gateway or a person last
