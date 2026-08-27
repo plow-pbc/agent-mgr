@@ -88,14 +88,16 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
         # bottom produces. The upsert must leave exactly one, no stale value.
         (b"HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nDOMO_MCP_TOKEN=staler\n",
          (b"HOSTEX_TOKEN=keep-me",)),
-        # Bytes this command does not own, and TWO independent mechanisms, so
-        # both lines are asserted: a latin-1 byte becomes U+FFFD if the file is
-        # decoded to edit it, and \xc2\x85 is a line break to str-level
-        # splitting but not to the gateway. Asserting only the first would pass
-        # a surrogateescape implementation that still cut the second in half
-        # into `HOSTEX_TOKEN=a` plus a bogus `b` line.
-        (b"SEAM_API_KEY=caf\xe9-latin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
-         (b"SEAM_API_KEY=caf\xe9-latin1", b"HOSTEX_TOKEN=a\xc2\x85b")),
+        # Bytes this command does not own, and THREE independent mechanisms,
+        # each of which would cut or corrupt a credential it must only copy:
+        #   \xe9   -- becomes U+FFFD if the file is decoded to edit it
+        #   \xc2\x85 -- a line break to str-level splitting, not to the gateway
+        #   \r     -- a line break to bytes.splitlines(), not to the gateway
+        # They are independent, so each needs its own byte: a surrogateescape
+        # implementation survives the first and cuts the second, and
+        # bytes.splitlines() survives both and cuts the third.
+        (b"SEAM_API_KEY=caf\xe9-la\rtin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
+         (b"SEAM_API_KEY=caf\xe9-la\rtin1", b"HOSTEX_TOKEN=a\xc2\x85b")),
         # No terminating newline -- a hand-edited file, or an editor configured
         # not to add one. Every other row ends in \n, so the trailing-newline
         # conditional in upsert() is never driven through its False side; make
