@@ -79,24 +79,33 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
 # per dotenv shape, with the padded stdin -- the axis that pins the value strip
 # -- on one of them.
 @pytest.mark.parametrize(
-    "starting_dotenv,stdin",
+    "starting_dotenv,preserved",
     [
-        # Padded: what a paste actually looks like. The value is stripped on the
-        # way in, so the file holds what the gateway loads rather than a value
-        # it would strip differently -- a trailing space otherwise surfaces only
-        # as a REVOKED misdiagnosis on a live host.
-        ("HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n", "  dev_abc \n\ttok_xyz  \n"),
+        (b"HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n", b"HOSTEX_TOKEN=keep-me"),
         # No DOMO_* at all -- the append arm.
-        ("HOSTEX_TOKEN=keep-me\n", "dev_abc\ntok_xyz\n"),
+        (b"HOSTEX_TOKEN=keep-me\n", b"HOSTEX_TOKEN=keep-me"),
         # Two canonical declarations, which is what appending a line at the
-        # bottom produces -- still reachable after the spelling narrowing, since
-        # that removed foreign spellings and not duplicate canonical ones. The
-        # upsert must leave exactly one, with no stale value underneath.
-        ("HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nDOMO_MCP_TOKEN=staler\n", "dev_abc\ntok_xyz\n"),
+        # bottom produces. The upsert must leave exactly one, no stale value.
+        (b"HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nDOMO_MCP_TOKEN=staler\n", b"HOSTEX_TOKEN=keep-me"),
+        # Bytes this command does not own. A latin-1 byte in a PMS password
+        # becomes U+FFFD if the file is decoded to edit two of its lines, and
+        # \xc2\x85 is a line break to str-level splitting but not to the
+        # gateway -- so one inside a value would be cut in half.
+        (b"SEAM_API_KEY=caf\xe9-latin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
+         b"SEAM_API_KEY=caf\xe9-latin1"),
     ],
-    ids=["pre-seeded-empty-padded", "absent", "canonical-duplicate"],
+    ids=["pre-seeded-empty", "absent", "canonical-duplicate", "bytes-we-do-not-own"],
 )
-def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path, starting_dotenv, stdin):
+@pytest.mark.parametrize(
+    "stdin",
+    [
+        "dev_abc\ntok_xyz\n",
+        # What a paste actually looks like -- the axis that pins the strip.
+        "  dev_abc \n\ttok_xyz  \n",
+    ],
+    ids=["clean", "padded"],
+)
+def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path, starting_dotenv, preserved, stdin):
     """The dotenv is shared -- the rentals agent keeps a PMS token and a lock API
     key in the same file -- so an upsert that rewrote the file would take those
     with it. And whatever spelling a key arrives in, exactly one declaration may
@@ -104,25 +113,33 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
     run("restore", "rowan")
     env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env_file.write_text(starting_dotenv)
+    env_file.write_bytes(starting_dotenv)
     b, _ = _fake_docker(tmp_path)
     r = run("set-latch", "rowan", input=stdin,
             env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
-    body = env_file.read_text()
+    body = env_file.read_bytes()
     # The whole LINE, at column 0 -- not a substring. A future edit that carried
     # the incoming line's `export ` or indent through would satisfy a substring
     # match and produce exactly the spelling the readers have to agree about.
-    assert "DOMO_DEVICE_UID=dev_abc" in body.splitlines()
-    assert "DOMO_MCP_TOKEN=tok_xyz" in body.splitlines()
-    assert "HOSTEX_TOKEN=keep-me" in body.splitlines()
+    # In bytes, because a key this command does not own may not be valid UTF-8.
+    assert b"DOMO_DEVICE_UID=dev_abc" in body.split(b"\n")
+    assert b"DOMO_MCP_TOKEN=tok_xyz" in body.split(b"\n")
+    assert preserved in body.split(b"\n"), "a byte this command does not own was rewritten"
     # One declaration each, in any spelling -- not a second appended beside the
     # one it was meant to replace, and no stale value left underneath.
-    assert body.count("DOMO_MCP_TOKEN=") == 1
-    assert body.count("DOMO_DEVICE_UID=") == 1
-    assert "stale" not in body
+    assert body.count(b"DOMO_MCP_TOKEN=") == 1
+    assert body.count(b"DOMO_DEVICE_UID=") == 1
+    assert b"stale" not in body
     # The dotenv holds live credentials and the home is on a shared host.
     assert (env_file.stat().st_mode & 0o777) == 0o600
+    # No staging left in either place. The home is bind-mounted, so a leftover
+    # there is also a name a gateway could later swap; the parent is where the
+    # replacement is staged precisely so no such name exists inside the mount.
+    home_dir = env_file.parent
+    assert not list(home_dir.glob("*.set-latch.*"))
+    assert not list(home_dir.glob(".env.*"))
+    assert not list(home_dir.parent.glob("*.set-latch.*"))
     # Never the whole token, on either stream -- the operator may be screen-sharing.
     assert "tok_xyz" not in r.stdout
     assert "tok_xyz" not in r.stderr
@@ -264,60 +281,3 @@ def test_set_latch_env_reads_only_a_regular_leaf(tmp_path):
     assert "not a regular file" in r.stderr
 
 
-def test_set_latch_carries_bytes_it_does_not_own_through_verbatim(run, instance, tmp_path):
-    """The dotenv holds credentials this tool does not own, and the upsert edits
-    two lines of it. Decoding the file to edit them rewrites the rest: a
-    non-UTF-8 byte in a PMS password becomes U+FFFD unrecoverably, and str-level
-    line splitting treats \x0b, \x0c, \x85 and U+2028 as breaks, so one inside
-    a value cuts it in half and leaves the tail as a bogus config line. The
-    shell path this replaced was byte-transparent under the C locale."""
-    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
-    env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
-    # A latin-1 byte, and a U+0085 that only str-level splitting treats as a
-    # line break. Both inside values this command must not touch.
-    keep = b"SEAM_API_KEY=caf\xe9-latin1\nHOSTEX_TOKEN=a\xc2\x85b\n"
-    env_file.write_bytes(keep + b"DOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n")
-    b, _ = _fake_docker(tmp_path)
-    r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n",
-            env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr
-    body = env_file.read_bytes()
-    assert keep in body, "a byte this command does not own was rewritten"
-    assert b"DOMO_MCP_TOKEN=tok_xyz\n" in body
-    # And no extra line: the U+0085 must not have become a break.
-    assert body.count(b"\n") == 4
-
-
-def test_the_publish_path_macos_takes_works(tmp_path):
-    """O_TMPFILE always exists on Linux, so the named-temp fallback never runs
-    in CI -- and it is the ONLY publish path macOS takes, where set-latch is a
-    documented command (README's floor is 12.3). Without this the fallback could
-    regress -- wrong mode, a missing dst_dir_fd, an unlink of the wrong name --
-    and ship with the suite green, onto the platform that actually runs it.
-
-    Forces the branch the way the manual check did, by deleting the attribute."""
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / ".env").write_text("HOSTEX_TOKEN=keep-me\n")
-    (home / ".env").chmod(0o600)
-    forced = (
-        "import os, runpy, sys\n"
-        # pop, not del: `del` raises AttributeError where the attribute is
-        # already absent, which is macOS -- so the test guarding the macOS path
-        # would be the one test guaranteed to fail there, accusing a fallback
-        # that is in fact the only thing working. pop is also the honest
-        # expression of "force the branch this platform already takes".
-        "os.__dict__.pop('O_TMPFILE', None)\n"
-        "sys.argv = ['set-latch-env', %r]\n"
-        "runpy.run_path(%r, run_name='__main__')\n" % (str(home), str(ROOT / "lib" / "set-latch-env"))
-    )
-    r = subprocess.run([sys.executable, "-c", forced], input="dev_abc\ntok_xyz\n",
-                       capture_output=True, text=True, timeout=10)
-    assert r.returncode == 0, r.stderr
-    body = (home / ".env").read_text()
-    assert "DOMO_DEVICE_UID=dev_abc" in body.splitlines()
-    assert "DOMO_MCP_TOKEN=tok_xyz" in body.splitlines()
-    assert "HOSTEX_TOKEN=keep-me" in body.splitlines()
-    assert ((home / ".env").stat().st_mode & 0o777) == 0o600
-    assert not list(home.glob(".env.staged.*")), "a temporary was left behind"

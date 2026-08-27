@@ -24,10 +24,10 @@ a shared host puts a live relay credential in the process table where `ps`
 reads it from any account.
 
 What this buys is containment of the whole operation. The leaf is opened
-no-follow under the directory FD and the replacement is renamed into place
-under the same FD, so a link planted at `.env` at any point is refused rather
-than followed, and the temporary never carries a container-visible name a
-gateway could rename away.
+no-follow under the directory FD, the replacement is staged outside the mount
+entirely, and the rename into place is relative to that same FD -- so a link
+planted at `.env` is refused rather than followed, and there is never a
+container-visible staging name for a gateway to swap.
 """
 
 import os
@@ -114,47 +114,47 @@ def main(argv):
 
         updated = upsert(current, values)
 
-        # Staged so the gateway has nothing to aim at. A predictable
-        # `.env.<pid>` could be renamed away and its name re-created as a
-        # symlink in time for the publish to follow it.
+        # Staged OUTSIDE the mount, which is the only place a name is safe.
+        # The home's CONTENTS are bind-mounted at /opt/data, so any name inside
+        # it -- however unguessable -- is one a compromised gateway can watch
+        # for, rename away, and re-create as a symlink before the publish.
+        # Randomness stops it planting ahead of time; it does not stop it
+        # reacting. The home's parent is not mounted and is on the same
+        # filesystem, so a rename from there is still atomic and there is never
+        # a container-visible name at all.
         #
-        # On Linux O_TMPFILE gives a file with no directory entry at all, so
-        # there is no name to race. macOS has no O_TMPFILE and this tool runs
-        # there too (README: the floor is 12.3), so the fallback is a temp named
-        # from os.urandom -- unguessable rather than absent, which closes the
-        # same race by denying the attacker a target. Both publish with a rename
-        # under the directory FD, so neither can be redirected out of the home.
-        tmp_name = ".env.staged.%s" % os.urandom(8).hex()
+        # Resolved first: a home symlinked onto a bigger disk is ordinary here,
+        # and its parent is what has to share the filesystem, not the link's.
+        #
+        # One path, both platforms. This is what retires the O_TMPFILE split --
+        # that branch existed to avoid a nameable staging file, which staging
+        # off-mount does outright, and it left macOS on a fallback Linux never
+        # exercised.
+        resolved = os.path.realpath(home)
+        tmp_path = os.path.join(
+            os.path.dirname(resolved),
+            ".%s.set-latch.%s" % (os.path.basename(resolved), os.urandom(8).hex()))
         try:
-            fd = os.open(home, os.O_WRONLY | os.O_TMPFILE, 0o600)
-        except (AttributeError, OSError):
-            fd = None
-
+            fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except OSError as exc:
+            die("cannot stage a replacement beside %s: %s" % (resolved, exc))
         try:
-            if fd is not None:
-                with os.fdopen(fd, "wb") as handle:
-                    os.fchmod(handle.fileno(), 0o600)
-                    handle.write(updated)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-                    # /proc/self/fd is the documented way to name an O_TMPFILE
-                    # inode; the link lands under the directory FD.
-                    os.link("/proc/self/fd/%d" % handle.fileno(), tmp_name,
-                            dst_dir_fd=dir_fd, follow_symlinks=True)
-            else:
-                fd = os.open(tmp_name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600,
-                             dir_fd=dir_fd)
-                with os.fdopen(fd, "wb") as handle:
-                    # On the descriptor, never the name: a path-based chmod is a
-                    # re-lookup and follows links.
-                    os.fchmod(handle.fileno(), 0o600)
-                    handle.write(updated)
-                    handle.flush()
-                    os.fsync(handle.fileno())
-            os.rename(tmp_name, ".env", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+            with os.fdopen(fd, "wb") as handle:
+                # On the descriptor, never the name: a path-based chmod is a
+                # re-lookup. O_CREAT's mode is masked by umask, so this is what
+                # actually pins 0600 on a file about to hold credentials.
+                os.fchmod(handle.fileno(), 0o600)
+                handle.write(updated)
+                handle.flush()
+                os.fsync(handle.fileno())
+            # Destination relative to the directory FD, so it cannot be
+            # redirected out of the home; rename does not follow its
+            # destination, so a planted `.env` link is replaced, not written
+            # through.
+            os.rename(tmp_path, ".env", dst_dir_fd=dir_fd)
         except OSError as exc:
             try:
-                os.unlink(tmp_name, dir_fd=dir_fd)
+                os.unlink(tmp_path)
             except OSError:
                 pass
             die("cannot publish %s/.env: %s" % (home, exc))
