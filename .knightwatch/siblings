@@ -7,7 +7,11 @@
 #
 # This list must gain a row when README.md's fleet table does — the table is
 # the authority for which agent repos exist, this file only makes them
-# searchable. The dependency table beside it is the authority for the rest.
+# searchable. The dependency table beside it is the authority for the rest of
+# the INTERNAL ones. `nousresearch/hermes-agent` is in that table and stays out
+# of here on purpose: it is pinned by image digest, never read as source, so
+# materializing a third-party runtime on every review would cost more than the
+# drift it could catch.
 
 plow-pbc/hermes-plow-chat
 plow-pbc/str-hermes-agent
