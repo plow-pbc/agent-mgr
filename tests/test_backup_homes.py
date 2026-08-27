@@ -18,6 +18,14 @@ HOWTO = Path(__file__).resolve().parent.parent / "docs" / "HOWTO.md"
 RUN_DIR = re.compile(r"\d{8}T\d{6}Z-\d+")
 
 
+def documented_cron_line():
+    """The whole entry with its schedule stripped, so a test can run what the
+    operator pastes rather than a paraphrase of it."""
+    line = next(l for l in HOWTO.read_text().splitlines()
+                if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
+    return line.split(None, 5)[5].replace("~/.local/bin/agent-mgr", str(CLI))
+
+
 def documented_prune(dest):
     """The `find` half of the HOWTO's cron line, retargeted at `dest`. Extracted
     rather than copied: a test carrying its own copy of a destructive command
@@ -347,5 +355,41 @@ def test_one_failing_home_does_not_cost_the_others_their_night(tmp_path, dest):
 
     r = run(root, dest, extra_path=str(shim))
     assert r.returncode != 0, "a home that could not be archived must fail the run"
+    assert [p.name for p in dest.glob("*/*.tar.gz")] == ["hermes-omega.tar.gz"], \
+        "the healthy home lost its night to the broken one"
+
+
+def test_the_documented_cron_entry_leaves_a_trace_when_a_home_fails(tmp_path):
+    """The night worth hearing about is the one that failed, and cron has no
+    `MAILTO` here — on a host without a working MTA its output is discarded. So
+    the entry groups both halves and redirects them, and this runs the entry as
+    written: only the installed path is substituted, and `~` resolves through
+    the fixture's own `HOME`.
+
+    Grouping is the load-bearing half. Redirect the prune alone and the log
+    catches nothing that matters, because every diagnostic comes from the
+    backup."""
+    root = tmp_path / "home"
+    for name in (".hermes-alpha", ".hermes-omega"):
+        (root / name).mkdir(parents=True)
+        (root / name / ".env").write_text("x\n")
+    unreadable = root / ".hermes-alpha" / "auth.json"
+    unreadable.write_text("credentials\n")
+    unreadable.chmod(0o000)
+    dest = root / "agent-backups"
+    dest.mkdir()
+    dest.chmod(0o700)
+
+    r = subprocess.run(["sh", "-c", documented_cron_line()],
+                       capture_output=True, text=True,
+                       env={"HOME": str(root),
+                            "AGENT_MGR_REGISTRY": str(root / "registry"),
+                            "PATH": os.environ["PATH"]})
+    unreadable.chmod(0o644)  # so tmp_path teardown can read it back
+
+    assert r.returncode != 0, "a failed backup must hold the prune back"
+    log = (root / "backup-homes.log").read_text()
+    assert "tar failed on" in log, f"the backup half never reached the log: {log!r}"
+    assert "one or more homes were not archived" in log, log
     assert [p.name for p in dest.glob("*/*.tar.gz")] == ["hermes-omega.tar.gz"], \
         "the healthy home lost its night to the broken one"
