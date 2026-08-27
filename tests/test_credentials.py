@@ -78,16 +78,23 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
 # The two axes are independent, so a product would run redundant CLIs. One row
 # per dotenv shape, with the padded stdin -- the axis that pins the value strip
 # -- on one of them.
+CLEAN = "dev_abc\ntok_xyz\n"
+
+
 @pytest.mark.parametrize(
-    "starting_dotenv,preserved",
+    "starting_dotenv,preserved,stdin",
     [
-        (b"HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n", (b"HOSTEX_TOKEN=keep-me",)),
+        # Padded stdin rides one row -- what a paste looks like, and the axis
+        # that pins the value strip. It is independent of the dotenv shape,
+        # so pairing it with every row would just re-run the same CLI.
+        (b"HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n",
+         (b"HOSTEX_TOKEN=keep-me",), "  dev_abc \n\ttok_xyz  \n"),
         # No DOMO_* at all -- the append arm.
-        (b"HOSTEX_TOKEN=keep-me\n", (b"HOSTEX_TOKEN=keep-me",)),
+        (b"HOSTEX_TOKEN=keep-me\n", (b"HOSTEX_TOKEN=keep-me",), CLEAN),
         # Two canonical declarations, which is what appending a line at the
         # bottom produces. The upsert must leave exactly one, no stale value.
         (b"HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nDOMO_MCP_TOKEN=staler\n",
-         (b"HOSTEX_TOKEN=keep-me",)),
+         (b"HOSTEX_TOKEN=keep-me",), CLEAN),
         # Bytes this command does not own, and THREE independent mechanisms,
         # each of which would cut or corrupt a credential it must only copy:
         #   \xe9   -- becomes U+FFFD if the file is decoded to edit it
@@ -97,27 +104,19 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
         # implementation survives the first and cuts the second, and
         # bytes.splitlines() survives both and cuts the third.
         (b"SEAM_API_KEY=caf\xe9-la\rtin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
-         (b"SEAM_API_KEY=caf\xe9-la\rtin1", b"HOSTEX_TOKEN=a\xc2\x85b")),
+         (b"SEAM_API_KEY=caf\xe9-la\rtin1", b"HOSTEX_TOKEN=a\xc2\x85b"), CLEAN),
         # No terminating newline -- a hand-edited file, or an editor configured
         # not to add one. Every other row ends in \n, so the trailing-newline
         # conditional in upsert() is never driven through its False side; make
         # the pop unconditional and this row loses HOSTEX_TOKEN entirely,
         # republished at 0600 as a well-formed file with set-latch exiting 0.
-        (b"HOSTEX_TOKEN=keep-me", (b"HOSTEX_TOKEN=keep-me",)),
+        (b"HOSTEX_TOKEN=keep-me", (b"HOSTEX_TOKEN=keep-me",), CLEAN),
     ],
-    ids=["pre-seeded-empty", "absent", "canonical-duplicate", "bytes-we-do-not-own",
-         "no-trailing-newline"],
+    ids=["pre-seeded-empty-padded", "absent", "canonical-duplicate",
+         "bytes-we-do-not-own", "no-trailing-newline"],
 )
-@pytest.mark.parametrize(
-    "stdin",
-    [
-        "dev_abc\ntok_xyz\n",
-        # What a paste actually looks like -- the axis that pins the strip.
-        "  dev_abc \n\ttok_xyz  \n",
-    ],
-    ids=["clean", "padded"],
-)
-def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, instance, tmp_path, starting_dotenv, preserved, stdin):
+def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
+        run, instance, tmp_path, starting_dotenv, preserved, stdin):
     """The dotenv is shared -- the rentals agent keeps a PMS token and a lock API
     key in the same file -- so an upsert that rewrote the file would take those
     with it. And whatever spelling a key arrives in, exactly one declaration may

@@ -30,7 +30,6 @@ planted at `.env` is refused rather than followed, and there is never a
 container-visible staging name for a gateway to swap.
 """
 
-import errno
 import os
 import stat
 import sys
@@ -124,32 +123,20 @@ def main(argv):
         # filesystem, so a rename from there is still atomic and there is never
         # a container-visible name at all.
         #
-        # Resolved first: a home symlinked onto a bigger disk is ordinary here,
-        # and its parent is what has to share the filesystem, not the link's.
+        # Resolved first: a home symlinked onto a bigger disk is ordinary here
+        # -- the relocation load_agent supports -- so it is the TARGET's parent
+        # that has to share the filesystem, not the link's. A home that is a
+        # MOUNTPOINT is not a layout anything here creates; it would fail loudly
+        # at the rename with `.env` unchanged, which is the right amount of
+        # handling for a shape that does not exist.
         #
         # One path, both platforms. This is what retires the O_TMPFILE split --
         # that branch existed to avoid a nameable staging file, which staging
         # off-mount does outright, and it left macOS on a fallback Linux never
         # exercised.
         resolved = os.path.realpath(home)
-        staging_dir = os.path.dirname(resolved)
-        # Checked before a credential is written, because realpath resolves only
-        # ONE spelling of a relocated home. A home that is a MOUNTPOINT -- the
-        # other ordinary way onto a bigger disk -- comes back unchanged, and its
-        # parent is then a different device: the rename below would fail EXDEV
-        # after the replacement was fully written, reporting `.env` (the one
-        # thing that is fine) instead of the staging directory that is actually
-        # wrong. Two lines to turn that into the real diagnosis, before rather
-        # than after.
-        # Necessary, not sufficient -- see the EXDEV branch at the publish. This
-        # one is still worth having: it is the case where nothing is written at
-        # all, rather than written and then discarded.
-        if os.fstat(dir_fd).st_dev != os.stat(staging_dir).st_dev:
-            die("cannot stage a replacement for %s/.env: its parent %s is on a "
-                "different filesystem, so the replacement cannot be staged off "
-                "the mount. Nothing was written." % (home, staging_dir))
         tmp_path = os.path.join(
-            staging_dir,
+            os.path.dirname(resolved),
             ".%s.set-latch.%s" % (os.path.basename(resolved), os.urandom(8).hex()))
         try:
             fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -175,17 +162,8 @@ def main(argv):
                 os.unlink(tmp_path)
             except OSError:
                 pass
-            if exc.errno == errno.EXDEV:
-                # st_dev cannot see this one. rename(2) refuses across mount
-                # points even when the same filesystem is mounted on both, so a
-                # BIND-mounted home -- which is how this codebase relocates
-                # things, the container mount eight lines up being one -- passes
-                # the preflight and fails here. Same diagnosis either way: it is
-                # the staging directory that is wrong, not `.env`.
-                die("cannot stage a replacement for %s/.env: its parent %s is a "
-                    "different mount point, so the replacement cannot be staged "
-                    "off the mount. %s/.env is unchanged." % (home, staging_dir, home))
-            die("cannot publish %s/.env: %s" % (home, exc))
+            die("cannot publish %s/.env: %s. %s/.env is unchanged."
+                % (home, exc, home))
         return
     finally:
         os.close(dir_fd)
