@@ -86,8 +86,14 @@ def test_each_run_writes_its_own_archive(tmp_path):
     stale.write_text("older, permissive")
     stale.chmod(0o644)
 
-    assert run(root, dest).returncode == 0
-    assert run(root, dest).returncode == 0
+    # Started together, so they land in the same second — which is what the pid
+    # is for. Sequential runs would pass on the timestamp alone.
+    env = {"HOME": str(root), "PATH": os.environ["PATH"],
+           "AGENT_MGR_REGISTRY": str(root / "registry")}
+    ps = [subprocess.Popen([str(CLI), "backup-homes", str(dest)], env=env)
+          for _ in range(2)]
+    assert [p.wait() for p in ps] == [0, 0]
+
     fresh = [p for p in dest.glob("*.tar.gz") if p != stale]
-    assert len(fresh) == 2, f"a run reused a path: {[p.name for p in fresh]}"
+    assert len(fresh) == 2, f"two runs in one second shared a path: {[p.name for p in fresh]}"
     assert all(p.stat().st_mode & 0o077 == 0 for p in fresh)
