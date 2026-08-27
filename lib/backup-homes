@@ -17,11 +17,21 @@
 set -euo pipefail
 dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
-# These archives hold .env and auth.json. tar honours the umask only when it
-# CREATES the file -- writing over an existing 0644 keeps 0644, measured -- so
-# the 0600 is the umask AND the timestamp-and-pid name below, which is what
-# makes the path fresh every run. The pid because the stamp is second-resolution.
+# These archives hold .env and auth.json, and tar honours the umask only when it
+# CREATES the file: writing over an existing 0644 keeps 0644, measured. So the
+# 0600 needs the file to be new every time, which is what noclobber guarantees
+# -- it makes each open below O_EXCL, refusing a path that exists AND refusing
+# to follow a symlink planted at one. Measured on all three shapes, including a
+# DANGLING symlink, which creates nothing at its target.
+#
+# $dest is operator-chosen and the docs say "not this disk", so it may be a
+# mount another account can write. The name below is predictable -- a UTC
+# second and a readable pid -- and without O_EXCL that account could plant a
+# symlink to redirect an archive holding .env and auth.json, or pre-create the
+# path 0644 for tar to reuse. It also makes a same-second collision a loud
+# failure rather than two runs splicing into one file.
 umask 077
+set -o noclobber
 
 n=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
@@ -40,9 +50,10 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     #
     # The excludes are most of the bytes and none of the value -- 1.5 GB of
     # homes becomes 439 MB; ${name#.} so a plain `ls` shows the archives.
+    exec 3> "$dest/${name#.}-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz"
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
-        -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz" . \
-        || [ $? -eq 1 ]
+        -C "$home" -czf - . >&3 || [ $? -eq 1 ]
+    exec 3>&-
     n=$((n + 1))
 done
 

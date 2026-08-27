@@ -225,12 +225,13 @@ truncated archive. Nothing repairs or replaces it — archive names carry a UTC
 timestamp, so every run writes a **new** file and the truncated one stays the
 newest until retention prunes it at 14 days.
 
-That name is doing two other jobs. The timestamp is second-resolution, so it
-carries the pid too — with both, two runs can never share a path,
-so they cannot splice into one file; and it guarantees `tar` always *creates* the
-archive, which is the only time it honours the umask — writing over an existing
-`0644` path would keep `0644`, measured. Running the command twice in a day is
-therefore safe and simply produces two archives.
+That name is doing one other job: the timestamp is second-resolution, so it
+carries the pid too, and no two runs share a path. The *guarantee* is
+`noclobber` rather than the name — each archive is opened `O_EXCL`, so a path
+that already exists, or a symlink planted at one by anything else with write
+access to the destination, is a loud failure instead of a redirected archive or
+a reused `0644` file. Running the command twice in a day is safe and simply
+produces two archives.
 
 `gzip -t <archive>` tests the container and nothing else: a mid-rewrite archive
 passes it cleanly. So check before restoring, and fall back to the previous
