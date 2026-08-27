@@ -80,19 +80,21 @@ agent-mgr up bob
 ```
 
 **The zone goes after `restore` and before `up`.** *Where a per-person value
-goes* in the [README](../README.md) owns why the zone is special, and carries an
-append recipe if you would rather not open an editor — read its note on the
-leading newline before using `>>`, which is what that note is for.
+goes* in the [README](../README.md) owns why the zone is special, and carries a
+ready-made append recipe if you would rather not open an editor.
 
-Both bounds have a reason. Before `restore` there is no home to write into —
-`register` only adds a registry row, and the home is deliberately created by
-`restore` — so an early append fails outright rather than misleading you. It
-would also cost the file its mode: `restore` writes that dotenv `0600` and only
-when it is absent, so one you create first keeps your umask, 644 on a stock
-host, for a file that ends up holding the chat token. After `up` is the bound
-that costs you silently: the zone reaches the container when the container is
-**created**, so changing it later needs another `agent-mgr up`, never `restart`,
-which does not recreate.
+Both bounds have a reason, and only one of them is quiet. Before `restore`
+there is no home to write into — `register` only adds a registry row, and the
+home is deliberately created by `restore` — so an early attempt fails in front
+of you. (Do not get around that by making the directory yourself: `restore`
+writes the dotenv `0600` and only when it is absent, so a file you create first
+keeps your umask — 644 on a stock host — for a file that ends up holding the
+chat token.) After `up` is the bound that costs you silently: the zone reaches
+the container when the container is **created**, so changing it later needs
+another `agent-mgr up`, never `restart`, which does not recreate.
+
+Check it before moving on — `agent-mgr resolve bob` reads that dotenv back, so
+it prints your zone if the edit landed and the fleet default if it did not.
 
 `up` before the codes, not after: `sign-in` runs `hermes auth add` **inside the
 container**, so it refuses until one is running. `activate` does not care — it
