@@ -1,5 +1,6 @@
 import os
 import shutil
+import sys
 import stat
 import subprocess
 
@@ -125,6 +126,12 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
     # Never the whole token, on either stream -- the operator may be screen-sharing.
     assert "tok_xyz" not in r.stdout
     assert "tok_xyz" not in r.stderr
+    # But the last three must be the STORED value's, not the raw paste's. For a
+    # padded paste the raw tail is "z  " -- trailing spaces are invisible in a
+    # terminal, so the operator reads "...z" here and "...xyz" from check-latch's
+    # REVOKED line, and two spellings of one credential is what sends them to
+    # revoke a live token.
+    assert "...xyz" in r.stdout
 
 
 def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance):
@@ -255,3 +262,57 @@ def test_set_latch_env_reads_only_a_regular_leaf(tmp_path):
                        input="dev_abc\ntok_xyz\n", capture_output=True, text=True, timeout=10)
     assert r.returncode != 0
     assert "not a regular file" in r.stderr
+
+
+def test_set_latch_carries_bytes_it_does_not_own_through_verbatim(run, instance, tmp_path):
+    """The dotenv holds credentials this tool does not own, and the upsert edits
+    two lines of it. Decoding the file to edit them rewrites the rest: a
+    non-UTF-8 byte in a PMS password becomes U+FFFD unrecoverably, and str-level
+    line splitting treats \x0b, \x0c, \x85 and U+2028 as breaks, so one inside
+    a value cuts it in half and leaves the tail as a bogus config line. The
+    shell path this replaced was byte-transparent under the C locale."""
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("restore", "rowan")
+    env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
+    # A latin-1 byte, and a U+0085 that only str-level splitting treats as a
+    # line break. Both inside values this command must not touch.
+    keep = b"SEAM_API_KEY=caf\xe9-latin1\nHOSTEX_TOKEN=a\xc2\x85b\n"
+    env_file.write_bytes(keep + b"DOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n")
+    b, _ = _fake_docker(tmp_path)
+    r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n",
+            env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    body = env_file.read_bytes()
+    assert keep in body, "a byte this command does not own was rewritten"
+    assert b"DOMO_MCP_TOKEN=tok_xyz\n" in body
+    # And no extra line: the U+0085 must not have become a break.
+    assert body.count(b"\n") == 4
+
+
+def test_the_publish_path_macos_takes_works(tmp_path):
+    """O_TMPFILE always exists on Linux, so the named-temp fallback never runs
+    in CI -- and it is the ONLY publish path macOS takes, where set-latch is a
+    documented command (README's floor is 12.3). Without this the fallback could
+    regress -- wrong mode, a missing dst_dir_fd, an unlink of the wrong name --
+    and ship with the suite green, onto the platform that actually runs it.
+
+    Forces the branch the way the manual check did, by deleting the attribute."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".env").write_text("HOSTEX_TOKEN=keep-me\n")
+    (home / ".env").chmod(0o600)
+    forced = (
+        "import os, runpy, sys\n"
+        "del os.O_TMPFILE\n"
+        "sys.argv = ['set-latch-env', %r]\n"
+        "runpy.run_path(%r, run_name='__main__')\n" % (str(home), str(ROOT / "lib" / "set-latch-env"))
+    )
+    r = subprocess.run([sys.executable, "-c", forced], input="dev_abc\ntok_xyz\n",
+                       capture_output=True, text=True, timeout=10)
+    assert r.returncode == 0, r.stderr
+    body = (home / ".env").read_text()
+    assert "DOMO_DEVICE_UID=dev_abc" in body.splitlines()
+    assert "DOMO_MCP_TOKEN=tok_xyz" in body.splitlines()
+    assert "HOSTEX_TOKEN=keep-me" in body.splitlines()
+    assert ((home / ".env").stat().st_mode & 0o777) == 0o600
+    assert not list(home.glob(".env.staged.*")), "a temporary was left behind"

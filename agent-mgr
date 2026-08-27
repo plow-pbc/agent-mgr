@@ -258,6 +258,14 @@ case "$cmd" in
         # prompt is unconditional rather than gated on a tty test.
         IFS= read -rs tok || die "no DOMO_MCP_TOKEN on stdin"
         printf '\n' >&2
+        # Stripped here as well as in the helper, which is authoritative -- what
+        # goes down the pipe is then what lands in the file, so the confirmation
+        # below reports the same last three characters check-latch will. Reading
+        # the raw value instead announced `...z  ` for a padded paste while
+        # check-latch's REVOKED line said `...xyz`, and two spellings of one
+        # credential is what sends an operator to revoke a live token.
+        uid="${uid#"${uid%%[![:space:]]*}"}"; uid="${uid%"${uid##*[![:space:]]}"}"
+        tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
         # One process does the read, the upsert and the publish, all under a
         # single directory FD on the home -- lib/set-latch-env. It also owns the
         # value strip and the emptiness check, so there is one definition of

@@ -34,7 +34,7 @@ import os
 import stat
 import sys
 
-KEYS = ("DOMO_DEVICE_UID", "DOMO_MCP_TOKEN")
+KEYS = (b"DOMO_DEVICE_UID", b"DOMO_MCP_TOKEN")
 
 
 def die(message):
@@ -42,24 +42,38 @@ def die(message):
     raise SystemExit(1)
 
 
-def upsert(text, values):
+def upsert(data, values):
     """Canonical `KEY=value` at column 0 -- the one spelling this tool writes
     and `dotenv_read` is the only reader of. The first declaration of each key
     is rewritten and any later one dropped, so a file that arrived with two
-    (appending a line at the bottom is how that happens) leaves with one."""
+    (appending a line at the bottom is how that happens) leaves with one.
+
+    Bytes end to end, and every other line copied verbatim. This file holds
+    credentials this tool does not own -- a PMS token, a lock API key -- and
+    decoding to str to edit two of its lines would rewrite the rest: a
+    non-UTF-8 byte in a password becomes U+FFFD unrecoverably, and str
+    splitting treats \x0b, \x0c, \x85, U+2028 and friends as line breaks, so
+    one of those inside a value would cut it in half and leave the tail as a
+    bogus config line. Split on b"\n" alone rather than bytes.splitlines(),
+    which still breaks on \r.
+    """
+    lines = data.split(b"\n")
+    trailing_newline = lines and lines[-1] == b""
+    if trailing_newline:
+        lines.pop()
     out, seen = [], set()
-    for line in text.splitlines():
-        key = line.split("=", 1)[0] if "=" in line else None
+    for line in lines:
+        key = line.split(b"=", 1)[0] if b"=" in line else None
         if key in KEYS:
             if key not in seen:
                 seen.add(key)
-                out.append("%s=%s" % (key, values[key]))
+                out.append(key + b"=" + values[key])
             continue
         out.append(line)
     for key in KEYS:
         if key not in seen:
-            out.append("%s=%s" % (key, values[key]))
-    return "\n".join(out) + "\n"
+            out.append(key + b"=" + values[key])
+    return b"\n".join(out) + b"\n"
 
 
 def main(argv):
@@ -67,7 +81,7 @@ def main(argv):
         die("usage: set-latch-env <home>  (uid and token on stdin)")
     home = argv[0]
 
-    fields = sys.stdin.read().split("\n")
+    fields = sys.stdin.buffer.read().split(b"\n")
     if len(fields) < 2:
         die("expected DOMO_DEVICE_UID and DOMO_MCP_TOKEN on stdin, one per line")
     # Stripped, so what lands in the file is what the gateway loads -- it strips
@@ -76,7 +90,8 @@ def main(argv):
     values = {KEYS[0]: fields[0].strip(), KEYS[1]: fields[1].strip()}
     for key in KEYS:
         if not values[key]:
-            die("%s was empty -- mint the pair on the Mac running Latch" % key)
+            die("%s was empty -- mint the pair on the Mac running Latch"
+                % key.decode("ascii"))
 
     try:
         dir_fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
@@ -95,9 +110,9 @@ def main(argv):
         with os.fdopen(fd, "rb") as handle:
             if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
                 die("refusing to read %s/.env: not a regular file" % home)
-            current = handle.read().decode("utf-8", "replace")
+            current = handle.read()
 
-        updated = upsert(current, values).encode("utf-8")
+        updated = upsert(current, values)
 
         # Staged so the gateway has nothing to aim at. A predictable
         # `.env.<pid>` could be renamed away and its name re-created as a
