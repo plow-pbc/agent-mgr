@@ -7,6 +7,7 @@ exist and still look like backups.
 import os
 import re
 import subprocess
+import tempfile
 import time
 import tarfile
 from pathlib import Path
@@ -27,14 +28,20 @@ def run_documented_cron(home, sandbox, extra_path=None):
     caller is a loaded gun; `home` must be inside `sandbox`, this test's own
     `tmp_path`.
 
-    Anchored to that rather than to the system temp root, which is what it
-    actually means and what survives `--basetemp` pointed elsewhere. Resolved on
-    both sides: on macOS `gettempdir()` is `/var/folders/…` while pytest
-    `resolve()`s its basetemp to `/private/var/folders/…`, so comparing the
-    unresolved pair refuses every run on the platform this entry exists for —
-    measured. A guard that fails closed everywhere protects nothing."""
-    assert Path(home).resolve().is_relative_to(Path(sandbox).resolve()), \
+    Two floors, because each misses what the other catches. `sandbox` says what
+    this actually means and survives `--basetemp` pointed elsewhere, but
+    `is_relative_to` is satisfied by a caller passing one path as both — so the
+    absolute one stays. Resolved on both sides: on macOS `gettempdir()` is
+    `/var/folders/…` while pytest `resolve()`s its basetemp to
+    `/private/var/folders/…`, so comparing the unresolved pair refuses every run
+    on the platform this entry exists for — measured. A guard that fails closed
+    everywhere protects nothing, and one satisfied by its own argument protects
+    nothing either."""
+    home, sandbox = Path(home).resolve(), Path(sandbox).resolve()
+    assert home.is_relative_to(sandbox) and home != sandbox, \
         f"refusing to run a documented `rm -rf` with HOME={home}, outside {sandbox}"
+    assert home.is_relative_to(Path(tempfile.gettempdir()).resolve()), \
+        f"refusing to run a documented `rm -rf` with HOME={home}, outside the temp root"
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
     # The group and its redirect are the whole point of the entry: without them
