@@ -11,7 +11,6 @@ Install is a clone and a symlink — there is no release and no package:
 git clone git@github.com:plow-pbc/agent-mgr.git ~/services/agent-mgr
 mkdir -p ~/.local/bin
 ln -sf ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
-ln -sf ~/services/agent-mgr/backup-homes ~/.local/bin/backup-homes
 ```
 
 `~/.local/bin` must be on your `PATH`. If the clone has no `agent-mgr` script at

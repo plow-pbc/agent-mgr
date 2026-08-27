@@ -66,7 +66,7 @@ agent-mgr up rowan / down rowan / restart rowan / logs rowan
 agent-mgr agent rowan "what's on today?"
 agent-mgr check-latch rowan
 agent-mgr check-connectors rowan
-backup-homes ~/agent-backups
+agent-mgr backup-homes ~/agent-backups
 ```
 
 Both `check-` commands ask **from inside the container**, because the container
@@ -81,7 +81,7 @@ half from git any time; nothing rebuilds the volume half — `auth.json`, the
 dotenv, the sessions, the memories, the kanban.
 
 ```sh
-backup-homes /somewhere/not/this/disk
+agent-mgr backup-homes /somewhere/not/this/disk
 ```
 
 It globs `~/.hermes*` rather than reading the registry, so it does not depend on
@@ -89,10 +89,24 @@ a row being current and it catches a home whose agent is mid-migration. It skips
 `logs/`, `cache/` and `lazy-packages/` — 1.5 GB of homes becomes ~440 MB — and
 writes mode-0600 archives, because they hold credentials.
 
+**What the archive does and does not guarantee.** It is taken from a *running*
+agent, so it is crash-consistent, not transaction-consistent. The irreplaceable
+half — `auth.json`, the dotenv, `SOUL.md`, memories, kanban — are plain files and
+come across whole. The gateway's SQLite session database is the exception: its
+main file and its `-wal` are read at different instants, so a restored copy may
+need SQLite's own recovery and can lose the tail of the session history. That is
+the deliberate trade: a nightly that stopped the rentals gateway for a clean read
+would cost more than the session tail is worth. For a consistent copy,
+`agent-mgr down <name>` first.
+
+It also only sees homes under `~/.hermes*`. A descriptor may declare
+`AGENT_HOME` anywhere — nothing today does — and such a home would not be
+archived, silently, while the run still reported success on the others.
+
 Nightly, with 14 days kept:
 
 ```sh
-0 4 * * * ~/.local/bin/backup-homes ~/agent-backups && find ~/agent-backups -name '*.tar.gz' -mtime +14 -delete
+0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find ~/agent-backups -name '*.tar.gz' -mtime +14 -delete
 ```
 
 To restore one, stop the agent first — two writers to one session database

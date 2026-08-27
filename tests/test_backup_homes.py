@@ -8,7 +8,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "backup-homes"
+SCRIPT = Path(__file__).resolve().parent.parent / "lib" / "backup-homes"
 
 
 def run(home_root, dest):

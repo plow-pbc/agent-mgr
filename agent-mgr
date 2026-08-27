@@ -120,6 +120,11 @@ case "$cmd" in
         # gateway several times for one deploy.
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "what the restore installed"
         ;;
+    backup-homes)
+        # Fleet-wide, so it takes no agent name and no registry row -- it globs
+        # ~/.hermes*, which also catches a home whose agent is mid-migration.
+        "$AGENT_MGR_ROOT/lib/backup-homes" "$@"
+        ;;
     install-plugin)
         load_agent "${1:-}"
         # Before the write, as in restore.
