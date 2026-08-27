@@ -140,7 +140,7 @@ one time, permanently.
 
 Steps 5 and 6 assume **their** Mac is already running Plow Latch, which is a
 prerequisite you cannot satisfy for them. Confirm it before step 1 — not for
-correctness, since 5 and 6 cost nothing to redo, but for their calendar. A
+correctness, since 5 and 6 are free to run late, but for their calendar. A
 missing Latch found at step 5 does not end when they install it: 5 and 6 still
 have to run, which is a second sitting with them. And step 1 cannot be
 un-started, so the agent is live and Mac-less until that sitting happens.
