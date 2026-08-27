@@ -65,3 +65,19 @@ def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path)
     r = run(root, dest)
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
+
+
+def test_the_dispatch_arm_is_the_installed_entry_point(tmp_path):
+    """`agent-mgr backup-homes` is now the only installed way in — the second
+    symlink is gone — so exercising lib/backup-homes directly leaves the seam
+    every operator and the documented cron actually use untested."""
+    root, dest = tmp_path / "home", tmp_path / "dest"
+    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+
+    r = subprocess.run([str(SCRIPT.parent.parent / "agent-mgr"), "backup-homes", str(dest)],
+                       capture_output=True, text=True,
+                       env={"HOME": str(root), "PATH": os.environ["PATH"],
+                            "AGENT_MGR_REGISTRY": str(tmp_path / "agents")})
+    assert r.returncode == 0, r.stderr
+    assert len(list(dest.glob("*.tar.gz"))) == 1
