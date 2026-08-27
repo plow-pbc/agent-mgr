@@ -12,7 +12,8 @@ from pathlib import Path
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 
 
-def run(home_root, dest):
+def spawn(home_root, dest):
+    """The launch contract, in one place. `run()` is this plus a wait."""
     # umask 022 forced on the child: it would otherwise inherit the runner's, and
     # on a host already defaulting to 0077 the mode assertion below would pass
     # with `umask 077` deleted from the script — silently ceasing to guard the
@@ -20,14 +21,20 @@ def run(home_root, dest):
     # Through the CLI, not the library file: `agent-mgr backup-homes` is the only
     # installed entry point, so every assertion below crosses the dispatch arm —
     # a dropped arm, a lost "$@", or a swallowed exit status fails the suite.
-    return subprocess.run([str(CLI), "backup-homes", str(dest)],
-                          capture_output=True, text=True,
-                          preexec_fn=lambda: os.umask(0o022),
-                          env={"HOME": str(home_root),
-                               "AGENT_MGR_REGISTRY": str(home_root / "registry"),
-                               # The suite poisons PATH with its own docker stub
-                               # and refuses any env that does not carry it.
-                               "PATH": os.environ["PATH"]})
+    return subprocess.Popen([str(CLI), "backup-homes", str(dest)],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            preexec_fn=lambda: os.umask(0o022),
+                            env={"HOME": str(home_root),
+                                 "AGENT_MGR_REGISTRY": str(home_root / "registry"),
+                                 # The suite poisons PATH with its own docker
+                                 # stub and refuses any env not carrying it.
+                                 "PATH": os.environ["PATH"]})
+
+
+def run(home_root, dest):
+    p = spawn(home_root, dest)
+    out, err = p.communicate()
+    return subprocess.CompletedProcess(p.args, p.returncode, out, err)
 
 
 def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path):
@@ -85,10 +92,7 @@ def test_each_run_writes_its_own_archive(tmp_path):
     (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
     (root / ".hermes-rowan" / ".env").write_text("x\n")
 
-    env = {"HOME": str(root), "PATH": os.environ["PATH"],
-           "AGENT_MGR_REGISTRY": str(root / "registry")}
-    ps = [subprocess.Popen([str(CLI), "backup-homes", str(dest)], env=env)
-          for _ in range(2)]
+    ps = [spawn(root, dest) for _ in range(2)]
     assert [p.wait() for p in ps] == [0, 0]
 
     names = sorted(p.name for p in dest.glob("*.tar.gz"))
