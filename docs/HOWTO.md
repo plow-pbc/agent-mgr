@@ -80,18 +80,19 @@ agent-mgr up bob
 ```
 
 **The zone goes after `restore` and before `up`.** *Where a per-person value
-goes* in the [README](../README.md) owns why the zone is special and why the
-line wants a leading newline; what this runbook owns is where it sits. Before
-`restore` there is no home yet to write into — `register` only adds a registry
-row, and the home is deliberately created by `restore` — so an early append
-fails rather than misleads. After `up` is the one that costs you: the zone
-reaches the container when the container is **created**, so changing it later
-needs another `agent-mgr up`, never `restart`, which does not recreate.
+goes* in the [README](../README.md) owns why the zone is special, and carries an
+append recipe if you would rather not open an editor — read its note on the
+leading newline before using `>>`, which is what that note is for.
 
-By hand rather than through a pasted one-liner, deliberately. `restore` writes
-that dotenv at mode 600 and only when it is absent, so a file you create first
-keeps your umask — 644 on a stock host — for a file that ends up holding the
-chat token. Let `restore` make it; you are adding a line to it.
+Both bounds have a reason. Before `restore` there is no home to write into —
+`register` only adds a registry row, and the home is deliberately created by
+`restore` — so an early append fails outright rather than misleading you. It
+would also cost the file its mode: `restore` writes that dotenv `0600` and only
+when it is absent, so one you create first keeps your umask, 644 on a stock
+host, for a file that ends up holding the chat token. After `up` is the bound
+that costs you silently: the zone reaches the container when the container is
+**created**, so changing it later needs another `agent-mgr up`, never `restart`,
+which does not recreate.
 
 `up` before the codes, not after: `sign-in` runs `hermes auth add` **inside the
 container**, so it refuses until one is running. `activate` does not care — it
