@@ -7,12 +7,23 @@ exist and still look like backups.
 import os
 import re
 import subprocess
+import time
 import tarfile
 from pathlib import Path
 
 import pytest
 
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
+HOWTO = Path(__file__).resolve().parent.parent / "docs" / "HOWTO.md"
+
+
+def documented_prune(dest):
+    """The `find` half of the HOWTO's cron line, retargeted at `dest`. Extracted
+    rather than copied: a test carrying its own copy of a destructive command
+    pins the copy, which is what lets the real one drift."""
+    line = next(l for l in HOWTO.read_text().splitlines()
+                if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
+    return line[line.index("find -H"):].replace("~/agent-backups", str(dest))
 
 
 @pytest.fixture
@@ -176,3 +187,40 @@ def test_a_destination_others_can_write_is_refused(tmp_path, mode):
     assert r.returncode != 0, r.stdout
     assert "nobody else can write" in r.stderr
     assert not any(dest.iterdir()), "it wrote archives anyway"
+
+
+def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest):
+    """The highest-consequence snippet in these docs — an `rm -rf` the operator
+    pastes into cron — and it has shipped over-broad twice: once taking every
+    directory, once every `*.tar.gz`. The run directory here is the real one the
+    script just wrote, not a hand-copied name, so the glob is checked against
+    what `lib/backup-homes` actually produces. Change either and this fails,
+    rather than the nightly quietly pruning nothing while reporting success.
+
+    One entry per clause: the two name globs keep the operator's own `photos/`
+    and `photos-2019.tar.gz`, and each `-type` keeps the same-named impostor of
+    the wrong kind — which is why those two are named to match the other arm."""
+    root = tmp_path / "home"
+    (root / ".hermes-rowan").mkdir(parents=True)
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    assert run(root, dest).returncode == 0
+    run_dir = next(dest.iterdir())
+
+    (dest / "hermes-errands-20260101.tar.gz").write_text("what an earlier shape wrote\n")
+    (dest / "photos-2019.tar.gz").write_text("the operator's own\n")
+    (dest / "photos").mkdir()
+    # The two impostors, one per `-type`. Named to MATCH the other arm's glob,
+    # which is the whole point: a trap the name globs already exclude tests
+    # nothing about `-type`.
+    (dest / "hermes-trap.tar.gz").mkdir()          # a directory named like an archive
+    (dest / "20260101T000000Z-9").write_text("x\n")  # a file named like a run
+
+    old = time.time() - 20 * 86400
+    for p in dest.iterdir():
+        os.utime(p, (old, old))
+
+    subprocess.run(["sh", "-c", documented_prune(dest)], check=True)
+
+    assert not run_dir.exists(), "it kept the run directory it was meant to prune"
+    assert sorted(p.name for p in dest.iterdir()) == [
+        "20260101T000000Z-9", "hermes-trap.tar.gz", "photos", "photos-2019.tar.gz"]

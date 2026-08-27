@@ -230,12 +230,14 @@ Nightly, with 14 days kept:
 0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( \( -type d -name '[0-9]*T[0-9]*Z-[0-9]*' \) -o \( -type f -name 'hermes-*.tar.gz' \) \) -mtime +14 -exec rm -rf {} +
 ```
 
-Every clause in that `rm -rf` is load-bearing, and **both** arms are name-scoped
-so it only ever takes files it wrote: `-H` so a symlinked destination resolves
-at all, the run-name glob for its own directories, and `hermes-*.tar.gz` for
-archives an earlier shape wrote flat, which matches nothing once they age out.
-The `-type` on each is what stops a directory named `photos.tar.gz` — or a
-`photos/` you keep alongside the backups — from matching the other one's arm.
+Every clause in that `rm -rf` is load-bearing. `-H` so a symlinked destination
+resolves at all. The two **name globs** are what keep your own entries out
+entirely — a `photos/` matches neither, and a `photos-2019.tar.gz` matches
+neither, because the flat arm is `hermes-*.tar.gz` and not `*.tar.gz`. Each
+`-type` then stops the *same-named impostor of the wrong kind*: `-type f` stops
+a **directory** called `hermes-something.tar.gz` from being recursed into, and
+`-type d` stops a plain file named like a run stamp. Add a third arm and it
+needs both halves, not one.
 
 ### What an archive is worth
 
