@@ -15,6 +15,7 @@ import pytest
 
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 HOWTO = Path(__file__).resolve().parent.parent / "docs" / "HOWTO.md"
+RUN_DIR = re.compile(r"\d{8}T\d{6}Z-\d+")
 
 
 def documented_prune(dest):
@@ -23,7 +24,14 @@ def documented_prune(dest):
     pins the copy, which is what lets the real one drift."""
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
-    return line[line.index("find -H"):].replace("~/agent-backups", str(dest))
+    cmd = line[line.index("find -H"):].replace("~/agent-backups", str(dest))
+    # Fail loudly rather than open. `~/agent-backups` is the one part still
+    # hand-copied here, so an ordinary docs rename makes `replace` match nothing
+    # — and `sh` tilde-expands, so the command would run `rm -rf` against the
+    # operator's REAL backups on the host this suite runs on. The assertions
+    # below would then fail, but only after the deletion.
+    assert str(dest) in cmd and "~" not in cmd, f"retarget missed the destination: {cmd}"
+    return cmd
 
 
 @pytest.fixture
@@ -204,7 +212,7 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
     (root / ".hermes-rowan").mkdir(parents=True)
     (root / ".hermes-rowan" / ".env").write_text("x\n")
     assert run(root, dest).returncode == 0
-    run_dir = next(dest.iterdir())
+    aged_run = next(dest.iterdir())
 
     (dest / "hermes-errands-20260101.tar.gz").write_text("what an earlier shape wrote\n")
     (dest / "photos-2019.tar.gz").write_text("the operator's own\n")
@@ -219,8 +227,24 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
     for p in dest.iterdir():
         os.utime(p, (old, old))
 
-    subprocess.run(["sh", "-c", documented_prune(dest)], check=True)
+    # A second run AFTER the ageing, so the fixture holds something recent. With
+    # everything aged, the survivor set is identical whether the line says
+    # `-mtime +14`, `-mtime +7`, or carries no `-mtime` at all — and dropping it
+    # is the mutation where the cron's second half deletes the backup its own
+    # first half wrote seconds earlier, forever, while reporting success.
+    assert run(root, dest).returncode == 0
+    fresh_run = next(p for p in dest.iterdir()
+                     if p != aged_run and p.is_dir() and RUN_DIR.fullmatch(p.name))
 
-    assert not run_dir.exists(), "it kept the run directory it was meant to prune"
-    assert sorted(p.name for p in dest.iterdir()) == [
-        "20260101T000000Z-9", "hermes-trap.tar.gz", "photos", "photos-2019.tar.gz"]
+    # Pruned through a SYMLINK, the shape the section two paragraphs up invites.
+    # Without `-H`, `find` does not descend the starting point, `-mindepth 1`
+    # matches nothing, and retention silently stops while the nightly stays green.
+    link = tmp_path / "link"
+    link.symlink_to(dest)
+    subprocess.run(["sh", "-c", documented_prune(link)], check=True)
+
+    assert not aged_run.exists(), "it kept the run directory it was meant to prune"
+    assert fresh_run.exists(), "-mtime is not bounding the window: it took a fresh run"
+    assert {p.name for p in dest.iterdir()} == {
+        "20260101T000000Z-9", "hermes-trap.tar.gz", "photos", "photos-2019.tar.gz",
+        fresh_run.name}
