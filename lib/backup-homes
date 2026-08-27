@@ -28,8 +28,13 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # the archive at all. Measured.
     #
     # `|| [ $? -eq 1 ]`: tar exits 1 for "file changed as we read it", which a
-    # running gateway provokes on essentially every nightly run, and the archive
-    # it produced is complete. Status 2 stays a real failure.
+    # running gateway provokes on essentially every nightly run. The file it was
+    # reading may have been captured mid-rewrite and can restore partially --
+    # measured on a plain file, not only on a database -- so this is a trade,
+    # not a no-op: refusing status 1 would instead fail the nightly EVERY night,
+    # and a backup that cries wolf is one nobody reads. Status 2 stays a real
+    # failure. docs/HOWTO.md § "What the archive does and does not guarantee"
+    # owns the operator-facing version of this; keep the two in step.
     #
     # logs/, cache/ and lazy-packages/ are most of the bytes and none of the
     # value: 1.5 GB of homes becomes 439 MB of archives.
