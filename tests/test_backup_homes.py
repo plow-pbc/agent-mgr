@@ -58,7 +58,7 @@ def dest(tmp_path):
     return d
 
 
-def spawn(home_root, dest):
+def spawn(home_root, dest, extra_path=None):
     """The launch contract, in one place. `run()` is this plus a wait."""
     # umask 022 forced on the child: it would otherwise inherit the runner's, and
     # on a host already defaulting to 0077 the mode assertion below would pass
@@ -74,11 +74,12 @@ def spawn(home_root, dest):
                                  "AGENT_MGR_REGISTRY": str(home_root / "registry"),
                                  # The suite poisons PATH with its own docker
                                  # stub and refuses any env not carrying it.
-                                 "PATH": os.environ["PATH"]})
+                                 "PATH": f"{extra_path}:{os.environ['PATH']}"
+                                         if extra_path else os.environ["PATH"]})
 
 
-def run(home_root, dest):
-    p = spawn(home_root, dest)
+def run(home_root, dest, extra_path=None):
+    p = spawn(home_root, dest, extra_path)
     out, err = p.communicate()
     return subprocess.CompletedProcess(p.args, p.returncode, out, err)
 
@@ -267,3 +268,40 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
     assert {p.name for p in dest.iterdir()} == {
         "20260101T000000Z-9", "hermes-trap.tar.gz", "photos", "photos-2019.tar.gz",
         fresh_run.name}
+
+
+@pytest.mark.parametrize("message,tolerated", [
+    ("tar: ./sessions.db: file changed as we read it", True),
+    ("tar: ./kanban.db-wal: File removed before we read it", True),
+    ("tar: Can't open 'auth.json': Permission denied", False),
+    ("tar: ./x: Cannot stat: No such file or directory", False),
+], ids=["read-race", "removed-mid-read", "unreadable-member", "unstattable"])
+def test_tar_status_1_is_judged_by_its_message_not_its_number(
+        tmp_path, dest, message, tolerated):
+    """`tar` exits 1 for all four and they are opposite outcomes: the first two
+    leave an archive missing something that was being rewritten anyway, the last
+    two leave one missing a file that was simply never read — `auth.json` being
+    the case this command exists for.
+
+    The number cannot separate them across the two tars this repo supports.
+    Measured on macOS 14: bsdtar exits **0** for the read race in all three
+    shapes (in-place rewrite, truncate, grow) and keeps 1 for a member it could
+    not open, which it then omits — so a status-only tolerance publishes a
+    credential-less archive, exits 0, and lets retention prune the good copies."""
+    root = tmp_path / "home"
+    (root / ".hermes-rowan").mkdir(parents=True)
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+
+    # A `tar` that reports `message` and exits 1, so the contract is pinned
+    # without racing a real one — which is what let an earlier version of this
+    # suite pass on a machine where the race happened not to fire.
+    shim = tmp_path / "bin"
+    shim.mkdir()
+    (shim / "tar").write_text(f'#!/bin/sh\nprintf \'%s\\n\' "{message}" >&2\nexit 1\n')
+    (shim / "tar").chmod(0o755)
+
+    r = run(root, dest, extra_path=str(shim))
+    assert (r.returncode == 0) is tolerated, f"exit {r.returncode}: {r.stderr}"
+    assert message in r.stderr, "tar's own diagnostic must reach the operator"
+    if not tolerated:
+        assert "tar failed" in r.stderr

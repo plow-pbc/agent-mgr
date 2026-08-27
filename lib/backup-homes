@@ -46,6 +46,14 @@ umask 077
 run="$dest/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir "$run"
 
+# The only tar diagnostics that do not mean the archive is missing something.
+# Matched case-insensitively: GNU writes "file changed as we read it" lowercase
+# and "File removed before we read it" capitalised, in the same run -- measured
+# against the live fleet, where the gateway's kanban.db-wal produces the second.
+benign='file changed as we read it|file removed before we read it|file changed size'
+err="$(mktemp)"
+trap 'rm -f "$err"' EXIT
+
 n=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
@@ -54,9 +62,15 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # bigger disk is supported, and from the parent tar stores that symlink AS a
     # symlink -- exit 0, one entry, no credentials in the archive at all.
     #
-    # `|| [ $? -eq 1 ]`: tar exits 1 for "file changed as we read it", which a
-    # running gateway provokes nightly; refusing it would fail the nightly EVERY
-    # night. Status 2 stays a real failure.
+    # tar exits 1 for "file changed as we read it", which a running gateway
+    # provokes nightly, and refusing that would fail the nightly EVERY night.
+    # But the NUMBER cannot carry that decision across the two tars this repo
+    # supports. Measured on macOS 14: bsdtar exits 0 for the read race in all
+    # three shapes -- an in-place rewrite, a truncate and a grow -- and uses 1
+    # for a member it could not open, which it then OMITS. So on a Mac the old
+    # `|| [ $? -eq 1 ]` published an archive missing exactly the auth.json this
+    # command exists to preserve, exited 0, and let retention prune the good
+    # copies behind it. The message can tell them apart; the status cannot.
     #
     # The excludes are most of the bytes and none of the value -- 1.5 GB of
     # homes becomes 439 MB; ${name#.} so a plain `ls` shows the archives.
@@ -65,9 +79,14 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # is nothing left for a stage to protect. Staging was tried and introduced
     # more failure modes than it prevented -- plow-pbc/agent-mgr#34 has the
     # rejected shapes.
+    status=0
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
-        -C "$home" -czf "$run/${name#.}.tar.gz" . \
-        || [ $? -eq 1 ]
+        -C "$home" -czf "$run/${name#.}.tar.gz" . 2>"$err" || status=$?
+    cat "$err" >&2
+    if [ "$status" != 0 ] && { [ "$status" != 1 ] || grep -Eqvi "$benign" "$err"; }; then
+        echo "backup-homes: tar failed on $home (status $status)" >&2
+        exit 1
+    fi
     n=$((n + 1))
 done
 
