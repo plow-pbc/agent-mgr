@@ -16,17 +16,12 @@ days="${2:-14}"
 
 [ -d "$dest" ] || { echo "prune-backups: $dest is not a directory" >&2; exit 1; }
 
-# Only what `backup-homes` writes, and the name is the whole guard:
-#
-#   backup-homes-  a prefix this tool owns, so an operator's own directory
-#                  cannot collide with it by accident
-#   ????????T??????Z-  the exact stamp shape, one `?` per character
-#   *.run          the pid, then a suffix the trailing `*` cannot eat past.
-#                  Both anchors are needed: `[0-9]*T[0-9]*Z-[0-9]*` matches
-#                  `20240101T010101Z-1-photos` and so does
-#                  `backup-homes-????????T??????Z-*` -- measured, each deleted
-#                  it. A glob `*` is greedy and happily eats the rest of a
-#                  name, so the only reliable stop is a fixed tail.
+# Only what `backup-homes` writes. `find` narrows by name, mtime and type; the
+# shell then checks the grammar, because a glob cannot say "digits" and every
+# looser spelling has let an operator's directory through -- measured, each of
+# `[0-9]*T[0-9]*Z-[0-9]*`, `backup-homes-????????T??????Z-*` and that plus a
+# `.run` tail deleted a `…Z-1-photos` of theirs. Glob `*` is greedy; only a
+# character-by-character test ends it.
 #
 # `-maxdepth 1` so a matching name NESTED in a directory of theirs is out of
 # reach; `-type d` so a plain file carrying a run's name is not removed
@@ -34,4 +29,13 @@ days="${2:-14}"
 # all, without which `-mindepth 1` matches nothing and this silently prunes
 # nothing forever.
 find -H "$dest" -mindepth 1 -maxdepth 1 -type d \
-    -name 'backup-homes-????????T??????Z-*.run' -mtime "+$days" -exec rm -rf {} +
+    -name 'backup-homes-*.run' -mtime "+$days" -print0 |
+while IFS= read -r -d '' dir; do
+    rest="${dir##*/}"; rest="${rest#backup-homes-}"; rest="${rest%.run}"
+    case "${rest%-*}" in
+        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
+        *) continue ;;
+    esac
+    case "${rest##*-}" in ''|*[!0-9]*) continue ;; esac
+    rm -rf "$dir"
+done

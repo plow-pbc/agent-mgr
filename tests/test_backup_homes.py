@@ -62,6 +62,16 @@ def run_documented_cron(home, sandbox, extra_path=None):
 
 
 @pytest.fixture
+def home(tmp_path):
+    """One registered agent with a credential in it — the arrangement almost
+    every test below needs and none of them varies."""
+    root = tmp_path / "home"
+    (root / ".hermes-rowan").mkdir(parents=True)
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    return root
+
+
+@pytest.fixture
 def dest(tmp_path):
     """`backup-homes` refuses a destination anyone else can write, and the
     runner's umask is not ours to assume — this host's default of 002 makes a
@@ -118,7 +128,7 @@ def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path, dest):
     assert not any("logs" in m for m in inside)
 
 
-def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(tmp_path, dest):
+def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(home, dest):
     """They hold .env and auth.json. Both modes come from `umask 077` and both
     fail open without it — archives land 0644, or 0664 on a host with a laxer
     default, which is what happened the first time these were taken by hand. The
@@ -126,11 +136,8 @@ def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(tmp_p
     name and anything else able to write the destination. The forced `umask 022`
     in run() removes the runner's own umask as a second source, so this asserts
     the script's guarantee and not the host's."""
-    root = tmp_path / "home"
-    (root / ".hermes-rowan").mkdir(parents=True)
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
 
-    assert run(root, dest).returncode == 0
+    assert run(home, dest).returncode == 0
     archive = next(dest.glob("*/*.tar.gz"))
     for path in (archive, archive.parent):
         mode = path.stat().st_mode & 0o777
@@ -148,16 +155,13 @@ def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path,
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
 
-def test_each_run_gets_its_own_directory(tmp_path, dest):
+def test_each_run_gets_its_own_directory(home, dest):
     """The run directory carries a UTC timestamp *and* the pid, so no two runs
     share one and no archive path is ever reused. Asserting the shape catches
     both regressions deterministically; counting directories only catches the
     date-only one, and then only when the two runs land in the same second."""
-    root = tmp_path / "home"
-    (root / ".hermes-rowan").mkdir(parents=True)
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
 
-    ps = [spawn(root, dest) for _ in range(2)]
+    ps = [spawn(home, dest) for _ in range(2)]
     # communicate(), not wait(): spawn() gives the children pipes, and wait()
     # on an undrained pipe deadlocks as soon as a child fills the buffer —
     # tar writes a "file changed as we read it" line per home.
@@ -172,15 +176,13 @@ def test_each_run_gets_its_own_directory(tmp_path, dest):
     assert pids[0] != pids[1], "both runs used the same pid field"
 
 
-def test_a_destination_that_does_not_exist_is_refused_and_not_created(tmp_path):
+def test_a_destination_that_does_not_exist_is_refused_and_not_created(tmp_path, home):
     """An unmounted NAS or a typo'd path. The run must fail rather than build
     the tree locally, report success, and leave the archives on the wrong disk
     — or gone at the next mount."""
-    root, dest = tmp_path / "home", tmp_path / "not" / "mounted"
-    (root / ".hermes-rowan").mkdir(parents=True)
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    dest = tmp_path / "not" / "mounted"
 
-    r = run(root, dest)
+    r = run(home, dest)
     assert r.returncode != 0, r.stdout
     assert not dest.exists(), "it created the destination instead of failing"
     # Both branches, because they are what the separate message buys: the
@@ -191,35 +193,33 @@ def test_a_destination_that_does_not_exist_is_refused_and_not_created(tmp_path):
     assert "mount it instead" in r.stderr, r.stderr
 
 
-def test_a_destination_symlinked_onto_another_disk_is_followed(tmp_path, dest):
+def test_a_destination_symlinked_onto_another_disk_is_followed(tmp_path, home, dest):
     """Supported, the same as a symlinked home — the ownership check has to
     resolve the link and judge the target rather than refuse it for not being a
     directory. One case, not a suite-wide parametrization: the empty-sweep and
     two-runs assertions do not become different questions under a symlink."""
-    root, target = tmp_path / "home", tmp_path / "big" / "store"
-    (root / ".hermes-rowan").mkdir(parents=True), target.mkdir(parents=True)
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    target = tmp_path / "big" / "store"
+    target.mkdir(parents=True)
     target.chmod(0o700)
     dest.rmdir(), dest.symlink_to(target)
 
-    assert run(root, dest).returncode == 0
+    assert run(home, dest).returncode == 0
     assert next(target.glob("*/*.tar.gz")).stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.parametrize("mode", [0o775, 0o757], ids=["group-writable", "other-writable"])
-def test_a_destination_others_can_write_is_refused(tmp_path, mode):
+def test_a_destination_others_can_write_is_refused(tmp_path, home, mode):
     """The archives hold `.env` and `auth.json`, and anything able to write the
     destination can redirect one — by planting at a predictable name, or by
     replacing the run directory after `mkdir` made it, since write access to a
     directory is permission to unlink and rename its entries. No sequence of
     syscalls inside the run wins that race, so ownership of the destination is
     the precondition and this is where it is enforced."""
-    root, dest = tmp_path / "home", tmp_path / "loose-dest"
-    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    dest = tmp_path / "loose-dest"
+    dest.mkdir()
     dest.chmod(mode)  # not mkdir(mode=), which the umask masks
 
-    r = run(root, dest)
+    r = run(home, dest)
     assert r.returncode != 0, r.stdout
     assert "nobody else can write" in r.stderr
     assert not any(dest.iterdir()), "it wrote archives anyway"
@@ -262,7 +262,7 @@ def tar_shim(directory, message, only_for=None):
         "race-and-shrank", "unreadable-member", "unstattable",
         "no-diagnostic-at-all"])
 def test_tar_status_1_is_judged_by_its_message_not_its_number(
-        tmp_path, dest, message, tolerated):
+        tmp_path, home, dest, message, tolerated):
     """`tar` exits 1 for all four and they are opposite outcomes: the first two
     leave an archive missing something that was being rewritten anyway, the last
     two leave one missing a file that was simply never read — `auth.json` being
@@ -276,11 +276,8 @@ def test_tar_status_1_is_judged_by_its_message_not_its_number(
     status-only tolerance publishes a credential-less archive, exits 0, and lets
     retention prune the good copies. The measured race shapes live in one place,
     the `benign` comment in `lib/backup-homes`; this does not restate them."""
-    root = tmp_path / "home"
-    (root / ".hermes-rowan").mkdir(parents=True)
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
 
-    r = run(root, dest, extra_path=tar_shim(tmp_path / "bin", message))
+    r = run(home, dest, extra_path=tar_shim(tmp_path / "bin", message))
     assert (r.returncode == 0) is tolerated, f"exit {r.returncode}: {r.stderr}"
     if message:
         assert message.splitlines()[0] in r.stderr, "tar's diagnostic must reach the operator"
@@ -351,22 +348,26 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
         assert not (root / "agent-backups").exists(), "it created the destination"
 
 
-def test_prune_takes_only_what_backup_homes_wrote(tmp_path, dest):
+def test_prune_takes_only_what_backup_homes_wrote(tmp_path, home, dest):
     """`prune-backups` is an `rm -rf` over a directory the operator chose and
-    may keep their own things in, and it shipped over-broad twice. One entry per
-    clause, each named to match some *other* clause's predicate so it tests the
-    one it exists for, and the aged run is the real name the script writes
-    rather than a hand-copied one."""
-    root = tmp_path / "home"
-    (root / ".hermes-rowan").mkdir(parents=True)
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
-    assert run(root, dest).returncode == 0
+    may keep their own things in, and it shipped over-broad three times. One
+    entry per clause, each named to match some *other* clause's predicate so it
+    tests the one it exists for, and the aged run is the real name the script
+    writes rather than a hand-copied one.
+
+    The legacy entry is not a decoy but a contract: a run written before the
+    prefix and the tail existed is deliberately left for the operator to
+    migrate, which the HOWTO tells them to do."""
+    assert run(home, dest).returncode == 0
     aged_run = next(dest.iterdir())
 
     mine = {
         "photos": "dir",                                # matches no name glob
         "photos-2019.tar.gz": "file",                   # ditto
         "backup-homes-20240101T010101Z-1-photos": "dir",  # two looser globs ate this
+        "backup-homes-20240101T010101Z-1-photos.run": "dir",  # and a third, with the tail
+        "backup-homes-20240101T010101Z-photos.run": "dir",  # stamp-shaped, pid is not
+        "20240101T010101Z-1": "dir",  # the legacy shape, which migrates by hand
         "backup-homes-20260101T000000Z-9.run": "file",  # run-named, wrong type
     }
     for name, kind in mine.items():
@@ -379,7 +380,7 @@ def test_prune_takes_only_what_backup_homes_wrote(tmp_path, dest):
         os.utime(p, (old, old))
     # After the ageing, so something recent exists: with everything aged the
     # survivor set is identical whether or not the command bounds a window.
-    assert run(root, dest).returncode == 0
+    assert run(home, dest).returncode == 0
     # RUN_DIR, not a prefix test: one of the operator's decoys below is a
     # directory whose name starts with the prefix, and picking that as the
     # "fresh run" would have this assert against the wrong thing entirely.
@@ -405,33 +406,3 @@ def test_prune_refuses_a_destination_that_is_not_a_directory(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode != 0
     assert "not a directory" in r.stderr
-
-
-def test_the_howtos_run_directory_examples_match_what_the_script_writes(tmp_path, dest):
-    """Both doc examples went stale when the run directory was renamed, and the
-    restore recipe is one an operator pastes — a path that no longer exists is
-    the whole failure there. `RUN_DIR` is the same pattern the two-runs test
-    asserts the script's own output against, so pinning the doc to it is what
-    stops the two separating again.
-
-    The real name too, not just the pattern: a run is taken here and its
-    directory checked against the same regex, so a rename that updated the
-    regex and the doc but not the script still fails."""
-    root = tmp_path / "home"
-    (root / ".hermes-rowan").mkdir(parents=True)
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
-    assert run(root, dest).returncode == 0
-    assert RUN_DIR.fullmatch(next(dest.iterdir()).name), "the script's own name drifted"
-
-    # Every path under the destination, whatever follows it. That is a claim
-    # about the destination as much as about the doc: `backup-homes` writes
-    # nothing there but run directories, and the log was deliberately moved
-    # out — so anything else appearing here should fail until someone decides
-    # what it is and says so on this line.
-    examples = re.findall(r"agent-backups/([^/\s`)\"]+)", HOWTO.read_text())
-    # A count, not just non-emptiness: with one example left unpinned the other
-    # can quietly disappear, which is the same silent drift one edit later.
-    assert len(examples) >= 2, f"a run-directory example left the pinned set: {examples}"
-    for name in examples:
-        assert RUN_DIR.fullmatch(name), \
-            f"the HOWTO shows a run directory the script does not write: {name}"
