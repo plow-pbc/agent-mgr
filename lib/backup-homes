@@ -24,13 +24,19 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     name="$(basename "$home")"
     # Straight to the final name. Staging through a temp file and renaming would
     # stop a killed run leaving a truncated archive under a valid name -- but
-    # that protection cost five defect classes across two PRs (shared temp path
-    # publishing another run's bytes, unbounded orphan leaks, a sweep that
-    # aborted good runs, signal handlers that swallowed SIGTERM, and a window
-    # between creating the temp file and arming its trap). With nightly runs and
-    # 14-day retention a truncated archive sits among ~13 good ones and is
-    # replaced the next night, so the retention window already covers what
-    # staging was defending. docs/HOWTO.md says so in one sentence.
+    # that protection cost four defect classes across two PRs: unbounded orphan
+    # leaks, a sweep that aborted good runs, signal handlers that swallowed
+    # SIGTERM, and a window between creating the temp file and arming its trap.
+    #
+    # Two things it also gave up, both accepted deliberately and both written
+    # down for the operator in docs/HOWTO.md rather than engineered around:
+    # a killed run leaves a truncated archive that nothing replaces (the names
+    # are date-stamped, so it persists as the NEWEST until retention prunes it),
+    # and two runs overlapping in TIME both open this path O_TRUNC and splice
+    # two gzip streams into one inode. The second is not a cost of dropping
+    # staging so much as one staging happened to prevent -- unique names made
+    # rename(2) the atomic publish -- and it is named here so the next reader
+    # knows it is live rather than absent.
     #
     # `-C "$home" .`, not `-C <parent> <basename>`: a home symlinked onto a
     # bigger disk is supported, and from the parent tar stores that symlink AS a
