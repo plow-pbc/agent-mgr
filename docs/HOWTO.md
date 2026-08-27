@@ -118,50 +118,51 @@ night's.
 
 ### Restoring one
 
+**Move the existing home aside first, yourself.** The recipe deliberately does
+not do it for you: naming that copy is a decision, and three attempts at
+automating it each produced a worse hazard than the last — a name inside the
+nightly's `~/.hermes*` glob (so the cron archived a dead home as live), a fixed
+name that moved the home *inside* the previous copy on a re-run, and a unique
+name the operator could not refer to from a later shell. Put it wherever you
+will remember, outside `~/.hermes*`.
+
 ```sh
 a=~/agent-backups/hermes-rowan-20260826.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down rowan \
   && home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p') \
-  && aside="$(dirname "$home")/restoring-$(basename "$home")-$(date -u +%s)" \
-  && mv "$home" "$aside" \
-  && mkdir -p "$home" \
+  && mkdir "$home" \
   && tar -C "$home" -xzf "$a" \
   && agent-mgr restore rowan \
   && agent-mgr up rowan
 ```
+
+`mkdir`, not `mkdir -p`: it fails with `File exists` if the home is still there,
+which is the emptiness check for free. `tar -xzf` overlays rather than replaces,
+so unpacking over a live home would leave every file the archive does not
+contain — including the `-wal` and `-shm` sidecars of the very session databases
+you are rolling back.
 
 **The archive is bound once** because the prose above tells you to change it —
 edit only the `tar` line and `gzip -t` validates a different file, which stops
 nothing.
 
 One `&&` chain, not `set -e`: this is a paste-into-your-shell block, and
-`errexit` in an interactive shell closes the session on the first failure —
-over SSH, taking the error you need to read with it. It starts at `gzip -t`
-because a bad archive has to stop the restore *before* `mv` empties the home,
-and `down` is the second link because the veto can legitimately refuse: it runs
-the agent's `AGENT_PRE_TRANSITION` hook, and the rentals agent declines to stop
-mid-ingest by design.
+`errexit` in an interactive shell closes the session on the first failure — over
+SSH, taking the error you need to read with it. It starts at `gzip -t` because a
+bad archive has to stop the restore before anything else runs, and `down` is in
+the chain because the veto can legitimately refuse: it runs the agent's
+`AGENT_PRE_TRANSITION` hook, and the rentals agent declines to stop mid-ingest
+by design.
 
-The target must be **empty**: `tar -xzf` overlays rather than replaces, so
-unpacking over a live home leaves every file the archive does not contain —
-including the `-wal` and `-shm` sidecars of the very session databases you are
-rolling back. The archive is contents-rooted (`./` entries), which is why it
-needs `-C` and cannot splat into `$HOME`; `logs/`, `cache/` and
-`lazy-packages/` are excluded from it and are not recreated, which is expected
-rather than a truncated archive.
+The archive is contents-rooted (`./` entries), which is why it needs `-C` and
+cannot splat into `$HOME`; `logs/`, `cache/` and `lazy-packages/` are excluded
+from it and are not recreated, which is expected rather than a truncated
+archive.
 
-Keep `$aside` until the restore is verified, then delete it. Its name is
-deliberate: the `restoring-` prefix keeps it out of the nightly's `~/.hermes*`
-glob, which would otherwise archive a dead home as though it were live, and the
-timestamp stops a second attempt moving the new home *inside* the first. **If the chain
-stops part-way, look before undoing anything** — the stop may have come before
-the `mv`, in which case `$home` is still your live home.
-
-**If `$home` is a symlink** — supported, though nothing uses it today — none of
-the above is safe as written: `mv` moves the link rather than its target, and
-the restore then lands on the wrong volume. Resolve it with `readlink -f` and
-operate on the target instead.
+**If `$home` is a symlink** — supported, though nothing uses it today — move and
+recreate its *target*, not the link: `readlink -f` resolves it. Moving the link
+leaves the restore landing on the wrong volume.
 
 ## Two layers: where does my code go?
 
