@@ -14,29 +14,20 @@
 set -euo pipefail
 dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
-# Before anything is created. These archives hold .env and auth.json, and tar
-# honours the umask -- the first ones taken here by hand came out 0664.
+# These archives hold .env and auth.json, and tar honours the umask only when it
+# CREATES the file -- writing over an existing 0644 path keeps 0644, measured. The
+# timestamped name below is what guarantees a fresh path every run, so the two
+# together are the 0600, not the umask alone.
 umask 077
 
 n=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
     name="$(basename "$home")"
-    # Straight to the final name. Staging through a temp file and renaming would
-    # stop a killed run leaving a truncated archive under a valid name -- but
-    # that protection cost four defect classes across two PRs: unbounded orphan
-    # leaks, a sweep that aborted good runs, signal handlers that swallowed
-    # SIGTERM, and a window between creating the temp file and arming its trap.
-    #
-    # Two things it also gave up, both accepted deliberately and both written
-    # down for the operator in docs/HOWTO.md rather than engineered around:
-    # a killed run leaves a truncated archive that nothing replaces (the names
-    # are date-stamped, so it persists as the NEWEST until retention prunes it),
-    # and two runs overlapping in TIME both open this path O_TRUNC and splice
-    # two gzip streams into one inode. The second is not a cost of dropping
-    # staging so much as one staging happened to prevent -- unique names made
-    # rename(2) the atomic publish -- and it is named here so the next reader
-    # knows it is live rather than absent.
+    # Straight to the final name -- staging introduced more failure modes than it
+    # prevented here, and the rejected shapes are in this branch's history.
+    # docs/HOWTO.md § "What an archive is worth" owns the operator-facing
+    # limits; keep the two in step.
     #
     # `-C "$home" .`, not `-C <parent> <basename>`: a home symlinked onto a
     # bigger disk is supported, and from the parent tar stores that symlink AS a
@@ -58,7 +49,7 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # ${name#.} so the archives are visible to a plain `ls` -- a backup nobody
     # can see is one nobody checks.
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
-        -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%d).tar.gz" . \
+        -C "$home" -czf "$dest/${name#.}-$(date -u +%Y%m%dT%H%M%SZ).tar.gz" . \
         || [ $? -eq 1 ]
     n=$((n + 1))
 done

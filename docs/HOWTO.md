@@ -107,10 +107,16 @@ SQLite session database is the one written continuously. Refusing that status
 would fail the nightly every night, so it is a trade: for a consistent copy,
 `agent-mgr down <name>` first.
 
-Two further ways the archive *container* can go wrong, both accepted: a killed
-run leaves a truncated archive, and two runs overlapping in time splice into one
-file. Neither is repaired — names are date-stamped, so nothing overwrites a bad
-archive and it stays the **newest** until retention prunes it at 14 days.
+One further way the archive *container* can go wrong: a killed run leaves a
+truncated archive. Nothing repairs or replaces it — archive names carry a UTC
+timestamp, so every run writes a **new** file and the truncated one stays the
+newest until retention prunes it at 14 days.
+
+That timestamp is doing two other jobs. It means two runs can never share a path,
+so they cannot splice into one file; and it guarantees `tar` always *creates* the
+archive, which is the only time it honours the umask — writing over an existing
+`0644` path would keep `0644`, measured. Running the command twice in a day is
+therefore safe and simply produces two archives.
 
 `gzip -t <archive>` tests the container and nothing else: a mid-rewrite archive
 passes it cleanly. So check before restoring, and fall back to the previous
@@ -135,7 +141,7 @@ it.
 Step 1 — verify the archive, stop the agent, resolve the home:
 
 ```sh
-a=~/agent-backups/hermes-rowan-20260826.tar.gz \
+a=~/agent-backups/hermes-rowan-20260826T040112Z.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down rowan \
   && home=$(readlink -f "$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p')") \
