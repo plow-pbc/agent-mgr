@@ -404,25 +404,27 @@ def test_prune_takes_runs_and_nothing_beside_them(tmp_path, home, dest):
     assert not boundary.exists(), "it kept a run at the retention boundary"
 
 
-def test_prune_reaches_runs_when_the_child_is_itself_a_symlink(tmp_path, home, dest):
-    """`mkdir -p` and `chmod` both succeed quietly when `backup-homes/` is
-    already a symlink, so an operator can point it at another disk — a natural
-    variant of the symlinked destination the HOWTO invites. Under `find`'s
-    default `-P` a symlinked *starting point* is not descended, `-mindepth 1`
-    matches nothing, and retention exits 0 having pruned nothing, forever."""
+def test_a_symlinked_runs_child_is_refused_by_both_halves(tmp_path, home, dest):
+    """Supporting it would reopen the class the child exists to close: a link
+    the operator pointed at a disk that already holds their things puts those
+    things *inside* the namespace, where retention deletes any directory older
+    than the window. `mkdir -p` and `chmod` both succeed quietly on a link, so
+    the backup half would adopt and re-mode the target too.
+
+    Refusing costs nothing — the *destination* may be a symlink, which is how
+    runs reach a bigger disk in the first place."""
     target = tmp_path / "elsewhere"
-    target.mkdir()
-    target.chmod(0o700)
+    (target / "photos").mkdir(parents=True)
+    old = time.time() - 20 * 86400
+    os.utime(target / "photos", (old, old))
     (dest / "backup-homes").symlink_to(target)
 
-    assert run(home, dest).returncode == 0
-    aged = next(target.iterdir())
-    old = time.time() - 20 * 86400
-    os.utime(aged, (old, old))
-
-    assert subprocess.run([str(CLI), "prune-backups", str(dest), "14"],
-                          capture_output=True, text=True).returncode == 0
-    assert not aged.exists(), "it silently pruned nothing through the symlink"
+    r = run(home, dest)
+    assert r.returncode != 0 and "is a symlink" in r.stderr, r.stderr
+    p = subprocess.run([str(CLI), "prune-backups", str(dest), "14"],
+                       capture_output=True, text=True)
+    assert p.returncode != 0 and "is a symlink" in p.stderr, p.stderr
+    assert (target / "photos").exists(), "it deleted through the link anyway"
 
 
 @pytest.mark.parametrize("days", ["-1", "0", "00", "14 -o -true", "abc", "1.5"],

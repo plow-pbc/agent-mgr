@@ -51,6 +51,10 @@ umask 077
 # resolution, and two runs that did collide fail loudly at `mkdir` rather than
 # writing over each other.
 runs="$dest/backup-homes"
+# Refused here too, and for the same reason `prune-backups` refuses it: `mkdir
+# -p` and `chmod` both succeed quietly on an existing link, so this would
+# silently adopt -- and re-mode -- whatever it points at.
+[ -L "$runs" ] && { echo "backup-homes: $runs is a symlink -- point $dest at another disk instead" >&2; exit 1; }
 mkdir -p "$runs"
 chmod 700 "$runs"
 run="$runs/$(date -u +%Y%m%dT%H%M%SZ)-$$"

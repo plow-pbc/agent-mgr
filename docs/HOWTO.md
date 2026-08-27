@@ -240,9 +240,10 @@ pruned — move any you have into `backup-homes/`, once, or delete them.
 `prune-backups` is its own command rather than a `find` written out here: it is
 an `rm -rf`, it shipped over-broad three times while it lived in this file, and
 the only way to test it here was to parse the snippet back out and re-run it.
-Its reasoning is at `lib/prune-backups`. The day count must be a whole number
-and is checked — it lands inside `find`'s own expression, where `-1` becomes
-`-mtime +-1`, which matches *fresh* directories.
+Its reasoning is at `lib/prune-backups`. The day count must be a whole number of
+**at least 1**, and is checked, because it lands inside `find`'s own expression:
+`-1` becomes `-mtime +-1`, which matches *fresh* directories, and `0` would
+delete the run written seconds earlier in the same line.
 
 The `&&` comes first in importance: retention runs only if the backup it is
 pruning *for* succeeded. Split that into two crontab lines, or use `;`, and a

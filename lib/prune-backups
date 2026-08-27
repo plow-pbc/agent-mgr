@@ -30,6 +30,12 @@ esac
 # answering it again.
 runs="$dest/backup-homes"
 [ -d "$runs" ] || { echo "prune-backups: no runs at $runs -- if $dest is a mount point, it is not mounted" >&2; exit 1; }
+# And it must be a real directory, not a link. A link the operator made onto a
+# disk that already holds their things puts those things inside the namespace,
+# where this deletes any directory older than $days -- which is the class the
+# child exists to close, reopened one indirection out. Refusing costs nothing:
+# the DESTINATION may be a symlink, which is how runs reach a bigger disk.
+[ -L "$runs" ] && { echo "prune-backups: $runs is a symlink -- point $dest at another disk instead, so the runs directory stays one nothing else lives in" >&2; exit 1; }
 
 # `! -mtime -N` rather than `-mtime +N`: `+N` means STRICTLY more than N full
 # days, so it keeps a fifteenth daily run under a documented fourteen --
@@ -40,10 +46,8 @@ runs="$dest/backup-homes"
 # archives, so nothing below one can match `-type d` anyway -- but this is an
 # `rm -rf` and it costs nothing to say how deep it may reach.
 #
-# `-H` after all. I had reasoned that the starting point is a directory this
-# tool creates and so is never a symlink -- but nothing enforces that, and
-# `mkdir -p` and `chmod` both succeed quietly when `$dest/backup-homes` already
-# IS a symlink onto another disk, which is a natural variant of the symlinked
-# destination the HOWTO invites. Under the default `-P` that makes `-mindepth 1`
-# match nothing, so retention exits 0 having pruned nothing, forever.
-find -H "$runs" -mindepth 1 -maxdepth 1 -type d ! -mtime "-$days" -exec rm -rf {} +
+# No `-H`, because the check above now enforces what an earlier version of this
+# comment merely asserted: the starting point is a real directory. A symlinked
+# DESTINATION still works -- the link is then an interior component, and `find`
+# follows those regardless.
+find "$runs" -mindepth 1 -maxdepth 1 -type d ! -mtime "-$days" -exec rm -rf {} +
