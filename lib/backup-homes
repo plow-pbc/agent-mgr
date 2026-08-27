@@ -14,10 +14,6 @@
 set -euo pipefail
 dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
-# Before anything is created. These archives hold .env and auth.json, and tar
-# honours the umask -- the first ones taken here by hand came out 0664.
-umask 077
-
 n=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
@@ -60,6 +56,13 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # lifecycle, and #22 spent five rounds proving that costs more than it saves
     # at one operator on one host.
     out="$dest/${name#.}-$(date -u +%Y%m%d).tar.gz"
+    # mktemp owns the 0600 that keeps these archives -- which hold .env and
+    # auth.json -- unreadable by other local accounts: mkstemp(3) creates at
+    # 0600, `tar -czf` truncates that inode without changing its mode, and `mv`
+    # within one directory is rename(2), which preserves it. A `umask 077` here
+    # would be dead: umask can only CLEAR bits, never add them, and nothing else
+    # in this script creates a file. (The first archives taken by hand, before
+    # any staging existed, came out 0664 -- that is the failure this replaced.)
     stage="$(mktemp "$dest/.${name#.}-XXXXXX")"
     trap 'rm -f "$stage"' EXIT
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \

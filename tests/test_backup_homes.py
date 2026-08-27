@@ -48,9 +48,12 @@ def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path):
 
 
 def test_the_archives_are_not_readable_by_other_accounts(tmp_path):
-    """They hold .env and auth.json. tar honours the umask, so without one they
-    land 0644 — or 0664 on a host with a laxer default, which is what happened
-    the first time these were taken by hand."""
+    """They hold .env and auth.json, so they must not be readable by other local
+    accounts. The property is owned by the staging mechanism — mktemp creates at
+    0600 and tar/mv preserve it — so this cannot fail while that holds, and that
+    is the point: it fires the moment someone changes how the archive is
+    created. The forced `umask 022` in run() is what makes it fire, by removing
+    the runner's own umask as a second source of the guarantee."""
     root, dest = tmp_path / "home", tmp_path / "dest"
     (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
     (root / ".hermes-rowan" / ".env").write_text("x\n")
