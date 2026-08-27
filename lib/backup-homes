@@ -17,29 +17,31 @@
 set -euo pipefail
 dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
-# These archives hold .env and auth.json, and tar honours the umask only when it
-# CREATES the file: writing over an existing 0644 keeps 0644, measured. So the
-# 0600 needs the file to be new every time, which is what noclobber guarantees
-# -- it makes each open below O_EXCL, refusing a path that exists AND refusing
-# to follow a symlink planted at one. Measured on all three shapes, including a
-# DANGLING symlink, which creates nothing at its target.
+# One directory per run, and it is what makes the archives safe. $dest is
+# operator-chosen and the docs say "not this disk", so it may be a mount
+# something else can write; an archive name there is predictable, and tar
+# honours the umask only when it CREATES a file -- writing over an existing
+# 0644 keeps 0644, measured. `mkdir` is one atomic syscall that refuses a path
+# that already exists and never follows a symlink at the final component:
+# measured against a planted symlink, a FIFO and an existing directory. Nothing
+# can be waiting inside a directory that did not exist until we made it 0700.
 #
-# $dest is operator-chosen and the docs say "not this disk", so it may be a
-# mount another account can write. The name below is predictable -- a UTC
-# second and a readable pid -- and without O_EXCL that account could plant a
-# symlink to redirect an archive holding .env and auth.json, or pre-create the
-# path 0644 for tar to reuse. It also makes a same-second collision a loud
-# failure rather than two runs splicing into one file.
+# `noclobber` was tried here and is not enough: bash only applies O_EXCL when
+# the target does not exist, so a planted FIFO -- or a symlink to one -- is
+# opened and written through. Measured: the payload reached a reader on the
+# other side, and with no reader the open blocks forever.
+#
+# It carries the uniqueness too. The pid is there because the stamp is only
+# second-resolution, and two runs that did collide fail loudly at `mkdir`
+# rather than writing over each other.
 umask 077
-set -o noclobber
+run="$dest/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+mkdir "$run"
 
 n=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
     name="$(basename "$home")"
-    # Straight to the final name: staging introduced more failure modes than it
-    # prevented; plow-pbc/agent-mgr#34 has the rejected shapes.
-    #
     # `-C "$home" .`, not `-C <parent> <basename>`: a home symlinked onto a
     # bigger disk is supported, and from the parent tar stores that symlink AS a
     # symlink -- exit 0, one entry, no credentials in the archive at all.
@@ -50,10 +52,14 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     #
     # The excludes are most of the bytes and none of the value -- 1.5 GB of
     # homes becomes 439 MB; ${name#.} so a plain `ls` shows the archives.
-    exec 3> "$dest/${name#.}-$(date -u +%Y%m%dT%H%M%SZ)-$$.tar.gz"
+    #
+    # Straight to the final name: the run directory is private already, so there
+    # is nothing left for a stage to protect. Staging was tried and introduced
+    # more failure modes than it prevented -- plow-pbc/agent-mgr#34 has the
+    # rejected shapes.
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
-        -C "$home" -czf - . >&3 || [ $? -eq 1 ]
-    exec 3>&-
+        -C "$home" -czf "$run/${name#.}.tar.gz" . \
+        || [ $? -eq 1 ]
     n=$((n + 1))
 done
 

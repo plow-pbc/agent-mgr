@@ -201,13 +201,26 @@ It globs `~/.hermes*` rather than reading the registry, so it does not depend on
 a row being current and it catches a home whose agent is mid-migration. A home
 declared *outside* `~/.hermes*` would not be archived, silently, while the run
 still reported success on the others — nothing does that today. It skips
-`logs/`, `cache/` and `lazy-packages/` — 1.5 GB of homes becomes ~440 MB — and
-writes mode-0600 archives, because they hold credentials.
+`logs/`, `cache/` and `lazy-packages/` — 1.5 GB of homes becomes ~440 MB.
 
-Nightly, with 14 days kept:
+Each run gets its own directory, named for the UTC second and the pid:
+
+```
+~/agent-backups/20260827T040112Z-4171/hermes-errands.tar.gz
+```
+
+That directory is mode 0700 and the archives inside it 0600, because they hold
+`auth.json` and the dotenv. It is also the reason the destination can be a
+shared mount: `mkdir` is one atomic syscall that refuses a path that already
+exists and never follows a symlink, so nothing can be lying in wait inside a
+directory that did not exist until the run made it. (`noclobber` on the archive
+itself is *not* enough — bash applies `O_EXCL` only when the target is absent,
+so a planted FIFO gets opened and written through. Measured.)
+
+Nightly, with 14 days kept — the run directory is the unit to prune:
 
 ```sh
-0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find ~/agent-backups -name '*.tar.gz' -mtime +14 -delete
+0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find ~/agent-backups -mindepth 1 -maxdepth 1 -type d -mtime +14 -exec rm -rf {} +
 ```
 
 ### What an archive is worth
@@ -221,17 +234,9 @@ would fail the nightly every night, so it is a trade: for a consistent copy,
 `agent-mgr down <name>` first.
 
 One further way the archive *container* can go wrong: a killed run leaves a
-truncated archive. Nothing repairs or replaces it — archive names carry a UTC
-timestamp, so every run writes a **new** file and the truncated one stays the
-newest until retention prunes it at 14 days.
-
-That name is doing one other job: the timestamp is second-resolution, so it
-carries the pid too, and no two runs share a path. The *guarantee* is
-`noclobber` rather than the name — each archive is opened `O_EXCL`, so a path
-that already exists, or a symlink planted at one by anything else with write
-access to the destination, is a loud failure instead of a redirected archive or
-a reused `0644` file. Running the command twice in a day is safe and simply
-produces two archives.
+truncated archive. Nothing repairs or replaces it — every run writes into a new
+directory, so the truncated one stays the newest until retention prunes it at 14
+days. Running the command twice in a day is safe and simply produces two runs.
 
 `gzip -t <archive>` tests the container and nothing else: a mid-rewrite archive
 passes it cleanly. So check before restoring, and fall back to the previous
@@ -245,7 +250,7 @@ hazard than the last.
 Step 1 — verify the archive, stop the agent, resolve the home:
 
 ```sh
-a=~/agent-backups/hermes-errands-20260826T040112Z-4171.tar.gz \
+a=~/agent-backups/20260826T040112Z-4171/hermes-errands.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down errands \
   && home=$(readlink -f "$(agent-mgr resolve errands | sed -n 's/^AGENT_HOME=//p')") \
