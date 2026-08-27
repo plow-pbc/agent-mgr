@@ -275,6 +275,15 @@ macOS exits 0 for it and uses 1 for the unreadable member — both measured.
 One home failing does not stop the others: the run archives what it can and then
 exits non-zero, so the cron's `&&` still holds retention back.
 
+**That gate is not free, and it is the thing to watch.** A home that fails
+*every* night — a permission problem nobody fixes, a diagnostic not yet on the
+benign list — makes every run exit non-zero, so the prune never runs and the
+14 days below stops being true. The destination then grows by a full sweep a
+night until the disk fills, at which point every home starts failing. From the
+outside it looks healthy the whole time: a new run directory each night with
+current archives in it. The signal is the `tar failed on <home>` line in cron's
+output, and it is the only one.
+
 One further way the archive *container* can go wrong: a killed run leaves a
 truncated archive. Nothing repairs or replaces it — every run writes into a new
 directory, so the truncated one stays the newest until retention prunes it at 14
