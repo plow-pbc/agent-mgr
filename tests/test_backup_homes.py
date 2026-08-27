@@ -15,7 +15,7 @@ import pytest
 
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 HOWTO = Path(__file__).resolve().parent.parent / "docs" / "HOWTO.md"
-RUN_DIR = re.compile(r"backup-homes-\d{8}T\d{6}Z-\d+\.run")
+RUN_DIR = re.compile(r"\d{8}T\d{6}Z-\d+")
 
 
 def run_documented_cron(home, sandbox, extra_path=None):
@@ -123,7 +123,7 @@ def test_a_symlinked_home_is_archived_and_the_bulk_is_not(tmp_path, dest):
     (target / "logs" / "bulk").write_text("x" * 4096)
 
     assert run(root, dest).returncode == 0
-    inside = set(tarfile.open(next(dest.glob("*/*.tar.gz"))).getnames())
+    inside = set(tarfile.open(next(dest.glob("backup-homes/*/*.tar.gz"))).getnames())
     assert "./.env" in inside, f"the symlink was stored, not followed: {inside}"
     assert not any("logs" in m for m in inside)
 
@@ -138,7 +138,7 @@ def test_neither_the_run_directory_nor_the_archives_are_readable_by_others(home,
     the script's guarantee and not the host's."""
 
     assert run(home, dest).returncode == 0
-    archive = next(dest.glob("*/*.tar.gz"))
+    archive = next(dest.glob("backup-homes/*/*.tar.gz"))
     for path in (archive, archive.parent):
         mode = path.stat().st_mode & 0o777
         assert mode & 0o077 == 0, f"{path.name} is {oct(mode)}"
@@ -168,9 +168,9 @@ def test_each_run_gets_its_own_directory(home, dest):
     outs = [p.communicate() for p in ps]
     assert [p.returncode for p in ps] == [0, 0], outs
 
-    names = sorted(d.name for d in dest.iterdir())
+    names = sorted(d.name for d in (dest / "backup-homes").iterdir())
     assert len(names) == 2, f"two runs shared a directory: {names}"
-    pat = re.compile(r"backup-homes-\d{8}T\d{6}Z-(\d+)\.run")
+    pat = re.compile(r"\d{8}T\d{6}Z-(\d+)")
     pids = [pat.fullmatch(n).group(1) for n in names if pat.fullmatch(n)]
     assert len(pids) == 2, f"run directories lost their timestamp-pid shape: {names}"
     assert pids[0] != pids[1], "both runs used the same pid field"
@@ -204,7 +204,7 @@ def test_a_destination_symlinked_onto_another_disk_is_followed(tmp_path, home, d
     dest.rmdir(), dest.symlink_to(target)
 
     assert run(home, dest).returncode == 0
-    assert next(target.glob("*/*.tar.gz")).stat().st_mode & 0o077 == 0
+    assert next(target.glob("backup-homes/*/*.tar.gz")).stat().st_mode & 0o077 == 0
 
 
 @pytest.mark.parametrize("mode", [0o775, 0o757], ids=["group-writable", "other-writable"])
@@ -281,7 +281,7 @@ def test_tar_status_1_is_judged_by_its_message_not_its_number(
     assert (r.returncode == 0) is tolerated, f"exit {r.returncode}: {r.stderr}"
     if message:
         assert message.splitlines()[0] in r.stderr, "tar's diagnostic must reach the operator"
-    archives = list(dest.glob("*/*.tar.gz"))
+    archives = list(dest.glob("backup-homes/*/*.tar.gz"))
     if tolerated:
         assert archives, "a tolerated race must still leave its archive"
     else:
@@ -306,7 +306,7 @@ def test_one_failing_home_does_not_cost_the_others_their_night(tmp_path, dest):
 
     r = run(root, dest, extra_path=shim)
     assert r.returncode != 0, "a home that could not be archived must fail the run"
-    assert [p.name for p in dest.glob("*/*.tar.gz")] == ["hermes-omega.tar.gz"], \
+    assert [p.name for p in dest.glob("backup-homes/*/*.tar.gz")] == ["hermes-omega.tar.gz"], \
         "the healthy home lost its night to the broken one"
 
 
@@ -340,7 +340,7 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
     if case == "a home fails":
         assert "tar failed on" in log, f"the backup half never reached the log: {log!r}"
         assert "one or more homes were not archived" in log, log
-        assert [p.name for p in (root / "agent-backups").glob("*/*.tar.gz")] == \
+        assert [p.name for p in (root / "agent-backups").glob("backup-homes/*/*.tar.gz")] == \
             ["hermes-omega.tar.gz"], "the healthy home lost its night to the broken one"
     else:
         assert "does not exist" in log, \
@@ -348,45 +348,34 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
         assert not (root / "agent-backups").exists(), "it created the destination"
 
 
-def test_prune_takes_only_what_backup_homes_wrote(tmp_path, home, dest):
+def test_prune_takes_runs_and_nothing_beside_them(tmp_path, home, dest):
     """`prune-backups` is an `rm -rf` over a directory the operator chose and
-    may keep their own things in, and it shipped over-broad three times. One
-    entry per clause, each named to match some *other* clause's predicate so it
-    tests the one it exists for, and the aged run is the real name the script
-    writes rather than a hand-copied one.
+    keeps their own things in. Three basename grammars were written to tell the
+    two apart and each still deleted something of theirs; runs live in a private
+    child now, so what protects the operator is structure rather than a pattern.
 
-    The legacy entry is not a decoy but a contract: a run written before the
-    prefix and the tail existed is deliberately left for the operator to
-    migrate, which the HOWTO tells them to do."""
+    The aged run is the real name the script writes, not a hand-copied one."""
     assert run(home, dest).returncode == 0
-    aged_run = next(dest.iterdir())
+    runs = dest / "backup-homes"
+    aged_run = next(runs.iterdir())
 
-    mine = {
-        "photos": "dir",                                # matches no name glob
-        "photos-2019.tar.gz": "file",                   # ditto
-        "backup-homes-20240101T010101Z-1-photos": "dir",  # two looser globs ate this
-        "backup-homes-20240101T010101Z-1-photos.run": "dir",  # and a third, with the tail
-        "backup-homes-20240101T010101Z-photos.run": "dir",  # stamp-shaped, pid is not
-        "backup-homes-2024010XT010101Z-1.run": "dir",  # stamp-SHAPED, not numeric
-        "20240101T010101Z-1": "dir",  # the legacy shape, which migrates by hand
-        "backup-homes-20260101T000000Z-9.run": "file",  # run-named, wrong type
-    }
+    mine = {"photos": "dir", "photos-2019.tar.gz": "file",
+            "20240101T010101Z-1": "dir"}  # even run-shaped, it is outside the child
     for name, kind in mine.items():
         (dest / name).mkdir() if kind == "dir" else (dest / name).write_text("x\n")
-    nested = dest / "photos" / "backup-homes-20250101T000000Z-1.run"
-    nested.mkdir()  # only -maxdepth 1 keeps this
+    stray = runs / "note-to-self.txt"   # not a run; -type d leaves it alone
+    stray.write_text("why is this here\n")
+    boundary = runs / "20240101T010101Z-2"  # exactly at the window's edge
+    boundary.mkdir()
 
-    old = time.time() - 20 * 86400
-    for p in list(dest.iterdir()) + [nested]:
+    old, edge = time.time() - 20 * 86400, time.time() - 14 * 86400 - 60
+    for p in [*dest.iterdir(), *runs.iterdir()]:
         os.utime(p, (old, old))
+    os.utime(boundary, (edge, edge))
     # After the ageing, so something recent exists: with everything aged the
     # survivor set is identical whether or not the command bounds a window.
     assert run(home, dest).returncode == 0
-    # RUN_DIR, not a prefix test: one of the operator's decoys below is a
-    # directory whose name starts with the prefix, and picking that as the
-    # "fresh run" would have this assert against the wrong thing entirely.
-    fresh_run = next(p for p in dest.iterdir()
-                     if p.is_dir() and p != aged_run and RUN_DIR.fullmatch(p.name))
+    fresh_run = next(p for p in runs.iterdir() if p != aged_run)
 
     link = tmp_path / "link"           # the symlinked destination the docs invite
     link.symlink_to(dest)
@@ -395,15 +384,37 @@ def test_prune_takes_only_what_backup_homes_wrote(tmp_path, home, dest):
 
     assert not aged_run.exists(), "it kept the run it was meant to prune"
     assert fresh_run.exists(), "it took a run inside the retention window"
-    assert nested.exists(), "it descended into a directory of the operator's"
-    assert {p.name for p in dest.iterdir()} == set(mine) | {fresh_run.name}
+    assert {p.name for p in dest.iterdir()} == set(mine) | {"backup-homes"}, \
+        "it reached outside its own child"
+    assert stray.exists(), "it deleted a file that is not a run"
+    # `! -mtime -14` takes a run at exactly fourteen days; `-mtime +14` would
+    # keep it, which is a fifteenth daily archive under a documented fourteen.
+    assert not boundary.exists(), "it kept a run at the retention boundary"
 
 
-def test_prune_refuses_a_destination_that_is_not_a_directory(tmp_path):
+@pytest.mark.parametrize("days", ["-1", "14 -o -true", "abc", "1.5"],
+                         ids=["negative", "injected", "word", "fraction"])
+def test_prune_refuses_a_retention_argument_it_cannot_trust(tmp_path, home, dest, days):
+    """`days` lands inside `find`'s own expression. `-1` becomes `-mtime +-1`,
+    which GNU findutils 4.9 matches against a *fresh* directory — measured — so
+    one typo'd argument sends the whole backup set to `rm -rf`."""
+    assert run(home, dest).returncode == 0
+    before = {p.name for p in (dest / "backup-homes").iterdir()}
+    assert before, "fixture sanity: there is a run to lose"
+
+    r = subprocess.run([str(CLI), "prune-backups", str(dest), days],
+                       capture_output=True, text=True)
+    assert r.returncode != 0, r.stdout
+    assert "whole number" in r.stderr, r.stderr
+    assert {p.name for p in (dest / "backup-homes").iterdir()} == before
+
+
+def test_prune_refuses_a_destination_it_has_never_written_to(tmp_path):
     """An unmounted mount point or a typo'd path. Deleting nothing quietly is
     the wrong answer: the caller is the cron's `&&`, and a silent success there
-    reads as a completed retention."""
+    reads as a completed retention. The message names the mount case because
+    that is the one where the directory's absence is a symptom, not the fact."""
     r = subprocess.run([str(CLI), "prune-backups", str(tmp_path / "nope")],
                        capture_output=True, text=True)
     assert r.returncode != 0
-    assert "not a directory" in r.stderr
+    assert "no runs" in r.stderr and "not mounted" in r.stderr, r.stderr

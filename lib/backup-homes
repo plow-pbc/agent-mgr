@@ -38,17 +38,22 @@ dest="${1:?usage: agent-mgr backup-homes <dest>}"
 [ -n "$(find -H "$dest" -maxdepth 0 -type d -user "$(id -un)" ! -perm -g+w ! -perm -o+w 2>/dev/null)" ] \
     || { echo "backup-homes: $dest must be a directory you own that nobody else can write -- try: chmod 700 $dest" >&2; exit 1; }
 
-# One directory per run. Not a security boundary -- the check above is that --
-# but it is the uniqueness and the unit of pruning, and the name is what lets
-# `prune-backups` tell this tool's output from anything the operator keeps
-# beside it. Hence the prefix AND the suffix: a glob `*` is greedy, so
-# `backup-homes-????????T??????Z-*` still matches their
-# `backup-homes-20240101T010101Z-1-photos` -- measured, it was deleted. Ending
-# the name in `.run` is what the trailing `*` cannot eat past. The pid is there because
-# the stamp is only second-resolution, and two runs that did collide fail
-# loudly here rather than writing over each other.
+# These archives hold .env and auth.json, so nothing here may be readable by
+# another account -- the run directory, its parent, and the archives inside.
 umask 077
-run="$dest/backup-homes-$(date -u +%Y%m%dT%H%M%SZ)-$$.run"
+
+# One private child of the destination, and every run inside it. That is what
+# lets `prune-backups` be `-type d` with no name grammar at all: the operator's
+# own files live beside this directory, never in it. Three rewrites of that
+# grammar came from not having this.
+#
+# The run name still carries the pid because the stamp is only second
+# resolution, and two runs that did collide fail loudly at `mkdir` rather than
+# writing over each other.
+runs="$dest/backup-homes"
+mkdir -p "$runs"
+chmod 700 "$runs"
+run="$runs/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir "$run"
 
 # The only tar diagnostics that do not mean the archive is missing something.

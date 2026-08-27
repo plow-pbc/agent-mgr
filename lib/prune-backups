@@ -3,39 +3,41 @@
 #
 #   agent-mgr prune-backups <dest> [days]
 #
-# A command rather than a `find` in the docs, and that is the whole point. The
-# predicate is what separates this tool's own output from whatever else the
-# operator keeps beside it, every clause of it had to be measured, and it
-# shipped over-broad twice while it lived in Markdown -- where the only way to
-# test it was to parse the snippet back out and re-run it, which needed its own
-# guards against pointing an `rm -rf` at the real home. Behaviour belongs in
-# `lib/`; `agent-mgr`'s own header says so.
+# A command rather than a `find` in the docs: the predicate is an `rm -rf`, it
+# shipped over-broad three times while it lived in Markdown, and the only way to
+# test it there was to parse the snippet back out and re-run it.
 set -euo pipefail
 dest="${1:?usage: agent-mgr prune-backups <dest> [days]}"
 days="${2:-14}"
 
-[ -d "$dest" ] || { echo "prune-backups: $dest is not a directory" >&2; exit 1; }
+# `days` lands inside find's expression, so it is validated rather than trusted.
+# `-1` becomes `-mtime +-1`, which GNU findutils 4.9 happily matches against a
+# FRESH directory -- measured -- so one typo'd argument sends the whole backup
+# set to `rm -rf`.
+case "$days" in
+    ''|*[!0-9]*) echo "prune-backups: days must be a whole number, not '$days'" >&2; exit 1 ;;
+esac
 
-# Only what `backup-homes` writes. `find` narrows by name, mtime and type; the
-# shell then checks the grammar, because a glob cannot say "digits" and every
-# looser spelling has let an operator's directory through -- measured, each of
-# `[0-9]*T[0-9]*Z-[0-9]*`, `backup-homes-????????T??????Z-*` and that plus a
-# `.run` tail deleted a `…Z-1-photos` of theirs. Glob `*` is greedy; only a
-# character-by-character test ends it.
+# Everything under here is ours: `backup-homes` creates this directory and
+# writes nothing else into it. That is the whole guard, and it replaces a
+# basename grammar that was rewritten three times -- each rewrite correct, each
+# one still deleting something of the operator's, because the runs shared a
+# directory with their own files. A namespace removes the question instead of
+# answering it again.
+runs="$dest/backup-homes"
+[ -d "$runs" ] || { echo "prune-backups: no runs at $runs -- if $dest is a mount point, it is not mounted" >&2; exit 1; }
+
+# `! -mtime -N` rather than `-mtime +N`: `+N` means STRICTLY more than N full
+# days, so it keeps a fifteenth daily run under a documented fourteen --
+# measured on a 14-day-old entry, which `+14` spares and this takes.
 #
-# `-maxdepth 1` so a matching name NESTED in a directory of theirs is out of
-# reach; `-type d` so a plain file carrying a run's name is not removed
-# recursively; `-H` so a destination symlinked onto a bigger disk resolves at
-# all, without which `-mindepth 1` matches nothing and this silently prunes
-# nothing forever.
-find -H "$dest" -mindepth 1 -maxdepth 1 -type d \
-    -name 'backup-homes-*.run' -mtime "+$days" -print0 |
-while IFS= read -r -d '' dir; do
-    rest="${dir##*/}"; rest="${rest#backup-homes-}"; rest="${rest%.run}"
-    case "${rest%-*}" in
-        [0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]T[0-9][0-9][0-9][0-9][0-9][0-9]Z) ;;
-        *) continue ;;
-    esac
-    case "${rest##*-}" in ''|*[!0-9]*) continue ;; esac
-    rm -rf "$dir"
-done
+# `-type d` so a stray file in here is left for a human to look at rather than
+# deleted. `-maxdepth 1` is a bound rather than load-bearing -- a run holds only
+# archives, so nothing below one can match `-type d` anyway -- but this is an
+# `rm -rf` and it costs nothing to say how deep it may reach.
+#
+# No `-H`: the starting point is a directory this tool creates, so it is never
+# itself a symlink. A symlinked DESTINATION still works, because the link is
+# then an interior component of the path and `find` follows those regardless --
+# which is one more thing the child removed rather than answered.
+find "$runs" -mindepth 1 -maxdepth 1 -type d ! -mtime "-$days" -exec rm -rf {} +

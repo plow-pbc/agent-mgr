@@ -203,14 +203,14 @@ declared *outside* `~/.hermes*` would not be archived, silently, while the run
 still reported success on the others — nothing does that today. It skips
 `logs/`, `cache/` and `lazy-packages/` — 1.5 GB of homes becomes ~440 MB.
 
-Each run gets its own directory, named for the UTC second and the pid:
+Each run gets its own directory under `backup-homes/`, named for the UTC second and the pid:
 
 ```
-~/agent-backups/backup-homes-20260827T040112Z-4171.run/hermes-errands.tar.gz
+~/agent-backups/backup-homes/20260827T040112Z-4171/hermes-errands.tar.gz
 ```
 
-That directory is mode 0700 and the archives inside it 0600, because they hold
-`auth.json` and the dotenv.
+That directory, its `backup-homes/` parent and the archives inside are all
+closed to other accounts, because they hold `auth.json` and the dotenv.
 
 **The destination must be a directory you own that nobody else can write**, and
 the command refuses one that is not. It may be a symlink onto a bigger disk;
@@ -230,16 +230,19 @@ Nightly, with 14 days kept:
 0 4 * * * { ~/.local/bin/agent-mgr backup-homes ~/agent-backups && ~/.local/bin/agent-mgr prune-backups ~/agent-backups 14 ; } >> ~/backup-homes.log 2>&1
 ```
 
-The `backup-homes-` prefix and the `.run` tail are not decoration: they are how
-`prune-backups` tells this tool's runs from anything you keep beside them. A run
-directory written before they existed is not matched, so it is never pruned —
-rename any you have to the shape above, once, or delete them.
+Runs live in a `backup-homes/` child of your destination, and that is what keeps
+retention away from your own files: `prune-backups` deletes directories *inside*
+that child and nothing outside it, so what protects a `photos/` you keep beside
+the backups is the layout rather than a pattern that has to be right. A run
+written before the child existed sits directly in the destination and is never
+pruned — move any you have into `backup-homes/`, once, or delete them.
 
-`prune-backups` is its own command rather than a `find` written out here. That
-predicate is the difference between deleting this tool's runs and deleting
-whatever else you keep beside them; it shipped over-broad twice while it lived
-in this file, and every clause of it is reasoned at `lib/prune-backups`, where a
-test can run the real thing instead of parsing it back out of a doc.
+`prune-backups` is its own command rather than a `find` written out here: it is
+an `rm -rf`, it shipped over-broad three times while it lived in this file, and
+the only way to test it here was to parse the snippet back out and re-run it.
+Its reasoning is at `lib/prune-backups`. The day count must be a whole number
+and is checked — it lands inside `find`'s own expression, where `-1` becomes
+`-mtime +-1`, which matches *fresh* directories.
 
 The `&&` comes first in importance: retention runs only if the backup it is
 pruning *for* succeeded. Split that into two crontab lines, or use `;`, and a
@@ -308,7 +311,7 @@ hazard than the last.
 Step 1 — verify the archive, stop the agent, resolve the home:
 
 ```sh
-a=~/agent-backups/backup-homes-20260826T040112Z-4171.run/hermes-errands.tar.gz \
+a=~/agent-backups/backup-homes/20260826T040112Z-4171/hermes-errands.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down errands \
   && home=$(readlink -f "$(agent-mgr resolve errands | sed -n 's/^AGENT_HOME=//p')") \
