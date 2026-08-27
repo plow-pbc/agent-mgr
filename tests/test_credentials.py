@@ -93,8 +93,7 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
         # decoded to edit it, and \xc2\x85 is a line break to str-level
         # splitting but not to the gateway. Asserting only the first would pass
         # a surrogateescape implementation that still cut the second in half
-        # into `HOSTEX_TOKEN=a` plus a bogus `b` line -- and asserting every
-        # non-DOMO line is what makes "no line was added" fall out.
+        # into `HOSTEX_TOKEN=a` plus a bogus `b` line.
         (b"SEAM_API_KEY=caf\xe9-latin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
          (b"SEAM_API_KEY=caf\xe9-latin1", b"HOSTEX_TOKEN=a\xc2\x85b")),
     ],
@@ -129,8 +128,14 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
     # In bytes, because a key this command does not own may not be valid UTF-8.
     assert b"DOMO_DEVICE_UID=dev_abc" in body.split(b"\n")
     assert b"DOMO_MCP_TOKEN=tok_xyz" in body.split(b"\n")
-    for line in preserved:
-        assert line in body.split(b"\n"), "a byte this command does not own was rewritten"
+    # The exact surviving set, in order, not membership -- `line in lines` is
+    # satisfied however many OTHER lines are there, so a loop cannot see an
+    # ADDITION. An implementation that carried every original line through and
+    # also emitted a spurious one (a duplicated key, a stray blank from joining
+    # an already-terminated body) passed a membership check. This fails on the
+    # length for an addition and on the value for a rewritten byte.
+    survivors = tuple(l for l in body.split(b"\n") if l and not l.startswith(b"DOMO_"))
+    assert survivors == preserved, "a line this command does not own was rewritten or added"
     # One declaration each, in any spelling -- not a second appended beside the
     # one it was meant to replace, and no stale value left underneath.
     assert body.count(b"DOMO_MCP_TOKEN=") == 1

@@ -30,6 +30,7 @@ planted at `.env` is refused rather than followed, and there is never a
 container-visible staging name for a gateway to swap.
 """
 
+import errno
 import os
 import stat
 import sys
@@ -140,6 +141,9 @@ def main(argv):
         # thing that is fine) instead of the staging directory that is actually
         # wrong. Two lines to turn that into the real diagnosis, before rather
         # than after.
+        # Necessary, not sufficient -- see the EXDEV branch at the publish. This
+        # one is still worth having: it is the case where nothing is written at
+        # all, rather than written and then discarded.
         if os.fstat(dir_fd).st_dev != os.stat(staging_dir).st_dev:
             die("cannot stage a replacement for %s/.env: its parent %s is on a "
                 "different filesystem, so the replacement cannot be staged off "
@@ -171,6 +175,16 @@ def main(argv):
                 os.unlink(tmp_path)
             except OSError:
                 pass
+            if exc.errno == errno.EXDEV:
+                # st_dev cannot see this one. rename(2) refuses across mount
+                # points even when the same filesystem is mounted on both, so a
+                # BIND-mounted home -- which is how this codebase relocates
+                # things, the container mount eight lines up being one -- passes
+                # the preflight and fails here. Same diagnosis either way: it is
+                # the staging directory that is wrong, not `.env`.
+                die("cannot stage a replacement for %s/.env: its parent %s is a "
+                    "different mount point, so the replacement cannot be staged "
+                    "off the mount. %s/.env is unchanged." % (home, staging_dir, home))
             die("cannot publish %s/.env: %s" % (home, exc))
         return
     finally:
