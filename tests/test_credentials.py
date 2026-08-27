@@ -321,6 +321,10 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     stays readable, staging in the parent still succeeds, and only the rename
     into the home fails. Staging INSIDE the home instead fails earlier and
     says so differently, which is what distinguishes the two."""
+    # As root the mode bits are ignored, the rename succeeds, and this would
+    # fail on an opaque returncode assertion instead of saying why. Same
+    # convention as the unreadable-dotenv test above -- asserted, not skipped.
+    assert os.geteuid() != 0, "run the suite unprivileged; root ignores the mode bits"
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
     run("restore", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
@@ -340,3 +344,7 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     assert (home / ".env").read_bytes() == original
     # And no 0600 file holding a live token left beside the home.
     assert not list(home.parent.glob("*.set-latch.*"))
+    # The failure path is a disclosure path too: an errno message that
+    # interpolated the value would put it in a terminal and a scrollback.
+    assert "tok_xyz" not in r.stderr
+    assert "tok_xyz" not in r.stdout
