@@ -8,7 +8,7 @@ import subprocess
 import tarfile
 from pathlib import Path
 
-SCRIPT = Path(__file__).resolve().parent.parent / "lib" / "backup-homes"
+CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 
 
 def run(home_root, dest):
@@ -16,9 +16,14 @@ def run(home_root, dest):
     # and on a host that already defaults to 0077 the mode assertion below
     # passes with `umask 077` deleted from the script — silently ceasing to
     # guard the credential exposure it exists for.
-    return subprocess.run([str(SCRIPT), str(dest)], capture_output=True, text=True,
+    # Through the CLI, not the library file: `agent-mgr backup-homes` is the only
+    # installed entry point, so every assertion below crosses the dispatch arm —
+    # a dropped arm, a lost "$@", or a swallowed exit status fails the suite.
+    return subprocess.run([str(CLI), "backup-homes", str(dest)],
+                          capture_output=True, text=True,
                           preexec_fn=lambda: os.umask(0o022),
                           env={"HOME": str(home_root),
+                               "AGENT_MGR_REGISTRY": str(home_root / "registry"),
                                # The suite poisons PATH with its own docker stub
                                # and refuses any env that does not carry it.
                                "PATH": os.environ["PATH"]})
@@ -65,19 +70,3 @@ def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path)
     r = run(root, dest)
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
-
-
-def test_the_dispatch_arm_is_the_installed_entry_point(tmp_path):
-    """`agent-mgr backup-homes` is now the only installed way in — the second
-    symlink is gone — so exercising lib/backup-homes directly leaves the seam
-    every operator and the documented cron actually use untested."""
-    root, dest = tmp_path / "home", tmp_path / "dest"
-    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
-
-    r = subprocess.run([str(SCRIPT.parent.parent / "agent-mgr"), "backup-homes", str(dest)],
-                       capture_output=True, text=True,
-                       env={"HOME": str(root), "PATH": os.environ["PATH"],
-                            "AGENT_MGR_REGISTRY": str(tmp_path / "agents")})
-    assert r.returncode == 0, r.stderr
-    assert len(list(dest.glob("*.tar.gz"))) == 1
