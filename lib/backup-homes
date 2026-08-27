@@ -68,7 +68,12 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # the EXIT trap DOES run on an untrapped SIGTERM, so this is not the
     # reproduced defect it was flagged as -- but it is three words, and the
     # supported floor includes macOS bash 3.2, which cannot be tested from here.
-    trap 'rm -f "$stage"' EXIT INT TERM HUP
+    trap 'rm -f "$stage"' EXIT
+    # The signal handlers must EXIT. A bare cleanup handler catches the signal
+    # and then resumes, so the run is no longer terminable -- a systemd stop or
+    # a `timeout` kill would let it archive on and the supervisor would escalate
+    # to SIGKILL, which is precisely the case these traps exist to shrink.
+    trap 'rm -f "$stage"; exit 143' INT TERM HUP
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
         -C "$home" -czf "$stage" . \
         || [ $? -eq 1 ]
