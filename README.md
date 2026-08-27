@@ -88,6 +88,10 @@ conversations.
 | [`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | the skill and the agent are one checkout, mounted rather than pinned; the store, map and browser live on the Mac, reached through Latch |
 | [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar | the thinnest: no vault, no product surface, nothing on the Mac |
 
+Adding one here means adding it to `.knightwatch/siblings` too, or a reviewer
+of this repo cannot read it. This table is the authority; that file only makes
+these repos searchable.
+
 **A repo is not an agent — a registry row is.** Identity derives from the
 registered name rather than the directory, so a row may be named for a person
 (`sam-property`) against a repo named for a capability — and one checkout can
