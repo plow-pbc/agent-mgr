@@ -227,16 +227,14 @@ changes nothing — and a default umask of 002 makes a plain `mkdir` produce 077
 Nightly, with 14 days kept:
 
 ```sh
-0 4 * * * { ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( \( -type d -name '[0-9]*T[0-9]*Z-[0-9]*' \) -o \( -type f -name 'hermes-*.tar.gz' \) \) -mtime +14 -exec rm -rf {} + ; } >> ~/backup-homes.log 2>&1
+0 4 * * * { ~/.local/bin/agent-mgr backup-homes ~/agent-backups && ~/.local/bin/agent-mgr prune-backups ~/agent-backups 14 ; } >> ~/backup-homes.log 2>&1
 ```
 
-The braces and the redirect are what make any of this observable: cron has no
-`MAILTO` here, and on a host with no working MTA — the macOS default — its
-output is discarded, so a failing night leaves no trace at all. `{ …; }` groups
-both halves, so the log catches the backup's diagnostics and not only the
-prune's. The log lives **outside** the destination on purpose: the night the
-destination is missing — an unmounted disk, the case worth hearing about — a log
-inside it could not be opened either, and the entry would fail silently.
+`prune-backups` is its own command rather than a `find` written out here. That
+predicate is the difference between deleting this tool's runs and deleting
+whatever else you keep beside them; it shipped over-broad twice while it lived
+in this file, and every clause of it is reasoned at `lib/prune-backups`, where a
+test can run the real thing instead of parsing it back out of a doc.
 
 The `&&` comes first in importance: retention runs only if the backup it is
 pruning *for* succeeded. Split that into two crontab lines, or use `;`, and a
@@ -244,20 +242,13 @@ run of failed nights — a full disk, a destination whose mode changed, `no home
 matched` under the wrong account — prunes the destination empty while writing
 nothing.
 
-Inside the `find`, every clause but one is load-bearing. `-H` so a symlinked
-destination resolves at all. The two **name globs** are what keep your own entries out
-entirely — a `photos/` matches neither, and a `photos-2019.tar.gz` matches
-neither, because the flat arm is `hermes-*.tar.gz` and not `*.tar.gz`. Each
-`-type` then stops the *same-named impostor of the wrong kind*: `-type f` stops
-a **directory** called `hermes-something.tar.gz` from being recursed into, and
-`-type d` stops a plain file named like a run stamp. `-maxdepth 1` keeps all of
-that at the top level — the globs say nothing about a `hermes-2019.tar.gz` you
-have *inside* a directory of your own. Add a third arm and it needs every one of
-those, not one.
-
-The exception is `-mindepth 1`, which is belt and braces: neither glob can match
-a destination named `agent-backups`, and every run rewrites that directory's own
-mtime, so `-mtime +14` excludes the starting point anyway.
+The braces and the redirect are what make any of it observable: cron has no
+`MAILTO` here, and on a host with no working MTA — the macOS default — its
+output is discarded, so a failing night leaves no trace at all. `{ …; }` groups
+both halves, so the log catches the backup's diagnostics and not only the
+prune's. The log lives **outside** the destination on purpose: the night the
+destination is missing — an unmounted disk, the case worth hearing about — a log
+inside it could not be opened either, and the entry would fail silently.
 
 ### What an archive is worth
 

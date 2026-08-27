@@ -39,19 +39,23 @@ dest="${1:?usage: agent-mgr backup-homes <dest>}"
     || { echo "backup-homes: $dest must be a directory you own that nobody else can write -- try: chmod 700 $dest" >&2; exit 1; }
 
 # One directory per run. Not a security boundary -- the check above is that --
-# but it is the uniqueness and the unit of pruning. The pid is there because
+# but it is the uniqueness and the unit of pruning, and the name is what lets
+# `prune-backups` tell this tool's output from anything the operator keeps
+# beside it. Hence the prefix AND the suffix: a glob `*` is greedy, so
+# `backup-homes-????????T??????Z-*` still matches their
+# `backup-homes-20240101T010101Z-1-photos` -- measured, it was deleted. Ending
+# the name in `.run` is what the trailing `*` cannot eat past. The pid is there because
 # the stamp is only second-resolution, and two runs that did collide fail
 # loudly here rather than writing over each other.
 umask 077
-run="$dest/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+run="$dest/backup-homes-$(date -u +%Y%m%dT%H%M%SZ)-$$.run"
 mkdir "$run"
 
 # The only tar diagnostics that do not mean the archive is missing something.
-# Every one measured, on both tars this repo supports, rather than taken from a
-# manual: GNU 1.35 emits the first on a grow, the second on the live fleet from
-# the gateway's kanban.db-wal, and the third on a truncate -- which is a rotated
-# log or a WAL checkpoint, so it is an ordinary night. Case-insensitively,
-# because GNU mixes the case of these in a single run.
+# Measured on both tars this repo supports rather than taken from a manual: GNU
+# 1.35 emits the first on a grow and the second on a truncate -- a rotated log
+# or a WAL checkpoint, so an ordinary night. Case-insensitively, because GNU
+# mixes the case of these within a single run.
 #
 # bsdtar 3.5.3 needs no entry at all: measured on macOS 14 it exits 0 and emits
 # NOTHING for every race shape -- in-place rewrite, truncate, grow, a file
@@ -60,7 +64,13 @@ mkdir "$run"
 # branch deletes the archive, so a benign shape landing in it would cost a home
 # its night. Anything not listed here fails loudly and gets measured and added,
 # which is the direction that cannot lose a credential quietly.
-benign='file changed as we read it|file removed before we read it|file shrank by'
+benign='file changed as we read it|file shrank by'
+# A REMOVAL is different, and only benign for a path meant to come and go. The
+# gateway's SQLite sidecars are checkpointed away mid-run on an ordinary night;
+# `auth.json` is not, and an atomic rewrite (write-temp-then-rename) makes even
+# that one momentarily absent. Tolerating removals path-agnostically would
+# publish an archive missing exactly the credential this command exists to keep.
+volatile='(-wal|-shm|\.tmp|\.lock|~): file removed before we read it'
 err="$(mktemp)"
 trap 'rm -f "$err"' EXIT
 
@@ -96,7 +106,7 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
         -C "$home" -czf "$run/${name#.}.tar.gz" . 2>"$err" || status=$?
     cat "$err" >&2
     if [ "$status" != 0 ] \
-        && { [ "$status" != 1 ] || [ ! -s "$err" ] || grep -Eqvi "$benign" "$err"; }; then
+        && { [ "$status" != 1 ] || [ ! -s "$err" ] || grep -Eqvi "$benign|$volatile" "$err"; }; then
         # What tar leaves behind on the case this exists for is worse than a
         # truncated archive: complete, valid, `gzip -t`-clean, and missing one
         # file. A restore reaches for it as the newest. Remove it, so what is

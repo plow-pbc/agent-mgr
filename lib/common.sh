@@ -128,6 +128,7 @@ usage: agent-mgr <command> [args]
   set-latch <name>            read the Latch pair on stdin into its dotenv
 
   backup-homes <dest>         snapshot every agent home on this host
+  prune-backups <dest> [days] drop backup runs older than [days] (14)
 
   up|down|restart|logs <name> lifecycle
   agent <name> "<prompt>"     run one turn in the running container

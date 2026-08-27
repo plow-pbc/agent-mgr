@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+# Drop backup runs older than N days.
+#
+#   agent-mgr prune-backups <dest> [days]
+#
+# A command rather than a `find` in the docs, and that is the whole point. The
+# predicate is what separates this tool's own output from whatever else the
+# operator keeps beside it, every clause of it had to be measured, and it
+# shipped over-broad twice while it lived in Markdown -- where the only way to
+# test it was to parse the snippet back out and re-run it, which needed its own
+# guards against pointing an `rm -rf` at the real home. Behaviour belongs in
+# `lib/`; `agent-mgr`'s own header says so.
+set -euo pipefail
+dest="${1:?usage: agent-mgr prune-backups <dest> [days]}"
+days="${2:-14}"
+
+[ -d "$dest" ] || { echo "prune-backups: $dest is not a directory" >&2; exit 1; }
+
+# Only what `backup-homes` writes, and the name is the whole guard:
+#
+#   backup-homes-  a prefix this tool owns, so an operator's own directory
+#                  cannot collide with it by accident
+#   ????????T??????Z-  the exact stamp shape, one `?` per character
+#   *.run          the pid, then a suffix the trailing `*` cannot eat past.
+#                  Both anchors are needed: `[0-9]*T[0-9]*Z-[0-9]*` matches
+#                  `20240101T010101Z-1-photos` and so does
+#                  `backup-homes-????????T??????Z-*` -- measured, each deleted
+#                  it. A glob `*` is greedy and happily eats the rest of a
+#                  name, so the only reliable stop is a fixed tail.
+#
+# `-maxdepth 1` so a matching name NESTED in a directory of theirs is out of
+# reach; `-type d` so a plain file carrying a run's name is not removed
+# recursively; `-H` so a destination symlinked onto a bigger disk resolves at
+# all, without which `-mindepth 1` matches nothing and this silently prunes
+# nothing forever.
+find -H "$dest" -mindepth 1 -maxdepth 1 -type d \
+    -name 'backup-homes-????????T??????Z-*.run' -mtime "+$days" -exec rm -rf {} +

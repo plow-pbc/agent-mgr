@@ -15,7 +15,7 @@ import pytest
 
 CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 HOWTO = Path(__file__).resolve().parent.parent / "docs" / "HOWTO.md"
-RUN_DIR = re.compile(r"\d{8}T\d{6}Z-\d+")
+RUN_DIR = re.compile(r"backup-homes-\d{8}T\d{6}Z-\d+\.run")
 
 
 def run_documented_cron(home, sandbox, extra_path=None):
@@ -44,48 +44,21 @@ def run_documented_cron(home, sandbox, extra_path=None):
     assert home != Path.home().resolve(), \
         f"refusing to run a documented `rm -rf` against the real home {home}"
     line = next(l for l in HOWTO.read_text().splitlines()
-                if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
+                if l.lstrip().startswith("0 4 * * *") and "agent-mgr backup-homes" in l)
     # The group and its redirect are the whole point of the entry: without them
     # only the prune's output is logged, and every diagnostic comes from the
-    # backup. `documented_prune` also splits on `; }`, so this is what lets that
-    # split rest on something enforced rather than on the current phrasing.
-    assert re.search(r"\{\s+\S*agent-mgr backup-homes ", line) and "; } >>" in line, \
-        f"the entry no longer groups both halves into the log: {line}"
+    # backup. The `&&` is the other half — retention must run only after the
+    # backup it prunes for succeeded — and both halves must name one destination.
+    assert re.search(
+        r"\{\s+\S*agent-mgr backup-homes (\S+) && \S*agent-mgr prune-backups \1 ", line) \
+        and "; } >>" in line, \
+        f"the entry no longer groups a gated backup-and-prune into the log: {line}"
     return subprocess.run(
         ["sh", "-c", line.split(None, 5)[5].replace("~/.local/bin/agent-mgr", str(CLI))],
         capture_output=True, text=True,
         env={"HOME": str(home), "AGENT_MGR_REGISTRY": str(home / "registry"),
              "PATH": f"{extra_path}:{os.environ['PATH']}" if extra_path
                      else os.environ["PATH"]})
-
-
-def documented_prune(dest):
-    """The `find` half of the HOWTO's cron line, retargeted at `dest`. Extracted
-    rather than copied: a test carrying its own copy of a destructive command
-    pins the copy, which is what lets the real one drift."""
-    line = next(l for l in HOWTO.read_text().splitlines()
-                if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
-    # Taken from the BACKUP half rather than hand-copied, so nothing in this file
-    # is a second copy of the doc that could drift from it — and the assertion
-    # anchors the WHOLE junction rather than the connector, which costs nothing
-    # and fails closed. It covers: both halves naming the same destination (rename
-    # one and the cron backs up to A while `rm -rf`-ing B, in either direction),
-    # and the `&&` acting on the backup's own exit status. The second is not the
-    # same as `&&` being present: `backup-homes <dest> | tee -a log && find …`
-    # takes the pipeline's status from `tee`, and `… || true && find …` parses
-    # left to right, so both leave the prune ungated while reading fine. Then a
-    # run of failed nights prunes the destination empty while writing nothing.
-    backup_dest = line.split("backup-homes", 1)[1].split()[0]
-    assert f"backup-homes {backup_dest} && find -H {backup_dest} " in line, \
-        f"the prune is no longer gated on this backup succeeding: {line}"
-    # Up to the `; }` closing the group, so the log redirect after it does not
-    # run here — the destination under test is a fixture, not the operator's.
-    cmd = line[line.index("find -H"):].split("; }")[0].replace(backup_dest, str(dest))
-    # And fail loudly rather than open: `sh` tilde-expands, so a retarget that
-    # missed would run `rm -rf` against the operator's REAL backups on this host.
-    # The assertions below would fail too, but only after the deletion.
-    assert str(dest) in cmd and "~" not in cmd, f"retarget missed the destination: {cmd}"
-    return cmd
 
 
 @pytest.fixture
@@ -193,7 +166,7 @@ def test_each_run_gets_its_own_directory(tmp_path, dest):
 
     names = sorted(d.name for d in dest.iterdir())
     assert len(names) == 2, f"two runs shared a directory: {names}"
-    pat = re.compile(r"\d{8}T\d{6}Z-(\d+)")
+    pat = re.compile(r"backup-homes-\d{8}T\d{6}Z-(\d+)\.run")
     pids = [pat.fullmatch(n).group(1) for n in names if pat.fullmatch(n)]
     assert len(pids) == 2, f"run directories lost their timestamp-pid shape: {names}"
     assert pids[0] != pids[1], "both runs used the same pid field"
@@ -252,67 +225,6 @@ def test_a_destination_others_can_write_is_refused(tmp_path, mode):
     assert not any(dest.iterdir()), "it wrote archives anyway"
 
 
-def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest):
-    """The highest-consequence snippet in these docs — an `rm -rf` the operator
-    pastes into cron — and it has shipped over-broad twice: once taking every
-    directory, once every `*.tar.gz`. The run directory here is the real one the
-    script just wrote, not a hand-copied name, so the glob is checked against
-    what `lib/backup-homes` actually produces. Change either and this fails,
-    rather than the nightly quietly pruning nothing while reporting success.
-
-    One entry per clause: the two name globs keep the operator's own `photos/`
-    and `photos-2019.tar.gz`, each `-type` keeps the same-named impostor of the
-    wrong kind, `-maxdepth` keeps a matching name *nested* inside a directory of
-    theirs, and `-mtime` keeps a run taken since. Every one of those is named to
-    match some other clause's predicate, so it tests the clause it exists for."""
-    root = tmp_path / "home"
-    (root / ".hermes-rowan").mkdir(parents=True)
-    (root / ".hermes-rowan" / ".env").write_text("x\n")
-    assert run(root, dest).returncode == 0
-    aged_run = next(dest.iterdir())
-
-    (dest / "hermes-errands-20260101.tar.gz").write_text("what an earlier shape wrote\n")
-    (dest / "photos-2019.tar.gz").write_text("the operator's own\n")
-    (dest / "photos").mkdir()
-    # Only `-maxdepth 1` protects this: it matches the flat arm's glob exactly,
-    # and a top-level name glob does nothing for a nested file.
-    nested = dest / "photos" / "hermes-2019.tar.gz"
-    nested.write_text("inside the operator's own directory\n")
-    # The two impostors, one per `-type`. Named to MATCH the other arm's glob,
-    # which is the whole point: a trap the name globs already exclude tests
-    # nothing about `-type`.
-    (dest / "hermes-trap.tar.gz").mkdir()          # a directory named like an archive
-    (dest / "20260101T000000Z-9").write_text("x\n")  # a file named like a run
-
-    old = time.time() - 20 * 86400
-    for p in dest.iterdir():
-        os.utime(p, (old, old))
-    os.utime(nested, (old, old))  # the loop above walks top level only
-
-    # A second run AFTER the ageing, so the fixture holds something recent. With
-    # everything aged, the survivor set is identical whether the line says
-    # `-mtime +14`, `-mtime +7`, or carries no `-mtime` at all — and dropping it
-    # is the mutation where the cron's second half deletes the backup its own
-    # first half wrote seconds earlier, forever, while reporting success.
-    assert run(root, dest).returncode == 0
-    fresh_run = next(p for p in dest.iterdir()
-                     if p != aged_run and p.is_dir() and RUN_DIR.fullmatch(p.name))
-
-    # Pruned through a SYMLINK, the shape the section two paragraphs up invites.
-    # Without `-H`, `find` does not descend the starting point, `-mindepth 1`
-    # matches nothing, and retention silently stops while the nightly stays green.
-    link = tmp_path / "link"
-    link.symlink_to(dest)
-    subprocess.run(["sh", "-c", documented_prune(link)], check=True)
-
-    assert not aged_run.exists(), "it kept the run directory it was meant to prune"
-    assert fresh_run.exists(), "-mtime is not bounding the window: it took a fresh run"
-    assert nested.exists(), "-maxdepth is not bounding it: it descended into photos/"
-    assert {p.name for p in dest.iterdir()} == {
-        "20260101T000000Z-9", "hermes-trap.tar.gz", "photos", "photos-2019.tar.gz",
-        fresh_run.name}
-
-
 def tar_shim(directory, message, only_for=None):
     """A `tar` that reports `message` on stderr and exits 1.
 
@@ -339,19 +251,24 @@ def tar_shim(directory, message, only_for=None):
 @pytest.mark.parametrize("message,tolerated", [
     ("tar: ./sessions.db: file changed as we read it", True),
     ("tar: ./kanban.db-wal: File removed before we read it", True),
+    ("tar: ./auth.json: File removed before we read it", False),
     ("tar: ./app.log: File shrank by 4096 bytes; padding with zeros", True),
     ("tar: ./sessions.db: file changed as we read it\ntar: ./app.log: File shrank by 8 bytes; padding with zeros", True),
     ("tar: Can't open 'auth.json': Permission denied", False),
     ("tar: ./x: Cannot stat: No such file or directory", False),
     ("", False),
-], ids=["read-race", "removed-mid-read", "shrank", "race-and-shrank",
-        "unreadable-member", "unstattable", "no-diagnostic-at-all"])
+], ids=["read-race", "volatile-removed", "credential-removed", "shrank",
+        "race-and-shrank", "unreadable-member", "unstattable",
+        "no-diagnostic-at-all"])
 def test_tar_status_1_is_judged_by_its_message_not_its_number(
         tmp_path, dest, message, tolerated):
     """`tar` exits 1 for all four and they are opposite outcomes: the first two
     leave an archive missing something that was being rewritten anyway, the last
     two leave one missing a file that was simply never read — `auth.json` being
-    the case this command exists for.
+    the case this command exists for. A *removal* splits the same way on its
+    path rather than its wording: the gateway checkpoints its SQLite sidecars
+    away mid-run every night, while `auth.json` vanishing means an atomic
+    rewrite caught mid-flight, and publishing without it is the same loss.
 
     The number cannot separate them across the two tars this repo supports.
     bsdtar keeps 1 for a member it could not open, which it then omits — so a
@@ -433,3 +350,57 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
         assert not (root / "agent-backups").exists(), "it created the destination"
 
 
+def test_prune_takes_only_what_backup_homes_wrote(tmp_path, dest):
+    """`prune-backups` is an `rm -rf` over a directory the operator chose and
+    may keep their own things in, and it shipped over-broad twice. One entry per
+    clause, each named to match some *other* clause's predicate so it tests the
+    one it exists for, and the aged run is the real name the script writes
+    rather than a hand-copied one."""
+    root = tmp_path / "home"
+    (root / ".hermes-rowan").mkdir(parents=True)
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    assert run(root, dest).returncode == 0
+    aged_run = next(dest.iterdir())
+
+    mine = {
+        "photos": "dir",                                # matches no name glob
+        "photos-2019.tar.gz": "file",                   # ditto
+        "backup-homes-20240101T010101Z-1-photos": "dir",  # two looser globs ate this
+        "backup-homes-20260101T000000Z-9.run": "file",  # run-named, wrong type
+    }
+    for name, kind in mine.items():
+        (dest / name).mkdir() if kind == "dir" else (dest / name).write_text("x\n")
+    nested = dest / "photos" / "backup-homes-20250101T000000Z-1.run"
+    nested.mkdir()  # only -maxdepth 1 keeps this
+
+    old = time.time() - 20 * 86400
+    for p in list(dest.iterdir()) + [nested]:
+        os.utime(p, (old, old))
+    # After the ageing, so something recent exists: with everything aged the
+    # survivor set is identical whether or not the command bounds a window.
+    assert run(root, dest).returncode == 0
+    # RUN_DIR, not a prefix test: one of the operator's decoys below is a
+    # directory whose name starts with the prefix, and picking that as the
+    # "fresh run" would have this assert against the wrong thing entirely.
+    fresh_run = next(p for p in dest.iterdir()
+                     if p.is_dir() and p != aged_run and RUN_DIR.fullmatch(p.name))
+
+    link = tmp_path / "link"           # the symlinked destination the docs invite
+    link.symlink_to(dest)
+    assert subprocess.run([str(CLI), "prune-backups", str(link), "14"],
+                          capture_output=True, text=True).returncode == 0
+
+    assert not aged_run.exists(), "it kept the run it was meant to prune"
+    assert fresh_run.exists(), "it took a run inside the retention window"
+    assert nested.exists(), "it descended into a directory of the operator's"
+    assert {p.name for p in dest.iterdir()} == set(mine) | {fresh_run.name}
+
+
+def test_prune_refuses_a_destination_that_is_not_a_directory(tmp_path):
+    """An unmounted mount point or a typo'd path. Deleting nothing quietly is
+    the wrong answer: the caller is the cron's `&&`, and a silent success there
+    reads as a completed retention."""
+    r = subprocess.run([str(CLI), "prune-backups", str(tmp_path / "nope")],
+                       capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "not a directory" in r.stderr

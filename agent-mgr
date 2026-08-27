@@ -125,6 +125,11 @@ case "$cmd" in
         # ~/.hermes*, which also catches a home whose agent is mid-migration.
         "$AGENT_MGR_ROOT/lib/backup-homes" "$@"
         ;;
+    prune-backups)
+        # Same shape, and deliberately its own command: the retention predicate
+        # is behaviour, and behaviour lives in lib/ rather than in a doc.
+        "$AGENT_MGR_ROOT/lib/prune-backups" "$@"
+        ;;
     install-plugin)
         load_agent "${1:-}"
         # Before the write, as in restore.
