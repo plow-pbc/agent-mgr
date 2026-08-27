@@ -139,10 +139,15 @@ back. A code texted by the wrong person binds the agent to the wrong account,
 one time, permanently.
 
 Steps 5 and 6 assume **their** Mac is already running Plow Latch, which is a
-prerequisite you cannot satisfy for them. If this agent drives no Mac, skip both
-and delete the `latch:` block from its `config.yaml` — per the section above, a
-declared latch with no credential is a broken agent rather than an unconfigured
-one.
+prerequisite you cannot satisfy for them.
+
+**Whether the agent drives a Mac is not a per-person choice here.** The section
+above says an agent that drives none deletes the `latch:` block from its
+`config.yaml` — but that file belongs to the *repo*, and `restore` installs it
+into every registered row's home. Delete it for the person with no Mac and the
+next `restore` of a sibling takes that sibling's Mac away. A shared repo means
+a shared declaration: everyone on it drives a Mac, or nobody does. Someone who
+needs the other answer needs a repo of their own.
 
 **The pair in step 5 is copy-once by design.** Latch drops it from memory once
 they confirm they have saved it, which relaying it through a chat window
