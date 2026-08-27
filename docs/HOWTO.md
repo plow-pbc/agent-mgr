@@ -111,9 +111,12 @@ truncated one persists as the **most recent** until retention prunes it at 14
 days. And two runs overlapping *in time* both open the same path and splice two
 gzip streams into one inode; both exit 0.
 
-So after a killed or doubled run, do not reach for the latest archive without
-checking it. `gzip -t <archive>` is the one-line test, and the previous night's
-is the fallback. Writing to a temp file and renaming would prevent both, and
+Both are ways the archive **container** goes wrong, and `gzip -t <archive>` is
+the one-line test for exactly that — it proves the container is whole and proves
+**nothing** about the mid-rewrite case above, which passes it cleanly while the
+contents are a mixture of instants. Only `agent-mgr down <name>` before the run
+covers that one. So after a killed or doubled run, check before reaching for the
+latest archive, and fall back to the previous night's. Writing to a temp file and renaming would prevent both, and
 across two PRs that protection produced four distinct defects of its own.
 
 It also only sees homes under `~/.hermes*`. A descriptor may declare
