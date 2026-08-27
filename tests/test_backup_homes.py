@@ -417,7 +417,9 @@ def test_a_symlinked_runs_child_is_refused_by_both_halves(tmp_path, home, dest):
     (target / "photos").mkdir(parents=True)
     old = time.time() - 20 * 86400
     os.utime(target / "photos", (old, old))
+    target.chmod(0o755)
     (dest / "backup-homes").symlink_to(target)
+    before = target.stat().st_mode & 0o777
 
     r = run(home, dest)
     assert r.returncode != 0 and "is a symlink" in r.stderr, r.stderr
@@ -425,6 +427,12 @@ def test_a_symlinked_runs_child_is_refused_by_both_halves(tmp_path, home, dest):
                        capture_output=True, text=True)
     assert p.returncode != 0 and "is a symlink" in p.stderr, p.stderr
     assert (target / "photos").exists(), "it deleted through the link anyway"
+    # Refused BEFORE touching it, which is the only ordering that makes the
+    # refusal safe — and the only thing the exit status cannot show. Put the
+    # check after `mkdir -p`/`chmod` and every assertion above still holds while
+    # a directory outside $dest quietly changes mode.
+    assert target.stat().st_mode & 0o777 == before, "it re-moded the link's target"
+    assert not any(target.glob("*Z-*")), "it wrote a run through the link"
 
 
 @pytest.mark.parametrize("days", ["-1", "0", "00", "14 -o -true", "abc", "1.5"],
