@@ -306,3 +306,37 @@ def test_set_latch_env_reads_only_a_regular_leaf(tmp_path):
     assert "not a regular file" in r.stderr
 
 
+
+
+def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instance, tmp_path):
+    """The publish handler had no test, which meant three separate claims rode
+    on it unchecked: that the temp is unlinked (or a 0600 file holding a live
+    token is left in the operator's home PARENT), that stderr says `.env` is
+    unchanged (the half that decides whether they go re-mint and revoke), and
+    that staging happens outside the mount at all -- mutate `dirname(resolved)`
+    to `resolved` and every success-path row still passes, because the file is
+    renamed away before any leftover sweep can see it.
+
+    An unwritable home drives all three without a second filesystem: `.env`
+    stays readable, staging in the parent still succeeds, and only the rename
+    into the home fails. Staging INSIDE the home instead fails earlier and
+    says so differently, which is what distinguishes the two."""
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("restore", "rowan")
+    home = tmp_path / "home" / ".hermes-rowan"
+    original = b"HOSTEX_TOKEN=keep-me\n"
+    (home / ".env").write_bytes(original)
+    home.chmod(0o500)
+    try:
+        r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n")
+    finally:
+        home.chmod(0o700)
+    assert r.returncode != 0
+    # The rename failed, not the staging -- which is what says the replacement
+    # was built outside the mount rather than inside it.
+    assert "cannot publish" in r.stderr
+    # The half an operator acts on.
+    assert "unchanged" in r.stderr
+    assert (home / ".env").read_bytes() == original
+    # And no 0600 file holding a live token left beside the home.
+    assert not list(home.parent.glob("*.set-latch.*"))
