@@ -367,6 +367,7 @@ def test_prune_takes_only_what_backup_homes_wrote(tmp_path, home, dest):
         "backup-homes-20240101T010101Z-1-photos": "dir",  # two looser globs ate this
         "backup-homes-20240101T010101Z-1-photos.run": "dir",  # and a third, with the tail
         "backup-homes-20240101T010101Z-photos.run": "dir",  # stamp-shaped, pid is not
+        "backup-homes-2024010XT010101Z-1.run": "dir",  # stamp-SHAPED, not numeric
         "20240101T010101Z-1": "dir",  # the legacy shape, which migrates by hand
         "backup-homes-20260101T000000Z-9.run": "file",  # run-named, wrong type
     }
