@@ -93,7 +93,11 @@ def test_each_run_writes_its_own_archive(tmp_path):
     (root / ".hermes-rowan" / ".env").write_text("x\n")
 
     ps = [spawn(root, dest) for _ in range(2)]
-    assert [p.wait() for p in ps] == [0, 0]
+    # communicate(), not wait(): spawn() gives the children pipes, and wait()
+    # on an undrained pipe deadlocks as soon as a child fills the buffer —
+    # tar writes a "file changed as we read it" line per home.
+    outs = [p.communicate() for p in ps]
+    assert [p.returncode for p in ps] == [0, 0], outs
 
     names = sorted(p.name for p in dest.glob("*.tar.gz"))
     assert len(names) == 2, f"two runs shared a path: {names}"
