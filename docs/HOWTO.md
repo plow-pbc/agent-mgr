@@ -236,22 +236,11 @@ produces two archives.
 `gzip -t <archive>` tests the container and nothing else: a mid-rewrite archive
 passes it cleanly. So check before restoring, and fall back to the previous
 night's.
-
 ### Restoring one
 
-**You move the existing home aside — but not until step 1 has run.** The recipe
-deliberately does not move it for you: naming that copy is a decision, and three
-attempts at automating it each produced a worse hazard than the last — a name
-inside the nightly's `~/.hermes*` glob (so the cron archived a dead home as
-live), a fixed name that moved the home *inside* the previous copy on a re-run,
-and a unique name the operator could not refer to from a later shell.
-
-Where it goes, decided before you run anything: **a path that neither matches nor sits under `~/.hermes*`, on the
-same disk, not `/tmp`.** That copy is the only thing holding state newer than the
-archive — everything written since 04:00, the `-wal` and `-shm` sidecars, any
-turn the agent took this morning — so a `/tmp` that is reaped on reboot loses
-it. Keep it until you have watched the restored agent actually run, then delete
-it.
+Two blocks, because **you** move the old home aside between them. Naming that
+copy is a decision, and three attempts at automating it each produced a worse
+hazard than the last.
 
 Step 1 — verify the archive, stop the agent, resolve the home:
 
@@ -260,10 +249,17 @@ a=~/agent-backups/hermes-errands-20260826T040112Z-4171.tar.gz \
   && gzip -t "$a" \
   && agent-mgr down errands \
   && home=$(readlink -f "$(agent-mgr resolve errands | sed -n 's/^AGENT_HOME=//p')") \
-  && echo "move $home aside now — same disk, not /tmp, and a path that neither matches nor sits under ~/.hermes* (a sibling like .hermes-errands.old matches it); keep it until the restored agent is verified running. Then run step 2."
+  && echo "move $home aside now — same disk, not /tmp, and a path that neither matches nor sits under ~/.hermes*. Keep it until the restored agent is verified running. Then run step 2."
 ```
 
-Then move it. Step 2, **in the same shell** — `$home` and `$a` come from step 1:
+Move `$home` aside now: **same disk, not `/tmp`, and a path that neither matches
+nor sits under `~/.hermes*`** — a sibling like `.hermes-errands.old` matches it,
+and the nightly would then archive a dead home as a live one. That copy holds
+everything written since the archive, including this morning's turns and the
+`-wal` and `-shm` sidecars, so keep it until you have watched the restored agent
+run.
+
+Step 2, **in the same shell** — `$home` and `$a` come from step 1:
 
 ```sh
 mkdir "$home" \
@@ -272,37 +268,26 @@ mkdir "$home" \
   && agent-mgr up errands
 ```
 
-`mkdir`, not `mkdir -p`: it fails with `File exists` if the home is still there,
-which is the emptiness check for free. `tar -xzf` overlays rather than replaces,
-so unpacking over a live home would leave every file the archive does not
-contain — including the `-wal` and `-shm` sidecars of the very session databases
-you are rolling back.
+Why the blocks are shaped that way:
 
-**The archive is bound once** because the prose above tells you to change it —
-edit only the `tar` line and `gzip -t` validates a different file, which stops
-nothing.
-
-One `&&` chain, not `set -e`: this is a paste-into-your-shell block, and
-`errexit` in an interactive shell closes the session on the first failure — over
-SSH, taking the error you need to read with it. It starts at `gzip -t` because a
-bad archive has to stop the restore before anything else runs, and `down` is in
-the chain because the veto can legitimately refuse: it runs the agent's
-`AGENT_PRE_TRANSITION` hook, and the rentals agent declines to stop mid-ingest
-by design.
-
-The archive is contents-rooted (`./` entries), which is why it needs `-C` and
-cannot splat into `$HOME`; `logs/`, `cache/` and `lazy-packages/` are excluded
-from it and are not recreated, which is expected rather than a truncated
-archive.
-
-`readlink -f` in the binding is what makes a **symlinked home** work — supported,
-though nothing uses it today. It resolves `$home` to the real directory, so you
-move and recreate the *target* and the link keeps pointing at it. Without it you
-would move the link, the restore would land on the wrong volume, and step 2's
-`mkdir` would fail on the name regardless, since `mkdir` does not follow a
-trailing symlink.
-
-
+- **`gzip -t` first, inside the chain.** A bad archive has to stop the restore
+  before `down` runs.
+- **`&&`, not `set -e`.** This is pasted into your shell, and `errexit` there
+  closes the session on the first failure — over SSH, taking the error with it.
+- **`down` can legitimately refuse.** It runs the agent's
+  `AGENT_PRE_TRANSITION` hook, and the rentals agent declines to stop
+  mid-ingest by design.
+- **`a=` binds the archive once.** Edit only the `tar` line and `gzip -t`
+  validates a different file, which stops nothing.
+- **`readlink -f`** resolves a symlinked home to its target, so you move and
+  recreate the target and the link keeps pointing at it.
+- **`mkdir`, not `mkdir -p`.** It fails with `File exists` if the home is still
+  there, which is the emptiness check for free — and `tar -xzf` overlays rather
+  than replaces, so unpacking over a live home would leave behind every file the
+  archive does not contain.
+- **`-C`, because the archive is contents-rooted** (`./` entries) and would
+  otherwise splat into `$HOME`. `logs/`, `cache/` and `lazy-packages/` are
+  excluded from it and are not recreated: expected, not a truncated archive.
 
 ## Two layers: where does my code go?
 
