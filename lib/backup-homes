@@ -53,9 +53,12 @@ mkdir "$run"
 # log or a WAL checkpoint, so it is an ordinary night. Case-insensitively,
 # because GNU mixes the case of these in a single run.
 #
-# bsdtar 3.5.3 needs no entry at all: measured on macOS 14 it exits 0 for the
-# read race in all three shapes -- in-place rewrite, truncate, grow -- and emits
-# nothing. Anything not listed here fails loudly and gets measured and added,
+# bsdtar 3.5.3 needs no entry at all: measured on macOS 14 it exits 0 and emits
+# NOTHING for every race shape -- in-place rewrite, truncate, grow, a file
+# removed mid-read, a whole directory removed mid-read -- and reserves status 1
+# for real errors. The removal shapes matter as much as the rewrites: this
+# branch deletes the archive, so a benign shape landing in it would cost a home
+# its night. Anything not listed here fails loudly and gets measured and added,
 # which is the direction that cannot lose a credential quietly.
 benign='file changed as we read it|file removed before we read it|file shrank by'
 err="$(mktemp)"
