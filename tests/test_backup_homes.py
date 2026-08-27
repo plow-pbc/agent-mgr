@@ -423,12 +423,15 @@ def test_the_howtos_run_directory_examples_match_what_the_script_writes(tmp_path
     assert run(root, dest).returncode == 0
     assert RUN_DIR.fullmatch(next(dest.iterdir()).name), "the script's own name drifted"
 
-    # Every path under the destination, whether or not it continues into a
-    # further component — anchoring on a trailing `/` would silently skip an
-    # example that names the directory alone, which is the shape most likely to
-    # be added next.
+    # Every path under the destination, whatever follows it. That is a claim
+    # about the destination as much as about the doc: `backup-homes` writes
+    # nothing there but run directories, and the log was deliberately moved
+    # out — so anything else appearing here should fail until someone decides
+    # what it is and says so on this line.
     examples = re.findall(r"agent-backups/([^/\s`)\"]+)", HOWTO.read_text())
-    assert examples, "no run-directory example left in the HOWTO to pin"
+    # A count, not just non-emptiness: with one example left unpinned the other
+    # can quietly disappear, which is the same silent drift one edit later.
+    assert len(examples) >= 2, f"a run-directory example left the pinned set: {examples}"
     for name in examples:
         assert RUN_DIR.fullmatch(name), \
             f"the HOWTO shows a run directory the script does not write: {name}"
