@@ -138,9 +138,10 @@ again.
 back. A code texted by the wrong person binds the agent to the wrong account,
 one time, permanently.
 
-Steps 5 and 6 assume **their** Mac is already running Plow Latch — a
-prerequisite you cannot satisfy for them, so confirm it before step 1 rather
-than discovering it at step 5.
+Steps 5 and 6 assume **their** Mac is already running Plow Latch, which is a
+prerequisite you cannot satisfy for them. Confirm it before step 1: by step 5
+the activation is already spent, so finding out then leaves a live agent that
+cannot reach the Mac until they install it — recoverable, but not pausable.
 
 **The pair in step 5 is copy-once by design.** Latch drops it from memory once
 they confirm they have saved it, which relaying it through a chat window

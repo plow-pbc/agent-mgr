@@ -19,7 +19,6 @@ mcp_servers:
   #
   # Baseline rather than optional because most agents want it: a new one is
   # wired for Latch and you remove this if it drives nothing.
-
   latch:
     url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp
     headers:
