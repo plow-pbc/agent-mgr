@@ -255,11 +255,25 @@ mtime, so `-mtime +14` excludes the starting point anyway.
 
 It is a **live copy**. `tar` reports *"file changed as we read it"* for any file
 rewritten while it is being read — measured on a plain file, not only on a
-database — and that status is accepted and the archive published, so such a file
-can restore partially. Most of a home is quiescent between turns; the gateway's
-SQLite session database is the one written continuously. Refusing that status
-would fail the nightly every night, so it is a trade: for a consistent copy,
+database — and that is tolerated and the archive published, so such a file can
+restore partially. Most of a home is quiescent between turns; the gateway's
+SQLite session database is the one written continuously. Refusing it would fail
+the nightly every night, so it is a trade: for a consistent copy,
 `agent-mgr down <name>` first.
+
+What is **not** tolerated is a file tar could not read at all — an unreadable
+`auth.json`, a path it could not stat. `tar` exits 1 for that too, so the
+decision is made on its message rather than its status: everything on a measured
+list of race warnings passes, anything else fails that home loudly, and the
+archive tar had begun is **deleted** rather than kept. A complete, valid,
+`gzip -t`-clean archive missing exactly one credential file is worse than no
+archive, because a restore reaches for it as the newest thing there.
+
+The status alone could not carry that. GNU tar exits 1 for the race; bsdtar on
+macOS exits 0 for it and uses 1 for the unreadable member — both measured.
+
+One home failing does not stop the others: the run archives what it can and then
+exits non-zero, so the cron's `&&` still holds retention back.
 
 One further way the archive *container* can go wrong: a killed run leaves a
 truncated archive. Nothing repairs or replaces it — every run writes into a new

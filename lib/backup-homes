@@ -47,16 +47,25 @@ run="$dest/$(date -u +%Y%m%dT%H%M%SZ)-$$"
 mkdir "$run"
 
 # The only tar diagnostics that do not mean the archive is missing something.
-# Matched case-insensitively: GNU writes "file changed as we read it" lowercase
-# and "File removed before we read it" capitalised, in the same run -- measured
-# against the live fleet, where the gateway's kanban.db-wal produces the second.
-benign='file changed as we read it|file removed before we read it|file changed size'
+# Every one measured, on both tars this repo supports, rather than taken from a
+# manual: GNU 1.35 emits the first on a grow, the second on the live fleet from
+# the gateway's kanban.db-wal, and the third on a truncate -- which is a rotated
+# log or a WAL checkpoint, so it is an ordinary night. Case-insensitively,
+# because GNU mixes the case of these in a single run.
+#
+# bsdtar 3.5.3 needs no entry at all: measured on macOS 14 it exits 0 for the
+# read race in all three shapes -- in-place rewrite, truncate, grow -- and emits
+# nothing. Anything not listed here fails loudly and gets measured and added,
+# which is the direction that cannot lose a credential quietly.
+benign='file changed as we read it|file removed before we read it|file shrank by'
 err="$(mktemp)"
 trap 'rm -f "$err"' EXIT
 
 n=0
+failed=0
 for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     [ -d "$home" ] || continue
+    n=$((n + 1))
     name="$(basename "$home")"
     # `-C "$home" .`, not `-C <parent> <basename>`: a home symlinked onto a
     # bigger disk is supported, and from the parent tar stores that symlink AS a
@@ -83,14 +92,23 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
         -C "$home" -czf "$run/${name#.}.tar.gz" . 2>"$err" || status=$?
     cat "$err" >&2
-    if [ "$status" != 0 ] && { [ "$status" != 1 ] || grep -Eqvi "$benign" "$err"; }; then
-        echo "backup-homes: tar failed on $home (status $status)" >&2
-        exit 1
+    if [ "$status" != 0 ] \
+        && { [ "$status" != 1 ] || [ ! -s "$err" ] || grep -Eqvi "$benign" "$err"; }; then
+        # What tar leaves behind on the case this exists for is worse than a
+        # truncated archive: complete, valid, `gzip -t`-clean, and missing one
+        # file. A restore reaches for it as the newest. Remove it, so what is
+        # left is an absence -- which the operator can see.
+        rm -f "$run/${name#.}.tar.gz"
+        echo "backup-homes: tar failed on $home (status $status) -- no archive kept" >&2
+        # Not `exit`: one home with a permission problem must not cost the other
+        # four their night. The run still fails at the end, so the cron's `&&`
+        # still holds the prune back.
+        failed=1
     fi
-    n=$((n + 1))
 done
 
 # A run that matches nothing must not report success: under the nightly cron the
 # cause is likely a crontab installed under a different account, so $HOME is not
 # the operator's -- every run then reports success having written nothing.
 [ "$n" -gt 0 ] || { echo "backup-homes: no homes matched $HOME/.hermes*" >&2; exit 1; }
+[ "$failed" = 0 ] || { echo "backup-homes: one or more homes were not archived" >&2; exit 1; }

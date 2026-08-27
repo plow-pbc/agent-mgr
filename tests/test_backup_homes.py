@@ -270,12 +270,29 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
         fresh_run.name}
 
 
+def tar_shim(directory, message, exit_code=1):
+    """A `tar` that writes its `-czf` target, reports `message`, and exits.
+    A shim rather than a real race: an earlier version of this suite raced a
+    live writer and passed green on any machine where the overlap missed."""
+    directory.mkdir(exist_ok=True)
+    (directory / "tar").write_text(
+        "#!/bin/sh\nprev=\nfor a in \"$@\"; do\n"
+        '  [ "$prev" = -czf ] && : > "$a"\n  prev="$a"\ndone\n'
+        f'[ -n "{message}" ] && printf \'%s\\n\' "{message}" >&2\nexit {exit_code}\n')
+    (directory / "tar").chmod(0o755)
+    return str(directory)
+
+
 @pytest.mark.parametrize("message,tolerated", [
     ("tar: ./sessions.db: file changed as we read it", True),
     ("tar: ./kanban.db-wal: File removed before we read it", True),
+    ("tar: ./app.log: File shrank by 4096 bytes; padding with zeros", True),
+    ("tar: ./sessions.db: file changed as we read it\ntar: ./app.log: File shrank by 8 bytes; padding with zeros", True),
     ("tar: Can't open 'auth.json': Permission denied", False),
     ("tar: ./x: Cannot stat: No such file or directory", False),
-], ids=["read-race", "removed-mid-read", "unreadable-member", "unstattable"])
+    ("", False),
+], ids=["read-race", "removed-mid-read", "shrank", "race-and-shrank",
+        "unreadable-member", "unstattable", "no-diagnostic-at-all"])
 def test_tar_status_1_is_judged_by_its_message_not_its_number(
         tmp_path, dest, message, tolerated):
     """`tar` exits 1 for all four and they are opposite outcomes: the first two
@@ -292,16 +309,41 @@ def test_tar_status_1_is_judged_by_its_message_not_its_number(
     (root / ".hermes-rowan").mkdir(parents=True)
     (root / ".hermes-rowan" / ".env").write_text("x\n")
 
-    # A `tar` that reports `message` and exits 1, so the contract is pinned
-    # without racing a real one — which is what let an earlier version of this
-    # suite pass on a machine where the race happened not to fire.
+    r = run(root, dest, extra_path=tar_shim(tmp_path / "bin", message))
+    assert (r.returncode == 0) is tolerated, f"exit {r.returncode}: {r.stderr}"
+    if message:
+        assert message.splitlines()[0] in r.stderr, "tar's diagnostic must reach the operator"
+    archives = list(dest.glob("*/*.tar.gz"))
+    if tolerated:
+        assert archives, "a tolerated race must still leave its archive"
+    else:
+        assert "tar failed" in r.stderr
+        # Complete, valid, `gzip -t`-clean and missing a file is worse than
+        # absent: a restore reaches for it as the newest thing there.
+        assert not archives, "it kept an archive tar could not finish"
+
+
+def test_one_failing_home_does_not_cost_the_others_their_night(tmp_path, dest):
+    """The abort set now includes any status-1 message nobody has met yet, so an
+    `exit` here would turn a run that could archive four homes into one that
+    archives none — and the cron's `&&` would then leave the operator with no
+    fresh copy of anything. The run must still fail, loudly, at the end."""
+    root = tmp_path / "home"
+    for name in (".hermes-alpha", ".hermes-omega"):
+        (root / name).mkdir(parents=True)
+        (root / name / ".env").write_text("x\n")
+
+    # A `tar` that refuses only the first home and works for the rest.
     shim = tmp_path / "bin"
     shim.mkdir()
-    (shim / "tar").write_text(f'#!/bin/sh\nprintf \'%s\\n\' "{message}" >&2\nexit 1\n')
+    (shim / "tar").write_text(
+        "#!/bin/sh\nprev=; out=; home=\nfor a in \"$@\"; do\n"
+        '  [ "$prev" = -czf ] && out="$a"\n  [ "$prev" = -C ] && home="$a"\n  prev="$a"\ndone\n'
+        'case "$home" in *alpha) echo "tar: Cannot open: Permission denied" >&2; exit 1;; esac\n'
+        ': > "$out"\n')
     (shim / "tar").chmod(0o755)
 
     r = run(root, dest, extra_path=str(shim))
-    assert (r.returncode == 0) is tolerated, f"exit {r.returncode}: {r.stderr}"
-    assert message in r.stderr, "tar's own diagnostic must reach the operator"
-    if not tolerated:
-        assert "tar failed" in r.stderr
+    assert r.returncode != 0, "a home that could not be archived must fail the run"
+    assert [p.name for p in dest.glob("*/*.tar.gz")] == ["hermes-omega.tar.gz"], \
+        "the healthy home lost its night to the broken one"
