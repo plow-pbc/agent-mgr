@@ -405,3 +405,26 @@ def test_prune_refuses_a_destination_that_is_not_a_directory(tmp_path):
                        capture_output=True, text=True)
     assert r.returncode != 0
     assert "not a directory" in r.stderr
+
+
+def test_the_howtos_run_directory_examples_match_what_the_script_writes(tmp_path, dest):
+    """Both doc examples went stale when the run directory was renamed, and the
+    restore recipe is one an operator pastes — a path that no longer exists is
+    the whole failure there. `RUN_DIR` is the same pattern the two-runs test
+    asserts the script's own output against, so pinning the doc to it is what
+    stops the two separating again.
+
+    The real name too, not just the pattern: a run is taken here and its
+    directory checked against the same regex, so a rename that updated the
+    regex and the doc but not the script still fails."""
+    root = tmp_path / "home"
+    (root / ".hermes-rowan").mkdir(parents=True)
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    assert run(root, dest).returncode == 0
+    assert RUN_DIR.fullmatch(next(dest.iterdir()).name), "the script's own name drifted"
+
+    examples = [m for m in re.findall(r"agent-backups/(\S+?)/", HOWTO.read_text())]
+    assert examples, "no run-directory example left in the HOWTO to pin"
+    for name in examples:
+        assert RUN_DIR.fullmatch(name), \
+            f"the HOWTO shows a run directory the script does not write: {name}"
