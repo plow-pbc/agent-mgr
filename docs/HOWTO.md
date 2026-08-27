@@ -70,25 +70,28 @@ it is the whole mechanism (*One repo, several people* in the
 ```sh
 agent-mgr register bob ~/services/shared-hermes-agent
 agent-mgr restore bob
-BOB_HOME=$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')
-printf '\nAGENT_TZ=America/Chicago\n' >> "${BOB_HOME:?resolve printed no home}/.env" &&
+agent-mgr resolve bob        # prints AGENT_HOME -- bob's dotenv is the .env in it
+```
+
+Put `AGENT_TZ=America/Chicago` in that file, on its own line, then:
+
+```sh
 agent-mgr up bob
 ```
 
-**The zone goes after `restore` and before `up`, and both bounds bite.**
-*Where a per-person value goes* in the [README](../README.md) owns why the zone
-is special, including the leading newline; what this runbook owns is where it
-sits. Earlier than `restore` and there is no dotenv skeleton — `restore` writes
-one only when the file is absent, so creating it yourself means the
-`PLOW_CHAT_*` and `DOMO_*` placeholders never land. Later than `up` and it is
-simply not applied, because the zone reaches the container when the container is
-**created**; changing it after that needs another `agent-mgr up`, never
-`restart`, which does not recreate.
+**The zone goes after `restore` and before `up`.** *Where a per-person value
+goes* in the [README](../README.md) owns why the zone is special and why the
+line wants a leading newline; what this runbook owns is where it sits. Before
+`restore` there is no home yet to write into — `register` only adds a registry
+row, and the home is deliberately created by `restore` — so an early append
+fails rather than misleads. After `up` is the one that costs you: the zone
+reaches the container when the container is **created**, so changing it later
+needs another `agent-mgr up`, never `restart`, which does not recreate.
 
-The `:?` and the `&&` are both load-bearing: without them a `resolve` that
-printed nothing appends to `/.env`, and `up` then starts the agent anyway — on
-the fleet default zone, quietly, which is the failure this whole step exists to
-prevent.
+By hand rather than through a pasted one-liner, deliberately. `restore` writes
+that dotenv at mode 600 and only when it is absent, so a file you create first
+keeps your umask — 644 on a stock host — for a file that ends up holding the
+chat token. Let `restore` make it; you are adding a line to it.
 
 `up` before the codes, not after: `sign-in` runs `hermes auth add` **inside the
 container**, so it refuses until one is running. `activate` does not care — it
@@ -99,12 +102,12 @@ because two of them block:
 
 | | who | what |
 |---|---|---|
-| 1 | you | `agent-mgr activate bob` — prints `Plow Activate: <code>`, then **polls until it is texted** |
+| 1 | you | `agent-mgr activate bob` — prints `Text Plow Activate: <code>` and the number, then **polls until it arrives** |
 | 2 | **them** | text that code **from the handset that should own the agent** |
 | 3 | you | `agent-mgr sign-in bob` — prints a device-code URL and a code, then **waits on the browser** |
 | 4 | **them** | open the URL in *their* browser, enter the code |
 | 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
-| 6 | you | put the pair in `"$BOB_HOME/.env"` — **their** instance's dotenv, bound above — then `check-latch bob` and `restart bob` |
+| 6 | you | put the pair in that same dotenv — the one `agent-mgr resolve bob` names — then `check-latch bob` and `restart bob` |
 
 **Neither code can be sent ahead.** `activate` does not return when it prints
 the code; it polls `/v1/auth/activate/redeem` until the text arrives, and the
@@ -146,8 +149,8 @@ today; just treat it as disclosed and re-mint from Latch once the agent is up.
 Re-minting is free. The exposure is not.
 
 **Tell them where their credentials live**, before step 2 rather than after:
-their Plow token, and through it their mailbox, sit in `$AGENT_HOME/.env` on
-this host — readable by whoever runs `agent-mgr`, which is not them.
+their Plow token, and through it their mailbox, sit in that dotenv on this
+host — readable by whoever runs `agent-mgr`, which is not them.
 
 `check-latch` proves the Mac answered and `sign-in` proves the credential
 minted. Nothing proves the person understood what they authorised, so that part
