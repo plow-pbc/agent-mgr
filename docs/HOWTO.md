@@ -119,21 +119,27 @@ night's.
 ### Restoring one
 
 ```sh
-gzip -t ~/agent-backups/hermes-rowan-20260826.tar.gz \
+a=~/agent-backups/hermes-rowan-20260826.tar.gz \
+  && gzip -t "$a" \
   && agent-mgr down rowan \
   && home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p') \
   && mv "$home" "$home.old" \
   && mkdir -p "$home" \
-  && tar -C "$home" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz \
+  && tar -C "$home" -xzf "$a" \
   && agent-mgr restore rowan \
   && agent-mgr up rowan
 ```
 
+**The archive is bound once** because the prose above tells you to change it —
+edit only the `tar` line and `gzip -t` validates a different file, which stops
+nothing.
+
 One `&&` chain, not `set -e`: this is a paste-into-your-shell block, and
 `errexit` in an interactive shell closes the session on the first failure —
-over SSH, taking the error you need to read with it. Chained from `down`
-because that is the precondition and it can legitimately fail: it runs the
-agent's `AGENT_PRE_TRANSITION` veto, and the rentals agent refuses to stop
+over SSH, taking the error you need to read with it. It starts at `gzip -t`
+because a bad archive has to stop the restore *before* `mv` empties the home,
+and `down` is the second link because the veto can legitimately refuse: it runs
+the agent's `AGENT_PRE_TRANSITION` hook, and the rentals agent declines to stop
 mid-ingest by design.
 
 The target must be **empty**: `tar -xzf` overlays rather than replaces, so
