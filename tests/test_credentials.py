@@ -111,9 +111,17 @@ CLEAN = "dev_abc\ntok_xyz\n"
         # the pop unconditional and this row loses HOSTEX_TOKEN entirely,
         # republished at 0600 as a well-formed file with set-latch exiting 0.
         (b"HOSTEX_TOKEN=keep-me", (b"HOSTEX_TOKEN=keep-me",), CLEAN),
+        # AGENT_TZ, which the resolver reads out of this same file, and which an
+        # OPERATOR writes by hand -- so it arrives in spellings this command's
+        # own reader does not accept. Two readers of one file with different
+        # grammars is fine while they read disjoint keys, each matching how its
+        # key is produced; what is NOT fine is this command rewriting the other
+        # reader's line. Every non-DOMO line is copied verbatim, so it does not.
+        (b"export AGENT_TZ=Europe/Paris\n  HOSTEX_TOKEN = keep-me\nDOMO_MCP_TOKEN=\n",
+         (b"export AGENT_TZ=Europe/Paris", b"  HOSTEX_TOKEN = keep-me"), CLEAN),
     ],
     ids=["pre-seeded-empty-padded", "absent", "canonical-duplicate",
-         "bytes-we-do-not-own", "no-trailing-newline"],
+         "bytes-we-do-not-own", "no-trailing-newline", "another-readers-keys"],
 )
 def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
         run, instance, tmp_path, starting_dotenv, preserved, stdin):
