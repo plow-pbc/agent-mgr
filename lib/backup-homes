@@ -77,9 +77,9 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # tar exits 1 for "file changed as we read it", which a running gateway
     # provokes nightly, and refusing that would fail the nightly EVERY night.
     # But the NUMBER cannot carry that decision across the two tars this repo
-    # supports. Measured on macOS 14: bsdtar exits 0 for the read race in all
-    # three shapes -- an in-place rewrite, a truncate and a grow -- and uses 1
-    # for a member it could not open, which it then OMITS. So on a Mac the old
+    # supports. bsdtar exits 0 for every race shape -- the measured list is the
+    # `benign` comment above, and this deliberately does not restate it -- and
+    # uses 1 for a member it could not open, which it then OMITS. So the old
     # `|| [ $? -eq 1 ]` published an archive missing exactly the auth.json this
     # command exists to preserve, exited 0, and let retention prune the good
     # copies behind it. The message can tell them apart; the status cannot.

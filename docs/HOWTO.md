@@ -227,8 +227,15 @@ changes nothing — and a default umask of 002 makes a plain `mkdir` produce 077
 Nightly, with 14 days kept:
 
 ```sh
-0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( \( -type d -name '[0-9]*T[0-9]*Z-[0-9]*' \) -o \( -type f -name 'hermes-*.tar.gz' \) \) -mtime +14 -exec rm -rf {} +
+0 4 * * * { ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( \( -type d -name '[0-9]*T[0-9]*Z-[0-9]*' \) -o \( -type f -name 'hermes-*.tar.gz' \) \) -mtime +14 -exec rm -rf {} + ; } >> ~/agent-backups/backup.log 2>&1
 ```
+
+The braces and the redirect are what make any of this observable: cron has no
+`MAILTO` here, and on a host with no working MTA — the macOS default — its
+output is discarded, so a failing night leaves no trace at all. `{ …; }` groups
+both halves so the log catches the backup's diagnostics and not only the
+prune's, and `backup.log` sits in the destination, where neither prune arm
+matches it.
 
 The `&&` comes first in importance: retention runs only if the backup it is
 pruning *for* succeeded. Split that into two crontab lines, or use `;`, and a
@@ -278,11 +285,14 @@ exits non-zero, so the cron's `&&` still holds retention back.
 **That gate is not free, and it is the thing to watch.** A home that fails
 *every* night — a permission problem nobody fixes, a diagnostic not yet on the
 benign list — makes every run exit non-zero, so the prune never runs and the
-14 days below stops being true. The destination then grows by a full sweep a
-night until the disk fills, at which point every home starts failing. From the
-outside it looks healthy the whole time: a new run directory each night with
-current archives in it. The signal is the `tar failed on <home>` line in cron's
-output, and it is the only one.
+`-mtime +14` retention in the crontab **above** stops being true. The
+destination then grows by a full sweep a night until the disk fills, at which
+point every home starts failing. From the outside it looks healthy the whole
+time: a new run directory each night with current archives in it.
+
+Two lines say so, both in `backup.log`: `tar failed on <home>` names which home,
+and `one or more homes were not archived` appears once per run however many did
+— that second one is what to grep for.
 
 One further way the archive *container* can go wrong: a killed run leaves a
 truncated archive. Nothing repairs or replaces it — every run writes into a new

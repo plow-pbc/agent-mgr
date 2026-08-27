@@ -37,7 +37,9 @@ def documented_prune(dest):
     backup_dest = line.split("backup-homes", 1)[1].split()[0]
     assert f"backup-homes {backup_dest} && find -H {backup_dest} " in line, \
         f"the prune is no longer gated on this backup succeeding: {line}"
-    cmd = line[line.index("find -H"):].replace(backup_dest, str(dest))
+    # Up to the `; }` closing the group, so the log redirect after it does not
+    # run here — the destination under test is a fixture, not the operator's.
+    cmd = line[line.index("find -H"):].split("; }")[0].replace(backup_dest, str(dest))
     # And fail loudly rather than open: `sh` tilde-expands, so a retarget that
     # missed would run `rm -rf` against the operator's REAL backups on this host.
     # The assertions below would fail too, but only after the deletion.
@@ -301,10 +303,10 @@ def test_tar_status_1_is_judged_by_its_message_not_its_number(
     the case this command exists for.
 
     The number cannot separate them across the two tars this repo supports.
-    Measured on macOS 14: bsdtar exits **0** for the read race in all three
-    shapes (in-place rewrite, truncate, grow) and keeps 1 for a member it could
-    not open, which it then omits — so a status-only tolerance publishes a
-    credential-less archive, exits 0, and lets retention prune the good copies."""
+    bsdtar keeps 1 for a member it could not open, which it then omits — so a
+    status-only tolerance publishes a credential-less archive, exits 0, and lets
+    retention prune the good copies. The measured race shapes live in one place,
+    the `benign` comment in `lib/backup-homes`; this does not restate them."""
     root = tmp_path / "home"
     (root / ".hermes-rowan").mkdir(parents=True)
     (root / ".hermes-rowan" / ".env").write_text("x\n")
