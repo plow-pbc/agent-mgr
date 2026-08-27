@@ -7,7 +7,6 @@ exist and still look like backups.
 import os
 import re
 import subprocess
-import tempfile
 import time
 import tarfile
 from pathlib import Path
@@ -28,20 +27,22 @@ def run_documented_cron(home, sandbox, extra_path=None):
     caller is a loaded gun; `home` must be inside `sandbox`, this test's own
     `tmp_path`.
 
-    Two floors, because each misses what the other catches. `sandbox` says what
-    this actually means and survives `--basetemp` pointed elsewhere, but
-    `is_relative_to` is satisfied by a caller passing one path as both — so the
-    absolute one stays. Resolved on both sides: on macOS `gettempdir()` is
+    Two floors, because each misses what the other catches, and neither may
+    depend on where the temp root is — an earlier pair did, and refused every
+    run under `--basetemp` and on macOS, where `gettempdir()` is
     `/var/folders/…` while pytest `resolve()`s its basetemp to
-    `/private/var/folders/…`, so comparing the unresolved pair refuses every run
-    on the platform this entry exists for — measured. A guard that fails closed
-    everywhere protects nothing, and one satisfied by its own argument protects
+    `/private/var/folders/…`. Measured.
+
+    So: strict containment in this test's sandbox, which says what it means, and
+    `home` is not the real home, which is the catastrophic case stated directly
+    and is the one no combination of arguments can satisfy. A guard that fails
+    closed everywhere protects nothing; one its own argument satisfies protects
     nothing either."""
     home, sandbox = Path(home).resolve(), Path(sandbox).resolve()
     assert home.is_relative_to(sandbox) and home != sandbox, \
         f"refusing to run a documented `rm -rf` with HOME={home}, outside {sandbox}"
-    assert home.is_relative_to(Path(tempfile.gettempdir()).resolve()), \
-        f"refusing to run a documented `rm -rf` with HOME={home}, outside the temp root"
+    assert home != Path.home().resolve(), \
+        f"refusing to run a documented `rm -rf` against the real home {home}"
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
     # The group and its redirect are the whole point of the entry: without them
