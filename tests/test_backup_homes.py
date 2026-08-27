@@ -25,14 +25,18 @@ def documented_prune(dest):
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
     # Taken from the BACKUP half rather than hand-copied, so nothing in this file
-    # is a second copy of the doc that could drift from it. That makes one
-    # assertion cover three things: the `&&` is still there gating the prune on a
-    # SUCCEEDED backup (split the entry in two, or use `;`, and a run of failed
-    # nights prunes the destination empty while writing nothing), and both halves
-    # still name the SAME destination — rename one and the cron backs up to A
-    # while `rm -rf`-ing B, silently, in either direction.
+    # is a second copy of the doc that could drift from it — and the assertion
+    # anchors the WHOLE junction rather than the connector, which costs nothing
+    # and fails closed. It covers: both halves naming the same destination (rename
+    # one and the cron backs up to A while `rm -rf`-ing B, in either direction),
+    # and the `&&` acting on the backup's own exit status. The second is not the
+    # same as `&&` being present: `backup-homes <dest> | tee -a log && find …`
+    # takes the pipeline's status from `tee`, and `… || true && find …` parses
+    # left to right, so both leave the prune ungated while reading fine. Then a
+    # run of failed nights prunes the destination empty while writing nothing.
     backup_dest = line.split("backup-homes", 1)[1].split()[0]
-    assert f"&& find -H {backup_dest} " in line, f"the two halves have parted: {line}"
+    assert f"backup-homes {backup_dest} && find -H {backup_dest} " in line, \
+        f"the prune is no longer gated on this backup succeeding: {line}"
     cmd = line[line.index("find -H"):].replace(backup_dest, str(dest))
     # And fail loudly rather than open: `sh` tilde-expands, so a retarget that
     # missed would run `rm -rf` against the operator's REAL backups on this host.
