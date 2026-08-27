@@ -45,14 +45,27 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # Written to .part and renamed on success. Straight at the final name, any
     # interruption -- SIGINT, reboot, ENOSPC -- leaves a truncated archive that
     # `ls` cannot tell from a good one, and the retention job then prunes the
-    # good ones around it. A FIXED .part name, not a unique one: at most one
-    # stale file per home per day, truncated by the next run. (Making it unique
-    # is what turned this into an unbounded invisible leak in #22.)
+    # good ones around it.
+    #
+    # The stage is unique PER INVOCATION, not a fixed `.part`. Measured: with a
+    # shared path, a manual run overlapping the nightly has both tars writing
+    # one inode; the first to finish renames it and reports success while the
+    # other keeps writing into the PUBLISHED archive. The result passes
+    # `gzip -t` and contains the other run's files -- a well-formed archive
+    # whose contents are not what its name says, which is the worst output this
+    # tool has. No flock: macOS does not ship it, and this must run there.
+    #
+    # The EXIT trap covers the ordinary failures. A hard kill still leaks one
+    # stage; that is the deliberate residue -- sweeping it needs its own
+    # lifecycle, and #22 spent five rounds proving that costs more than it saves
+    # at one operator on one host.
     out="$dest/${name#.}-$(date -u +%Y%m%d).tar.gz"
+    stage="$(mktemp "$dest/.${name#.}-XXXXXX")"
+    trap 'rm -f "$stage"' EXIT
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
-        -C "$home" -czf "$out.part" . \
+        -C "$home" -czf "$stage" . \
         || [ $? -eq 1 ]
-    mv "$out.part" "$out"
+    mv "$stage" "$out"
     n=$((n + 1))
 done
 

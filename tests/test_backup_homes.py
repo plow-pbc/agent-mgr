@@ -70,3 +70,31 @@ def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path)
     r = run(root, dest)
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
+
+
+def test_two_overlapping_runs_do_not_publish_each_others_bytes(tmp_path):
+    """A manual run overlapping the nightly. With a shared staging path both
+    tars write one inode, the first to finish renames it and reports success
+    while the other keeps writing into the *published* archive — measured, the
+    result passes `gzip -t` and contains the other run's files. A well-formed
+    archive whose contents are not what its name says.
+
+    Racy by nature: it can pass without the two overlapping, never fail without
+    a real defect."""
+    root, dest = tmp_path / "home", tmp_path / "dest"
+    (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
+    (root / ".hermes-rowan" / ".env").write_text("x\n")
+    (root / ".hermes-rowan" / "bulk").write_bytes(bytes(8 * 1024 * 1024))
+
+    a = subprocess.Popen([str(CLI), "backup-homes", str(dest)],
+                         env={"HOME": str(root), "PATH": os.environ["PATH"],
+                              "AGENT_MGR_REGISTRY": str(root / "registry")})
+    b = subprocess.Popen([str(CLI), "backup-homes", str(dest)],
+                         env={"HOME": str(root), "PATH": os.environ["PATH"],
+                              "AGENT_MGR_REGISTRY": str(root / "registry")})
+    assert a.wait() == 0 and b.wait() == 0
+
+    archive = next(iter(dest.glob("*.tar.gz")))
+    inside = set(tarfile.open(archive).getnames())      # raises on a torn archive
+    assert "./.env" in inside and "./bulk" in inside
+    assert not list(dest.glob(".hermes-rowan-*")), "a staging file leaked"
