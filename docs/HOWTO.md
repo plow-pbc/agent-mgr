@@ -85,43 +85,11 @@ agent-mgr backup-homes /somewhere/not/this/disk
 ```
 
 It globs `~/.hermes*` rather than reading the registry, so it does not depend on
-a row being current and it catches a home whose agent is mid-migration. It skips
+a row being current and it catches a home whose agent is mid-migration. A home
+declared *outside* `~/.hermes*` would not be archived, silently, while the run
+still reported success on the others — nothing does that today. It skips
 `logs/`, `cache/` and `lazy-packages/` — 1.5 GB of homes becomes ~440 MB — and
 writes mode-0600 archives, because they hold credentials.
-
-**What the archive does and does not guarantee.** It is a live copy. `tar`
-reports *"file changed as we read it"* for **any** file rewritten while it is
-being read — measured on a plain file, not only on a database — and that status
-is accepted and the archive published, so any such file can restore partially.
-In practice most of a home is quiescent between turns and comes across intact;
-the gateway's SQLite session database is the one written continuously, and its
-main file and `-wal` are read at different instants, so a restored copy may need
-SQLite's own recovery and can lose the tail of the session history.
-
-That is the deliberate trade: a nightly that stopped the rentals gateway for a
-clean read would cost more than the session tail is worth, and refusing status 1
-would make the nightly fail every night. For a consistent copy,
-`agent-mgr down <name>` first.
-
-**Two further ways an archive can be bad**, beyond the mid-rewrite case above,
-and both accepted deliberately. A run killed
-partway leaves a truncated archive under a valid name — and nothing replaces it:
-the names are date-stamped, so the next night writes a *new* file and the
-truncated one persists as the **most recent** until retention prunes it at 14
-days. And two runs overlapping *in time* both open the same path and splice two
-gzip streams into one inode; both exit 0.
-
-Both are ways the archive **container** goes wrong, and `gzip -t <archive>` is
-the one-line test for exactly that — it proves the container is whole and proves
-**nothing** about the mid-rewrite case above, which passes it cleanly while the
-contents are a mixture of instants. Only `agent-mgr down <name>` before the run
-covers that one. So after a killed or doubled run, check before reaching for the
-latest archive, and fall back to the previous night's. Writing to a temp file and renaming would prevent both, and
-across two PRs that protection produced four distinct defects of its own.
-
-It also only sees homes under `~/.hermes*`. A descriptor may declare
-`AGENT_HOME` anywhere — nothing today does — and such a home would not be
-archived, silently, while the run still reported success on the others.
 
 Nightly, with 14 days kept:
 
@@ -129,73 +97,61 @@ Nightly, with 14 days kept:
 0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find ~/agent-backups -name '*.tar.gz' -mtime +14 -delete
 ```
 
-To restore one, stop the agent first — two writers to one session database
-otherwise — and unpack into an **empty** directory: `tar -xzf` overlays rather
-than replaces, so restoring over a live home leaves every file the archive does
-not contain, including the `-wal` and `-shm` sidecars of the very session
-databases you are rolling back. That is a mixture of two points in time,
-reported as a success.
+### What an archive is worth
+
+It is a **live copy**. `tar` reports *"file changed as we read it"* for any file
+rewritten while it is being read — measured on a plain file, not only on a
+database — and that status is accepted and the archive published, so such a file
+can restore partially. Most of a home is quiescent between turns; the gateway's
+SQLite session database is the one written continuously. Refusing that status
+would fail the nightly every night, so it is a trade: for a consistent copy,
+`agent-mgr down <name>` first.
+
+Two further ways the archive *container* can go wrong, both accepted: a killed
+run leaves a truncated archive, and two runs overlapping in time splice into one
+file. Neither is repaired — names are date-stamped, so nothing overwrites a bad
+archive and it stays the **newest** until retention prunes it at 14 days.
+
+`gzip -t <archive>` tests the container and nothing else: a mid-rewrite archive
+passes it cleanly. So check before restoring, and fall back to the previous
+night's.
+
+### Restoring one
 
 ```sh
 gzip -t ~/agent-backups/hermes-rowan-20260826.tar.gz \
   && agent-mgr down rowan \
   && home=$(agent-mgr resolve rowan | sed -n 's/^AGENT_HOME=//p') \
-  && real=$(readlink -f "$home") \
-  && b=$(basename "$real") \
-  && aside="$(dirname "$real")/restoring-${b#.}-$(date -u +%Y%m%d%H%M%S)" \
-  && mv "$real" "$aside" \
-  && mkdir -p "$real" \
-  && tar -C "$real" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz \
+  && mv "$home" "$home.old" \
+  && mkdir -p "$home" \
+  && tar -C "$home" -xzf ~/agent-backups/hermes-rowan-20260826.tar.gz \
   && agent-mgr restore rowan \
   && agent-mgr up rowan
 ```
 
-Why the recipe is shaped that way:
+One `&&` chain, not `set -e`: this is a paste-into-your-shell block, and
+`errexit` in an interactive shell closes the session on the first failure —
+over SSH, taking the error you need to read with it. Chained from `down`
+because that is the precondition and it can legitimately fail: it runs the
+agent's `AGENT_PRE_TRANSITION` veto, and the rentals agent refuses to stop
+mid-ingest by design.
 
-- **`readlink -f`, then move and recreate the *target*.** Moving `$home` itself
-  would move the **link**, and the next `mkdir -p` would make a plain directory
-  on the root disk — the restore landing on the wrong volume with the real data
-  orphaned at the old target. Resolving first makes the symlinked and plain
-  cases identical.
-- **A `&&` chain starting at `down`, not `set -e`.** `down` is the precondition
-  and it can legitimately fail: it runs the agent's `AGENT_PRE_TRANSITION` veto,
-  and the rentals agent refuses to stop mid-ingest by design. Unguarded, a
-  vetoed `down` renames the home out from under a *running* container and brings
-  the agent up on the restored copy while the live gateway writes into the
-  set-aside. `set -e` would be worse than the chain: interactive bash honours
-  it, so the first failure closes the operator's session — over SSH, taking the
-  veto message with it.
-- **The set-aside is a sibling of `$real`.** `dirname "$real"` is the same
-  filesystem, so the move is a rename. Under `$HOME` it would be a cross-device
-  *copy* of the whole home onto the root disk — the disk that was too small in
-  the symlinked case to begin with.
-- **`restoring-${b#.}-<stamp>`.** Dot stripped so a plain `ls` shows it, because
-  a hidden credential-bearing copy is one nobody deletes. The prefix keeps it out
-  of the `~/.hermes*` glob so the nightly does not archive a dead home as live.
-  The stamp stops a second attempt nesting inside the first. Delete it once the
-  restore is verified.
-- **The archive is contents-rooted** (`./` entries, no top directory), which is
-  why it needs a named target and cannot splat into `$HOME`. `logs/`, `cache/`
-  and `lazy-packages/` are excluded from it, so a restored home does not have
-  them — that is expected, not a truncated archive, and the agent rebuilds them.
-- **If the chain stops part-way, do not undo and do not re-run it yet.** The
-  set-aside was a *rename*, so whatever moved still exists in full — nothing has
-  been lost and nothing needs rescuing in a hurry. Look at what is actually at
-  `$real` and `$aside` first. Re-pasting the block is the move to avoid: it
-  computes a fresh stamp and renames the half-restored `$real` into a *second*
-  `restoring-*` sibling, so you then have two — distinguishable only by their
-  stamps, and the newer one is the partial.
+The target must be **empty**: `tar -xzf` overlays rather than replaces, so
+unpacking over a live home leaves every file the archive does not contain —
+including the `-wal` and `-shm` sidecars of the very session databases you are
+rolling back. The archive is contents-rooted (`./` entries), which is why it
+needs `-C` and cannot splat into `$HOME`; `logs/`, `cache/` and
+`lazy-packages/` are excluded from it and are not recreated, which is expected
+rather than a truncated archive.
 
-  Do not leave it parked for long, either: while `$real` holds a half-restored
-  home the nightly keeps archiving *that*, and the cron's `-mtime +14` prunes
-  the good archives out from under you. Finish or roll back inside that window.
+Keep `$home.old` until the restore is verified, then delete it. **If the chain
+stops part-way, look before undoing anything** — the stop may have come before
+the `mv`, in which case `$home` is still your live home.
 
-  There is deliberately no undo recipe here. The right action differs at every
-  stop point — a vetoed `down` moved nothing, a failed `tar` leaves a partial
-  `$real` beside a complete `$aside`, and a failed `restore` or `up` leaves a
-  *good* `$real` that wants finishing rather than rolling back — and three
-  attempts at compressing that into one instruction each produced a worse one
-  than the last, including a `mv` that nests the home inside itself.
+**If `$home` is a symlink** — supported, though nothing uses it today — none of
+the above is safe as written: `mv` moves the link rather than its target, and
+the restore then lands on the wrong volume. Resolve it with `readlink -f` and
+operate on the target instead.
 
 ## Two layers: where does my code go?
 
