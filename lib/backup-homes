@@ -51,8 +51,8 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # whose contents are not what its name says, which is the worst output this
     # tool has. No flock: macOS does not ship it, and this must run there.
     #
-    # The trap covers ordinary failure and the terminating signals. SIGKILL and
-    # power loss still leak one stage; that is the deliberate residue -- sweeping it needs its own
+    # The trap covers ordinary failure. A hard kill still leaks one stage; that
+    # is the deliberate residue -- sweeping it needs its own
     # lifecycle, and #22 spent five rounds proving that costs more than it saves
     # at one operator on one host.
     out="$dest/${name#.}-$(date -u +%Y%m%d).tar.gz"
@@ -64,16 +64,17 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # in this script creates a file. (The first archives taken by hand, before
     # any staging existed, came out 0664 -- that is the failure this replaced.)
     stage="$(mktemp "$dest/.${name#.}-XXXXXX")"
-    # EXIT plus the terminating signals. Measured on this host (bash 5.x, Linux)
-    # the EXIT trap DOES run on an untrapped SIGTERM, so this is not the
-    # reproduced defect it was flagged as -- but it is three words, and the
-    # supported floor includes macOS bash 3.2, which cannot be tested from here.
+    # EXIT only, deliberately. Measured on bash 5.2.21: the EXIT trap DOES run on
+    # an untrapped SIGTERM and the stage is removed, so the signal traps that
+    # were added here covered an unreproduced case -- and cost two real bugs in
+    # two rounds doing it. A bare handler swallowed the signal, making the run
+    # unterminable and inviting the SIGKILL it existed to prevent; giving it an
+    # exit status then stopped the process dying BY the signal, turning a
+    # `systemctl stop` into a failed unit and misreporting INT and HUP. Doing it
+    # correctly means re-raising per signal, which is more machinery than the
+    # residue is worth here. The residue: SIGKILL, power loss, and a possible
+    # SIGTERM leak on the macOS bash 3.2 floor, untested from this host.
     trap 'rm -f "$stage"' EXIT
-    # The signal handlers must EXIT. A bare cleanup handler catches the signal
-    # and then resumes, so the run is no longer terminable -- a systemd stop or
-    # a `timeout` kill would let it archive on and the supervisor would escalate
-    # to SIGKILL, which is precisely the case these traps exist to shrink.
-    trap 'rm -f "$stage"; exit 143' INT TERM HUP
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
         -C "$home" -czf "$stage" . \
         || [ $? -eq 1 ]
