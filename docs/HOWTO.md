@@ -7,7 +7,7 @@ those agents have in common; each agent owns only what makes it itself.
 ## Install
 
 Clone and symlink: [the README's install block](../README.md#agent-mgr) — one
-clone, two symlinks. Kept there rather than copied here, because this block and
+clone, one symlink. Kept there rather than copied here, because this block and
 the README's had already drifted apart on `mkdir -p` and `ln -sf`. Then:
 
 ```sh
@@ -89,14 +89,18 @@ a row being current and it catches a home whose agent is mid-migration. It skips
 `logs/`, `cache/` and `lazy-packages/` — 1.5 GB of homes becomes ~440 MB — and
 writes mode-0600 archives, because they hold credentials.
 
-**What the archive does and does not guarantee.** It is taken from a *running*
-agent, so it is crash-consistent, not transaction-consistent. The irreplaceable
-half — `auth.json`, the dotenv, `SOUL.md`, memories, kanban — are plain files and
-come across whole. The gateway's SQLite session database is the exception: its
-main file and its `-wal` are read at different instants, so a restored copy may
-need SQLite's own recovery and can lose the tail of the session history. That is
-the deliberate trade: a nightly that stopped the rentals gateway for a clean read
-would cost more than the session tail is worth. For a consistent copy,
+**What the archive does and does not guarantee.** It is a live copy. `tar`
+reports *"file changed as we read it"* for **any** file rewritten while it is
+being read — measured on a plain file, not only on a database — and that status
+is accepted and the archive published, so any such file can restore partially.
+In practice most of a home is quiescent between turns and comes across intact;
+the gateway's SQLite session database is the one written continuously, and its
+main file and `-wal` are read at different instants, so a restored copy may need
+SQLite's own recovery and can lose the tail of the session history.
+
+That is the deliberate trade: a nightly that stopped the rentals gateway for a
+clean read would cost more than the session tail is worth, and refusing status 1
+would make the nightly fail every night. For a consistent copy,
 `agent-mgr down <name>` first.
 
 It also only sees homes under `~/.hermes*`. A descriptor may declare

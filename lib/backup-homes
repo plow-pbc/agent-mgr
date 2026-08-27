@@ -6,13 +6,13 @@
 # pinned skills. Nothing rebuilds the volume half: auth.json, the dotenv, the
 # sessions, the memories and the kanban exist in exactly one place.
 #
-#   backup-homes /somewhere/not/this/disk
+#   agent-mgr backup-homes /somewhere/not/this/disk
 #
 # A glob rather than the registry, deliberately. It needs no row to be current,
 # so it also catches a home whose agent is mid-migration or not registered yet:
 # measured on this host, it found two the registry did not have.
 set -euo pipefail
-dest="${1:?usage: backup-homes <dest>}"
+dest="${1:?usage: agent-mgr backup-homes <dest>}"
 
 # Before anything is created. These archives hold .env and auth.json, and tar
 # honours the umask -- the first ones taken here by hand came out 0664.
