@@ -81,18 +81,22 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
 @pytest.mark.parametrize(
     "starting_dotenv,preserved",
     [
-        (b"HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n", b"HOSTEX_TOKEN=keep-me"),
+        (b"HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n", (b"HOSTEX_TOKEN=keep-me",)),
         # No DOMO_* at all -- the append arm.
-        (b"HOSTEX_TOKEN=keep-me\n", b"HOSTEX_TOKEN=keep-me"),
+        (b"HOSTEX_TOKEN=keep-me\n", (b"HOSTEX_TOKEN=keep-me",)),
         # Two canonical declarations, which is what appending a line at the
         # bottom produces. The upsert must leave exactly one, no stale value.
-        (b"HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nDOMO_MCP_TOKEN=staler\n", b"HOSTEX_TOKEN=keep-me"),
-        # Bytes this command does not own. A latin-1 byte in a PMS password
-        # becomes U+FFFD if the file is decoded to edit two of its lines, and
-        # \xc2\x85 is a line break to str-level splitting but not to the
-        # gateway -- so one inside a value would be cut in half.
+        (b"HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nDOMO_MCP_TOKEN=staler\n",
+         (b"HOSTEX_TOKEN=keep-me",)),
+        # Bytes this command does not own, and TWO independent mechanisms, so
+        # both lines are asserted: a latin-1 byte becomes U+FFFD if the file is
+        # decoded to edit it, and \xc2\x85 is a line break to str-level
+        # splitting but not to the gateway. Asserting only the first would pass
+        # a surrogateescape implementation that still cut the second in half
+        # into `HOSTEX_TOKEN=a` plus a bogus `b` line -- and asserting every
+        # non-DOMO line is what makes "no line was added" fall out.
         (b"SEAM_API_KEY=caf\xe9-latin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
-         b"SEAM_API_KEY=caf\xe9-latin1"),
+         (b"SEAM_API_KEY=caf\xe9-latin1", b"HOSTEX_TOKEN=a\xc2\x85b")),
     ],
     ids=["pre-seeded-empty", "absent", "canonical-duplicate", "bytes-we-do-not-own"],
 )
@@ -125,7 +129,8 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(run, inst
     # In bytes, because a key this command does not own may not be valid UTF-8.
     assert b"DOMO_DEVICE_UID=dev_abc" in body.split(b"\n")
     assert b"DOMO_MCP_TOKEN=tok_xyz" in body.split(b"\n")
-    assert preserved in body.split(b"\n"), "a byte this command does not own was rewritten"
+    for line in preserved:
+        assert line in body.split(b"\n"), "a byte this command does not own was rewritten"
     # One declaration each, in any spelling -- not a second appended beside the
     # one it was meant to replace, and no stale value left underneath.
     assert body.count(b"DOMO_MCP_TOKEN=") == 1

@@ -131,13 +131,27 @@ def main(argv):
         # off-mount does outright, and it left macOS on a fallback Linux never
         # exercised.
         resolved = os.path.realpath(home)
+        staging_dir = os.path.dirname(resolved)
+        # Checked before a credential is written, because realpath resolves only
+        # ONE spelling of a relocated home. A home that is a MOUNTPOINT -- the
+        # other ordinary way onto a bigger disk -- comes back unchanged, and its
+        # parent is then a different device: the rename below would fail EXDEV
+        # after the replacement was fully written, reporting `.env` (the one
+        # thing that is fine) instead of the staging directory that is actually
+        # wrong. Two lines to turn that into the real diagnosis, before rather
+        # than after.
+        if os.fstat(dir_fd).st_dev != os.stat(staging_dir).st_dev:
+            die("cannot stage a replacement for %s/.env: its parent %s is on a "
+                "different filesystem, so the replacement cannot be staged off "
+                "the mount. Nothing was written." % (home, staging_dir))
         tmp_path = os.path.join(
-            os.path.dirname(resolved),
+            staging_dir,
             ".%s.set-latch.%s" % (os.path.basename(resolved), os.urandom(8).hex()))
         try:
             fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except OSError as exc:
-            die("cannot stage a replacement beside %s: %s" % (resolved, exc))
+            die("cannot stage a replacement beside %s: %s. Nothing was written."
+                % (resolved, exc))
         try:
             with os.fdopen(fd, "wb") as handle:
                 # On the descriptor, never the name: a path-based chmod is a
