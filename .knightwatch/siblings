@@ -4,9 +4,15 @@
 #
 # One per line. The reviewer host must also carry a SOURCE_PATHS entry for
 # each, or the sibling reports as `missing` and is never searched.
+#
+# This list must gain a row when README.md's fleet table does — the table is
+# the authority for which agent repos exist, this file only makes them
+# searchable. The dependency table beside it is the authority for the rest.
 
 plow-pbc/hermes-plow-chat
 plow-pbc/str-hermes-agent
 plow-pbc/property-hunt-hermes-agent
 plow-pbc/life-assistant-hermes-agent
 plow-pbc/plow
+plow-pbc/latch
+plow-pbc/seed-plow-chat
