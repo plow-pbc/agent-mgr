@@ -40,6 +40,12 @@ dest="${1:?usage: agent-mgr backup-homes <dest>}"
 # that account rename $dest away after this line, and walking every component to
 # a trust root is the syscall-guard sequence this check exists to stop chasing.
 # The path leading to $dest is the operator's to get right.
+# Missing and loose are separate messages because their remedies are opposites.
+# "must be a directory" invites `mkdir -p`, which under an unmounted mount point
+# builds the tree on the local disk and reports success -- archives on the wrong
+# volume, gone at the next mount.
+[ -e "$dest" ] \
+    || { echo "backup-homes: $dest does not exist -- if it is a mount point, it is not mounted; do not mkdir it" >&2; exit 1; }
 [ -n "$(find -H "$dest" -maxdepth 0 -type d -user "$(id -un)" ! -perm -g+w ! -perm -o+w 2>/dev/null)" ] \
     || { echo "backup-homes: $dest must be a directory you own that nobody else can write -- try: chmod 700 $dest" >&2; exit 1; }
 

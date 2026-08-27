@@ -236,10 +236,12 @@ leading to your destination is yours to get right.
 
 Nightly, with 14 days kept. The run directory is the unit to prune; the
 `-name` clause is there for archives written flat by an earlier shape, and
-matches nothing once they age out:
+matches nothing once they age out. `-H` for the same reason the command uses
+it — without it `find` does not resolve a symlinked starting point, so
+`-mindepth 1` matches nothing and the prune silently removes nothing, forever:
 
 ```sh
-0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find ~/agent-backups -mindepth 1 -maxdepth 1 \( -type d -o -name '*.tar.gz' \) -mtime +14 -exec rm -rf {} +
+0 4 * * * ~/.local/bin/agent-mgr backup-homes ~/agent-backups && find -H ~/agent-backups -mindepth 1 -maxdepth 1 \( -type d -o -name '*.tar.gz' \) -mtime +14 -exec rm -rf {} +
 ```
 
 ### What an archive is worth

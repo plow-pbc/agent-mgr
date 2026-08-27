@@ -149,6 +149,9 @@ def test_a_destination_that_does_not_exist_is_refused_and_not_created(tmp_path):
     r = run(root, dest)
     assert r.returncode != 0, r.stdout
     assert not dest.exists(), "it created the destination instead of failing"
+    # Its own message, not the loose-permissions one: "must be a directory"
+    # invites `mkdir -p`, which is the wrong-disk outcome this test prevents.
+    assert "does not exist" in r.stderr, r.stderr
 
 
 @pytest.mark.parametrize("mode", [0o775, 0o757], ids=["group-writable", "other-writable"])
