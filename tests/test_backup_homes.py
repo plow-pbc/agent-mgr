@@ -26,7 +26,12 @@ def run_documented_cron(home, extra_path=None):
     The running, not just the building, because the line ends in `rm -rf` over a
     `~` this deliberately leaves unexpanded. Handing that string to a caller is
     a loaded gun; refusing any `home` outside the temp root is the safety."""
-    assert str(home).startswith(tempfile.gettempdir() + os.sep), \
+    # realpath both sides: on macOS `gettempdir()` is /var/folders/... while
+    # pytest hands back /private/var/folders/..., and a prefix test on the
+    # unresolved pair refuses every run on the platform this entry is checked
+    # for. A guard that fails closed everywhere protects nothing.
+    tmp_root = os.path.realpath(tempfile.gettempdir())
+    assert os.path.realpath(home).startswith(tmp_root + os.sep), \
         f"refusing to run a documented `rm -rf` with HOME={home}"
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
@@ -298,15 +303,25 @@ def test_the_documented_prune_takes_only_what_this_command_wrote(tmp_path, dest)
         fresh_run.name}
 
 
-def tar_shim(directory, message, exit_code=1):
-    """A `tar` that writes its `-czf` target, reports `message`, and exits.
-    A shim rather than a real race: an earlier version of this suite raced a
-    live writer and passed green on any machine where the overlap missed."""
+def tar_shim(directory, message, only_for=None):
+    """A `tar` that reports `message` on stderr and exits 1.
+
+    A shim rather than a real failure, for two reasons: an earlier version of
+    this suite raced a live writer and went green wherever the overlap missed,
+    and the obvious injection — a mode-000 file — stops injecting under root,
+    which is this repo's own worst bug class.
+
+    `only_for` narrows it to homes whose path ends in that string; every other
+    home gets a real (empty) archive and success. Without it, every home fails.
+    """
     directory.mkdir(exist_ok=True)
+    guard = f'case "$home" in *{only_for}) ;; *) : > "$out"; exit 0;; esac\n' if only_for else ""
     (directory / "tar").write_text(
-        "#!/bin/sh\nprev=\nfor a in \"$@\"; do\n"
-        '  [ "$prev" = -czf ] && : > "$a"\n  prev="$a"\ndone\n'
-        f'[ -n "{message}" ] && printf \'%s\\n\' "{message}" >&2\nexit {exit_code}\n')
+        "#!/bin/sh\nprev=; out=; home=\nfor a in \"$@\"; do\n"
+        '  [ "$prev" = -czf ] && out="$a"\n  [ "$prev" = -C ] && home="$a"\n  prev="$a"\ndone\n'
+        + guard
+        + '[ -n "$out" ] && : > "$out"\n'
+        + f'[ -n "{message}" ] && printf \'%s\\n\' "{message}" >&2\nexit 1\n')
     (directory / "tar").chmod(0o755)
     return str(directory)
 
@@ -361,17 +376,10 @@ def test_one_failing_home_does_not_cost_the_others_their_night(tmp_path, dest):
         (root / name).mkdir(parents=True)
         (root / name / ".env").write_text("x\n")
 
-    # A `tar` that refuses only the first home and works for the rest.
-    shim = tmp_path / "bin"
-    shim.mkdir()
-    (shim / "tar").write_text(
-        "#!/bin/sh\nprev=; out=; home=\nfor a in \"$@\"; do\n"
-        '  [ "$prev" = -czf ] && out="$a"\n  [ "$prev" = -C ] && home="$a"\n  prev="$a"\ndone\n'
-        'case "$home" in *alpha) echo "tar: Cannot open: Permission denied" >&2; exit 1;; esac\n'
-        ': > "$out"\n')
-    (shim / "tar").chmod(0o755)
+    shim = tar_shim(tmp_path / "bin", "tar: Cannot open: Permission denied",
+                    only_for="alpha")
 
-    r = run(root, dest, extra_path=str(shim))
+    r = run(root, dest, extra_path=shim)
     assert r.returncode != 0, "a home that could not be archived must fail the run"
     assert [p.name for p in dest.glob("*/*.tar.gz")] == ["hermes-omega.tar.gz"], \
         "the healthy home lost its night to the broken one"
@@ -397,16 +405,8 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
     if case == "a home fails":
         (root / "agent-backups").mkdir()
         (root / "agent-backups").chmod(0o700)
-        # A `tar` that refuses one home, rather than a mode-000 file: as root
-        # that file is readable and the injection would quietly stop injecting.
         shim = tmp_path / "bin"
-        shim.mkdir()
-        (shim / "tar").write_text(
-            "#!/bin/sh\nprev=; out=; home=\nfor a in \"$@\"; do\n"
-            '  [ "$prev" = -czf ] && out="$a"\n  [ "$prev" = -C ] && home="$a"\n  prev="$a"\ndone\n'
-            'case "$home" in *alpha) echo "tar: Cannot open: Permission denied" >&2; exit 1;; esac\n'
-            ': > "$out"\n')
-        (shim / "tar").chmod(0o755)
+        tar_shim(shim, "tar: Cannot open: Permission denied", only_for="alpha")
 
     r = run_documented_cron(root, extra_path=str(shim) if shim else None)
 
