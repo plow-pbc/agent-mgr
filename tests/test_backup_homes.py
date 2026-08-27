@@ -7,6 +7,7 @@ exist and still look like backups.
 import os
 import re
 import subprocess
+import tempfile
 import time
 import tarfile
 from pathlib import Path
@@ -18,12 +19,29 @@ HOWTO = Path(__file__).resolve().parent.parent / "docs" / "HOWTO.md"
 RUN_DIR = re.compile(r"\d{8}T\d{6}Z-\d+")
 
 
-def documented_cron_line():
-    """The whole entry with its schedule stripped, so a test can run what the
-    operator pastes rather than a paraphrase of it."""
+def run_documented_cron(home, extra_path=None):
+    """Run the entry as written — schedule stripped, installed path substituted,
+    nothing else — with `~` resolving through `home`.
+
+    The running, not just the building, because the line ends in `rm -rf` over a
+    `~` this deliberately leaves unexpanded. Handing that string to a caller is
+    a loaded gun; refusing any `home` outside the temp root is the safety."""
+    assert str(home).startswith(tempfile.gettempdir() + os.sep), \
+        f"refusing to run a documented `rm -rf` with HOME={home}"
     line = next(l for l in HOWTO.read_text().splitlines()
                 if l.lstrip().startswith("0 4 * * *") and "find -H" in l)
-    return line.split(None, 5)[5].replace("~/.local/bin/agent-mgr", str(CLI))
+    # The group and its redirect are the whole point of the entry: without them
+    # only the prune's output is logged, and every diagnostic comes from the
+    # backup. `documented_prune` also splits on `; }`, so this is what lets that
+    # split rest on something enforced rather than on the current phrasing.
+    assert re.search(r"\{\s+\S*agent-mgr backup-homes ", line) and "; } >>" in line, \
+        f"the entry no longer groups both halves into the log: {line}"
+    return subprocess.run(
+        ["sh", "-c", line.split(None, 5)[5].replace("~/.local/bin/agent-mgr", str(CLI))],
+        capture_output=True, text=True,
+        env={"HOME": str(home), "AGENT_MGR_REGISTRY": str(home / "registry"),
+             "PATH": f"{extra_path}:{os.environ['PATH']}" if extra_path
+                     else os.environ["PATH"]})
 
 
 def documented_prune(dest):
@@ -359,37 +377,49 @@ def test_one_failing_home_does_not_cost_the_others_their_night(tmp_path, dest):
         "the healthy home lost its night to the broken one"
 
 
-def test_the_documented_cron_entry_leaves_a_trace_when_a_home_fails(tmp_path):
+@pytest.mark.parametrize("case", ["a home fails", "the destination is missing"])
+def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path, case):
     """The night worth hearing about is the one that failed, and cron has no
     `MAILTO` here — on a host without a working MTA its output is discarded. So
     the entry groups both halves and redirects them, and this runs the entry as
-    written: only the installed path is substituted, and `~` resolves through
-    the fixture's own `HOME`.
+    written rather than a paraphrase.
 
-    Grouping is the load-bearing half. Redirect the prune alone and the log
-    catches nothing that matters, because every diagnostic comes from the
-    backup."""
+    Both branches, because they fail in different places: a home that cannot be
+    archived is the script talking, while a missing destination is the shell
+    failing to even reach it — the unmounted-disk night, and the reason the log
+    lives outside the destination rather than in it."""
     root = tmp_path / "home"
     for name in (".hermes-alpha", ".hermes-omega"):
         (root / name).mkdir(parents=True)
         (root / name / ".env").write_text("x\n")
-    unreadable = root / ".hermes-alpha" / "auth.json"
-    unreadable.write_text("credentials\n")
-    unreadable.chmod(0o000)
-    dest = root / "agent-backups"
-    dest.mkdir()
-    dest.chmod(0o700)
 
-    r = subprocess.run(["sh", "-c", documented_cron_line()],
-                       capture_output=True, text=True,
-                       env={"HOME": str(root),
-                            "AGENT_MGR_REGISTRY": str(root / "registry"),
-                            "PATH": os.environ["PATH"]})
-    unreadable.chmod(0o644)  # so tmp_path teardown can read it back
+    shim = None
+    if case == "a home fails":
+        (root / "agent-backups").mkdir()
+        (root / "agent-backups").chmod(0o700)
+        # A `tar` that refuses one home, rather than a mode-000 file: as root
+        # that file is readable and the injection would quietly stop injecting.
+        shim = tmp_path / "bin"
+        shim.mkdir()
+        (shim / "tar").write_text(
+            "#!/bin/sh\nprev=; out=; home=\nfor a in \"$@\"; do\n"
+            '  [ "$prev" = -czf ] && out="$a"\n  [ "$prev" = -C ] && home="$a"\n  prev="$a"\ndone\n'
+            'case "$home" in *alpha) echo "tar: Cannot open: Permission denied" >&2; exit 1;; esac\n'
+            ': > "$out"\n')
+        (shim / "tar").chmod(0o755)
 
-    assert r.returncode != 0, "a failed backup must hold the prune back"
+    r = run_documented_cron(root, extra_path=str(shim) if shim else None)
+
+    assert r.returncode != 0, "a failed night must hold the prune back"
     log = (root / "backup-homes.log").read_text()
-    assert "tar failed on" in log, f"the backup half never reached the log: {log!r}"
-    assert "one or more homes were not archived" in log, log
-    assert [p.name for p in dest.glob("*/*.tar.gz")] == ["hermes-omega.tar.gz"], \
-        "the healthy home lost its night to the broken one"
+    if case == "a home fails":
+        assert "tar failed on" in log, f"the backup half never reached the log: {log!r}"
+        assert "one or more homes were not archived" in log, log
+        assert [p.name for p in (root / "agent-backups").glob("*/*.tar.gz")] == \
+            ["hermes-omega.tar.gz"], "the healthy home lost its night to the broken one"
+    else:
+        assert "does not exist" in log, \
+            f"the unmounted-destination night left no trace: {log!r}"
+        assert not (root / "agent-backups").exists(), "it created the destination"
+
+
