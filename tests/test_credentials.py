@@ -96,8 +96,15 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
         # into `HOSTEX_TOKEN=a` plus a bogus `b` line.
         (b"SEAM_API_KEY=caf\xe9-latin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
          (b"SEAM_API_KEY=caf\xe9-latin1", b"HOSTEX_TOKEN=a\xc2\x85b")),
+        # No terminating newline -- a hand-edited file, or an editor configured
+        # not to add one. Every other row ends in \n, so the trailing-newline
+        # conditional in upsert() is never driven through its False side; make
+        # the pop unconditional and this row loses HOSTEX_TOKEN entirely,
+        # republished at 0600 as a well-formed file with set-latch exiting 0.
+        (b"HOSTEX_TOKEN=keep-me", (b"HOSTEX_TOKEN=keep-me",)),
     ],
-    ids=["pre-seeded-empty", "absent", "canonical-duplicate", "bytes-we-do-not-own"],
+    ids=["pre-seeded-empty", "absent", "canonical-duplicate", "bytes-we-do-not-own",
+         "no-trailing-newline"],
 )
 @pytest.mark.parametrize(
     "stdin",
