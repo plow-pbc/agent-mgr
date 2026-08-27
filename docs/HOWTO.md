@@ -143,7 +143,7 @@ prerequisite you cannot satisfy for them. Confirm it before step 1 — not for
 correctness, since 5 and 6 are free to run late, but for their calendar. A
 missing Latch found at step 5 does not end when they install it: step 5 still
 has to run, which is a second sitting with them — 6 is yours and follows. And
-step 1 cannot be un-started, so the agent is live and Mac-less until then.
+step 1 cannot be un-started, so the agent is live and Mac-less until 6 lands.
 
 **The pair in step 5 is copy-once by design.** Latch drops it from memory once
 they confirm they have saved it, which relaying it through a chat window
