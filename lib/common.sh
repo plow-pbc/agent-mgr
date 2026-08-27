@@ -805,10 +805,11 @@ require_running() {
 # Last-wins falls out of assigning as it reads rather than stopping at a match,
 # which is what the gateway does too (hermes_cli/config.py assigns into a dict).
 dotenv_read() {
-    # Readable, checked separately, because awk's own failure would surface as
-    # an empty value -- and "the credential is missing" sends the operator to
-    # re-mint and revoke a live one over a permission problem.
-    [ -r "$2" ] || die "cannot read $2"
+    # No readability guard here: load_agent parses this same file for AGENT_TZ
+    # before any caller reaches this, and parse_env_file names an unreadable one
+    # there. A second check could only fire if the mode changed mid-command,
+    # which nothing here does -- and an unreachable guard that a test appears to
+    # cover is worse than none, because it reads as protection.
     # The separator is required BEFORE the key test. Under -F= a line carrying
     # no `=` puts the whole line in $1, so a stray bare `DOMO_MCP_TOKEN` matched
     # the key and then substr returned that line as its own value -- non-empty,

@@ -270,12 +270,13 @@ def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credent
     permission problem -- a `.env` written 600 under another account being the
     realistic way to get here.
 
-    The negative assertion is the load-bearing one: it is what fails if the
-    errno is ever swallowed again. And it guards a seam no reading of
-    dotenv_read alone would show -- the non-zero exit only reaches the operator
-    because `uid="$(dotenv_read ...)"` is a bare assignment under `set -e`, so
-    wrapping that call in a `local`, an `if` or a `||` would discard the status
-    and quietly restore the misdiagnosis with the new code fully intact."""
+    The diagnosis comes from parse_env_file, which load_agent runs over this
+    same file for AGENT_TZ before check-latch reads a credential out of it --
+    so this pins the resolver's read, not dotenv_read's. The negative assertion
+    is the load-bearing one: it is what fails if the errno is ever swallowed
+    back into a bare shell redirection error, which names lib/common.sh rather
+    than the agent and reads as a bug in the tool rather than a permission
+    problem on a file the operator can fix."""
     # Asserted rather than skipped: root reads a 000 file, so the test would
     # pass while proving nothing, and a skip hides that.
     assert os.geteuid() != 0, "run the suite unprivileged; root reads a 000 file"
