@@ -143,11 +143,19 @@ prerequisite you cannot satisfy for them.
 
 **Whether the agent drives a Mac is not a per-person choice here.** The section
 above says an agent that drives none deletes the `latch:` block from its
-`config.yaml` — but that file belongs to the *repo*, and `restore` installs it
-into every registered row's home. Delete it for the person with no Mac and the
-next `restore` of a sibling takes that sibling's Mac away. A shared repo means
-a shared declaration: everyone on it drives a Mac, or nobody does. Someone who
-needs the other answer needs a repo of their own.
+`config.yaml`. That file belongs to the *repo*: `restore` installs it into
+whichever home it is run for, so deleting the block and later restoring a
+Latch-using sibling takes that sibling's Mac away.
+
+Deleting it from one instance's *installed* copy instead is worse, not better —
+`check-latch` and the gateway both read `$AGENT_HOME/config.yaml`, so it appears
+to work right up until that instance's next `restore` puts the block back.
+
+Nor can a Mac-less row just leave the block and skip the credential:
+`check-latch` refuses a blank `DOMO_DEVICE_UID` outright, because a declared
+latch with no credential is a broken agent rather than an unconfigured one. So
+a shared repo means a shared declaration — every row on it drives a Mac, or
+none does — and someone who needs the other answer needs a repo of their own.
 
 **The pair in step 5 is copy-once by design.** Latch drops it from memory once
 they confirm they have saved it, which relaying it through a chat window

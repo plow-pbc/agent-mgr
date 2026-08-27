@@ -19,6 +19,13 @@ mcp_servers:
   #
   # Baseline rather than optional because most agents want it: a new one is
   # wired for Latch and you remove this if it drives nothing.
+  #
+  # "Deletes it" is a REPO-level act, so it is all-or-nothing across every row
+  # registered against this repo: `restore` installs this file into whichever
+  # home it is run for, so removing the block and restoring a Latch-using
+  # sibling takes that sibling's Mac away. Deleting it from one instance's
+  # installed copy instead lasts until that instance's next restore. If some
+  # rows here drive a Mac and some do not, they need separate repos.
   latch:
     url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp
     headers:
