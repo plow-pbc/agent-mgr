@@ -51,8 +51,8 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # whose contents are not what its name says, which is the worst output this
     # tool has. No flock: macOS does not ship it, and this must run there.
     #
-    # The EXIT trap covers the ordinary failures. A hard kill still leaks one
-    # stage; that is the deliberate residue -- sweeping it needs its own
+    # The trap covers ordinary failure and the terminating signals. SIGKILL and
+    # power loss still leak one stage; that is the deliberate residue -- sweeping it needs its own
     # lifecycle, and #22 spent five rounds proving that costs more than it saves
     # at one operator on one host.
     out="$dest/${name#.}-$(date -u +%Y%m%d).tar.gz"
@@ -64,7 +64,11 @@ for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
     # in this script creates a file. (The first archives taken by hand, before
     # any staging existed, came out 0664 -- that is the failure this replaced.)
     stage="$(mktemp "$dest/.${name#.}-XXXXXX")"
-    trap 'rm -f "$stage"' EXIT
+    # EXIT plus the terminating signals. Measured on this host (bash 5.x, Linux)
+    # the EXIT trap DOES run on an untrapped SIGTERM, so this is not the
+    # reproduced defect it was flagged as -- but it is three words, and the
+    # supported floor includes macOS bash 3.2, which cannot be tested from here.
+    trap 'rm -f "$stage"' EXIT INT TERM HUP
     tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
         -C "$home" -czf "$stage" . \
         || [ $? -eq 1 ]

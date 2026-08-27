@@ -12,10 +12,10 @@ CLI = Path(__file__).resolve().parent.parent / "agent-mgr"
 
 
 def run(home_root, dest):
-    # umask 022 forced on the child: it would otherwise inherit the runner's,
-    # and on a host that already defaults to 0077 the mode assertion below
-    # passes with `umask 077` deleted from the script — silently ceasing to
-    # guard the credential exposure it exists for.
+    # umask 022 forced on the child: it would otherwise inherit the runner's, and
+    # on a host already defaulting to 0077 the mode assertion below would hold
+    # for the runner's reason rather than the script's. Removing that second
+    # source is what leaves mktemp as the only thing producing the 0600.
     # Through the CLI, not the library file: `agent-mgr backup-homes` is the only
     # installed entry point, so every assertion below crosses the dispatch arm —
     # a dropped arm, a lost "$@", or a swallowed exit status fails the suite.
@@ -87,7 +87,10 @@ def test_two_overlapping_runs_do_not_publish_each_others_bytes(tmp_path):
     root, dest = tmp_path / "home", tmp_path / "dest"
     (root / ".hermes-rowan").mkdir(parents=True), dest.mkdir()
     (root / ".hermes-rowan" / ".env").write_text("x\n")
-    (root / ".hermes-rowan" / "bulk").write_bytes(bytes(8 * 1024 * 1024))
+    # Incompressible: deflate eats an all-zero 8 MiB in a few milliseconds, which
+    # is shorter than the spawn skew between the two Popens — the overlap this
+    # test depends on would collapse and it would pass without ever racing.
+    (root / ".hermes-rowan" / "bulk").write_bytes(os.urandom(8 * 1024 * 1024))
 
     a = subprocess.Popen([str(CLI), "backup-homes", str(dest)],
                          env={"HOME": str(root), "PATH": os.environ["PATH"],
