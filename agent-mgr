@@ -206,7 +206,7 @@ case "$cmd" in
         ;;
     activate)
         load_agent "${1:-}"
-        # activate rewrites PLOW_CHAT_CHAT_UID and PLOW_CHAT_TOKEN in place.
+        # activate rewrites PLOW_HOME_CHANNEL and PLOW_AGENT_TOKEN in place.
         # Pointed at another agent's home it would take that agent off its chat
         # until /sethome is re-sent, and spend a one-time activation to do it.
         #
@@ -228,6 +228,15 @@ case "$cmd" in
         tmp="$(mktemp)"; trap 'rm -f "$tmp"' EXIT
         curl -fsSL "https://raw.githubusercontent.com/plow-pbc/hermes-plow-chat/$ref/ref/scripts/create_plow_chat_curl.sh" -o "$tmp"
         bash "$tmp" --data-dir "$AGENT_HOME"
+        # The pinned script predates the env rename and writes the legacy
+        # PLOW_CHAT_* names; copy them onto the names the plugin reads. In a
+        # subshell and non-fatal for the reload's reason below: the one-time
+        # activation is already spent, so a refused dotenv write must not read
+        # as "activation failed" and invite a second spend.
+        if [ -f "$AGENT_HOME/.env" ]; then
+            (migrate_plow_env --sync) \
+                || echo "activation SUCCEEDED under the legacy PLOW_CHAT_* names -- do NOT re-run activate; run 'agent-mgr migrate-plugin-env $AGENT_NAME --sync' to finish the rename (--sync overwrites the current names from the values the pinned script just wrote)." >&2
+        fi
         # Non-fatal, and the message matters more than the restart: by this line
         # the one-time activation is already spent and the token is written. A
         # red exit would read as "activation failed", and the natural response to
@@ -400,7 +409,7 @@ case "$cmd" in
         # marked. This is the listing set-home works from: after a re-activation
         # has moved an agent to a fresh line, the old line's DM is the uid that
         # brings its group chats back.
-        home_uid="$(dotenv_read PLOW_CHAT_CHAT_UID "$AGENT_HOME/.env")"
+        home_uid="$(dotenv_read PLOW_HOME_CHANNEL "$AGENT_HOME/.env")"
         # Captured, not piped: a die inside the left side of a pipeline only
         # exits its subshell, and the Python below would then crash on empty
         # stdin with a traceback burying the real error.
@@ -450,10 +459,26 @@ if os.environ["CHAT_UID"] not in uids:
              % (os.environ["CHAT_UID"], os.environ["AGENT"]))
 '
         printf '%s\n' "$chat_uid" \
-            | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" PLOW_CHAT_CHAT_UID \
+            | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" PLOW_HOME_CHANNEL \
             || die "refusing to write ${AGENT_NAME}'s dotenv -- see above. Nothing was written."
-        echo "wrote PLOW_CHAT_CHAT_UID=$chat_uid to $AGENT_HOME/.env"
+        # Both names during the compatibility window: an agent still pinned to
+        # the pre-rename plugin reads only the legacy key, so writing the new
+        # one alone reports success, reloads, and leaves the home un-moved.
+        # Removed with the legacy names once nothing reads them.
+        printf '%s\n' "$chat_uid" \
+            | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" PLOW_CHAT_CHAT_UID \
+            || die "wrote PLOW_HOME_CHANNEL but NOT the legacy PLOW_CHAT_CHAT_UID -- the dotenv is split; re-run set-home."
+        echo "wrote PLOW_HOME_CHANNEL=$chat_uid (and legacy PLOW_CHAT_CHAT_UID) to $AGENT_HOME/.env"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the home chat just re-pointed"
+        ;;
+    migrate-plugin-env)
+        # `--sync` (after the name) forwards the overwrite mode — the recovery
+        # path activate prints when its own sync failed: the fresh token sits
+        # only under the legacy names, so idempotent skip-if-set cannot finish.
+        load_agent "${1:-}"
+        # Writes into a home like set-home does, so it takes the same guard.
+        require_own_home
+        migrate_plow_env "${2:-}"
         ;;
     check-connectors)
         load_agent "${1:-}"

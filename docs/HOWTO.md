@@ -493,7 +493,7 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 ## Recovering a line after re-activation
 
 A Plow token is **user-scoped**; the agent's *line* identity is client-side —
-it is whichever line the home chat (`PLOW_CHAT_CHAT_UID`) is on. `activate`
+it is whichever line the home chat (`PLOW_HOME_CHANNEL`) is on. `activate`
 mints a fresh token but also provisions a fresh DM on a **randomly assigned**
 pool line and writes that DM as the home, which strands every group chat on
 the line the agent used to hold: the plugin logs `configured group(s) not on

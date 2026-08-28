@@ -72,19 +72,19 @@ def load_spec(text, env):
                 raise SystemExit(f"row {r['name']!r}: no_agent skips the agent, "
                                  "so its prompt would never be read")
         # Expand ${VAR} now, loudly. The env source holds credentials beside
-        # delivery ids (PLOW_CHAT_TOKEN one line under PLOW_CHAT_CHAT_UID), and
+        # delivery ids (PLOW_AGENT_TOKEN one line under PLOW_HOME_CHANNEL), and
         # an expanded deliver lands in hermes argv AND is persisted verbatim in
-        # jobs.json -- so only delivery identifiers, names ending in _UID, may
-        # be referenced at all. A blank resolved value refuses too: activate
-        # writes PLOW_CHAT_CHAT_UID= empty until it runs, and "plow_chat:" is
-        # the silent-drop target this field exists to close.
+        # jobs.json -- so only delivery identifiers, names ending in _UID or
+        # _CHANNEL, may be referenced at all. A blank resolved value refuses
+        # too: restore writes PLOW_HOME_CHANNEL= empty until activate runs, and
+        # "plow_chat:" is the silent-drop target this field exists to close.
         tmpl = string.Template(r["deliver"])
         if not tmpl.is_valid():
             raise SystemExit(f"row {r['name']!r}: malformed ${{...}} in deliver")
         for n in tmpl.get_identifiers():
-            if not n.endswith("_UID"):
+            if not n.endswith(("_UID", "_CHANNEL")):
                 raise SystemExit(f"row {r['name']!r}: deliver may only reference "
-                                 f"delivery identifiers (names ending _UID), not {n!r}")
+                                 f"delivery identifiers (names ending _UID or _CHANNEL), not {n!r}")
             if not env.get(n, "").strip():
                 raise SystemExit(f"row {r['name']!r}: deliver names {n}, "
                                  "which is unset or empty in this container")
@@ -128,7 +128,7 @@ def gateway_env():
 
     A `docker exec` session sees the container's CONFIG env -- image ENV plus
     compose `environment:` -- never the gateway's runtime env: the per-instance
-    values deliver expansion exists for (PLOW_CHAT_* and friends) live in the
+    values deliver expansion exists for (PLOW_HOME_CHANNEL and friends) live in the
     home's .env, which the gateway loads itself at boot. hermes_cli ships the
     loader that does that load, so use it rather than reimplement its grammar;
     this is why agent-mgr runs this script under /opt/hermes/.venv/bin/python3

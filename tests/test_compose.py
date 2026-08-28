@@ -76,7 +76,8 @@ def test_no_credential_is_passed_through_compose(tmp_path):
     r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
     env = json.loads(r.stdout)["services"]["hermes"].get("environment", {})
     keys = set(env) if isinstance(env, dict) else {e.split("=")[0] for e in env}
-    for forbidden in ("PLOW_CHAT_TOKEN", "DOMO_MCP_TOKEN", "HOSTEX_TOKEN", "SEAM_API_KEY"):
+    for forbidden in ("PLOW_AGENT_TOKEN", "PLOW_CHAT_TOKEN", "DOMO_MCP_TOKEN",
+                      "HOSTEX_TOKEN", "SEAM_API_KEY"):
         assert forbidden not in keys
 
 

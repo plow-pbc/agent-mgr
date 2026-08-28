@@ -39,7 +39,7 @@ services:
       # This agent's own home, and the only mount the template makes.
       # Deliberately never a sibling's: each is another agent's live state, and
       # sharing one would hand two gateways a single auth.json and a single
-      # dotenv -- including one PLOW_CHAT_CHAT_UID, so whichever started last
+      # dotenv -- including one PLOW_HOME_CHANNEL, so whichever started last
       # would own the chat.
       - ${AGENT_HOME:?set by agent-mgr from the instance descriptor}:/opt/data
     environment:

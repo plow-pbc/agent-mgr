@@ -123,6 +123,7 @@ usage: agent-mgr <command> [args]
   restore <name>              install config.yaml + .env skeleton into its home
   install-plugin <name>       Plow Chat plugin, from the fleet-wide pinned SHA
   install-skill <name>        fleet google-workspace skill, from its pinned SHA
+  migrate-plugin-env <name> [--sync]  copy legacy PLOW_CHAT_* dotenv values onto the current names (--sync overwrites)
   add-skill <name> <repo> [--ref SHA] [--dest PATH] [--src PATH]
   cron-sync <name>            converge the repo's cron spec onto the scheduler
   activate <name>             mint the Plow Chat credential pair
@@ -796,7 +797,7 @@ require_running() {
 # The value the gateway would load for KEY.
 #
 # ONE spelling, deliberately: `KEY=value` at column 0. This tool writes every
-# DOMO_* and PLOW_CHAT_* line in an agent's dotenv -- set-latch here, activate
+# DOMO_* and PLOW_* line in an agent's dotenv -- set-latch here, activate
 # through the pinned script, restore from the skeleton -- so the canonical form
 # is the only one that gets produced, and owning it is what lets this be four
 # lines instead of a second implementation of Hermes's dotenv grammar.
@@ -854,9 +855,9 @@ config_declares_latch() {
 plow_chats_json() {
     local env_file="$AGENT_HOME/.env" tok base out code
     [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
-    tok="$(dotenv_read PLOW_CHAT_TOKEN "$env_file")"
-    [ -n "$tok" ] || die "PLOW_CHAT_TOKEN is empty in $env_file -- run 'agent-mgr activate $AGENT_NAME' first"
-    base="$(dotenv_read PLOW_CHAT_BASE_URL "$env_file")"
+    tok="$(dotenv_read PLOW_AGENT_TOKEN "$env_file")"
+    [ -n "$tok" ] || die "PLOW_AGENT_TOKEN is empty in $env_file -- run 'agent-mgr activate $AGENT_NAME' first (or 'agent-mgr migrate-plugin-env $AGENT_NAME' for a home activated under the legacy PLOW_CHAT_* names)"
+    base="$(dotenv_read PLOW_API_BASE "$env_file")"
     out="$(printf 'header = "Authorization: Bearer %s"\n' "$tok" \
         | compose exec -T hermes curl -sS --max-time 30 --config - \
           -w '\n%{http_code}' "${base:-https://api.plow.co}/v1/chats")" \
@@ -864,6 +865,51 @@ plow_chats_json() {
     code="${out##*$'\n'}"
     [ "$code" = 200 ] || die "GET /v1/chats answered $code -- the token in $env_file may be dead (...${tok: -3}); if so, re-run 'agent-mgr activate $AGENT_NAME'"
     printf '%s' "${out%$'\n'*}"
+}
+
+# The legacy PLOW_CHAT_* dotenv values, copied onto the names the unified
+# plugin reads: PLOW_CHAT_TOKEN -> PLOW_AGENT_TOKEN, PLOW_CHAT_CHAT_UID ->
+# PLOW_HOME_CHANNEL, PLOW_CHAT_BASE_URL -> PLOW_API_BASE. The old lines stay in
+# place -- the pinned activate script still writes them, and a pre-rename
+# plugin still reads them mid-migration; a later cleanup removes them once
+# nothing does.
+#
+# Two callers, two modes -- and the difference is load-bearing:
+# `migrate-plugin-env` (no arg) is the one-time fleet migration and is
+# idempotent, leaving an already-set new name alone. `activate` passes --sync
+# because its pinned script just wrote FRESH legacy values; skipping there
+# would leave the new names carrying the PREVIOUS credential -- `chats` and
+# `set-home` keep presenting a dead token while activate reports success.
+#
+# Caller must have run load_agent.
+migrate_plow_env() {
+    local sync=""
+    case "${1:-}" in
+        --sync) sync=1 ;;
+        "") ;;
+        *) die "migrate_plow_env: unknown mode '${1}' -- the only mode is --sync" ;;
+    esac
+    local env_file="$AGENT_HOME/.env" pair old new val
+    [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
+    for pair in PLOW_CHAT_TOKEN:PLOW_AGENT_TOKEN \
+                PLOW_CHAT_CHAT_UID:PLOW_HOME_CHANNEL \
+                PLOW_CHAT_BASE_URL:PLOW_API_BASE; do
+        old="${pair%%:*}" new="${pair##*:}"
+        if [ -z "$sync" ] && [ -n "$(dotenv_read "$new" "$env_file")" ]; then
+            echo "$new already set -- left as is"
+            continue
+        fi
+        val="$(dotenv_read "$old" "$env_file")"
+        if [ -z "$val" ]; then
+            echo "$old is empty -- nothing to write to $new"
+            continue
+        fi
+        # The value rides stdin, never argv -- the set-latch contract: argv on
+        # a shared host puts a live credential in the process table.
+        printf '%s\n' "$val" | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" "$new" \
+            || die "refusing to write ${AGENT_NAME}'s dotenv -- see above."
+        echo "wrote $new from $old"
+    done
 }
 
 # The pinned Plow Chat plugin, into this agent's home. A function rather than
