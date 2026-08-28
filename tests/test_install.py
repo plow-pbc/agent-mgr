@@ -271,6 +271,7 @@ def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instanc
 
 @pytest.mark.parametrize("args", [
     ("install-plugin", "rowan"),
+    ("install-skill", "rowan"),
     ("sign-in", "rowan"),
     ("add-skill", "rowan", "plow-pbc/property-hunt", "--ref", "a" * 40),
 ])
