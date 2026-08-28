@@ -1,9 +1,18 @@
 # agent-mgr
 
-One CLI for the Hermes agent fleet. It brings up and manages containers running
-[Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the agent's phone
-line — and **Plow Latch** — the Mac it is allowed to drive. Standing up a new
-agent is a command rather than a copy-paste of the last one.
+A CLI that stands up, on a host of your own, the same kind of agent that
+[Plow](https://plow.co) runs for its customers in the cloud: a container
+running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
+agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
+mirrors the cloud Hermes infrastructure in
+[`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
+the same plugin at the same pin, the same protocol to the same API, and an
+upstream runtime converging on the same image (the one tracked gap:
+[`#2`](https://github.com/plow-pbc/agent-mgr/issues/2)) — so a fix on either
+side reaches the other.
+What differs is the product around it: there, one VM per tenant behind an
+HTTP endpoint; here, one host, many agents, Docker, a person at a terminal.
+Standing up a new agent is a command rather than a copy-paste of the last one.
 
 Install is a clone and a symlink — there is no release and no package:
 
@@ -129,7 +138,7 @@ shape: a second copy of something `agent-mgr` already owns.
 | a cron spec | if it ships scheduled jobs | named by `AGENT_CRON_SPEC`; declarative rows `cron-sync` converges onto the scheduler, reading hermes's own `jobs.json` — never `cron list` output. `deliver` is explicit on every row — a card-only job declares `local`, hermes's own no-chat-delivery target — and a `${VAR}` in it may only name a delivery identifier ending `_UID` or `_CHANNEL` — the env it expands from holds credentials one line away, and the expansion lands in argv and persists in `jobs.json`. A row's `blocked` reason keeps it versioned but unregistered. Agent-authored crons are invisible to it |
 | `SKILL.md`, `scripts/`, `references/` | if the agent does something | its own skill: the instructions the container reads, and whatever runs for them |
 | `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` (or `build`) beside it unless the `image:` is a digest — [HOWTO](docs/HOWTO.md#what-an-agents-repo-contains) has the shape and what `resolve-guard` refuses without it |
-| `AGENT_CONFIRM_TRANSITIONS=1` | if its container should not be restarted casually | declared in `agent.env`; the gateway messages its person at every restart, so an agent whose person should not be disturbed (a real external user, say) declares it. agent-mgr asks `[y/N]` at a terminal before any transition and refuses non-interactively unless `AGENT_TRANSITION_ACK=1` — the explicit acknowledgement for automation that means to restart |
+| `AGENT_LIVE=1` | if real people's workflows run through it | declared in `agent.env`; the gateway messages its person at every restart, so a restart of a live agent is user-visible. agent-mgr asks `[y/N]` at a terminal before any transition and refuses non-interactively unless `AGENT_TRANSITION_ACK=1` — the explicit acknowledgement for automation that means to restart |
 | a restore hook | if it has its own deploy step | named by `AGENT_RESTORE_HOOK`; `restore` sequences it, so one command is the whole deploy -- except crons, which are `cron-sync`'s and run against a live gateway |
 | a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `restore` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
 
@@ -287,24 +296,19 @@ that ref deliberate.
 ## Sharing with `plow-pbc/plow`
 
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow)'s `cloud-agents/hermes`
-stands up the *same* Hermes runtime for Plow's customers: one VM per tenant,
-native under systemd, provisioned by `POST /v1/agents/cloud`. This repo is the
-other end — one host, many agents, Docker, driven by a person at a terminal.
-
-Same protocol underneath, different products around it. So the posture is:
+is the cloud side this tool mirrors: the same Hermes runtime for Plow's
+customers, one VM per tenant, native under systemd, provisioned by
+`POST /v1/agents/cloud`. Same protocol underneath, different products around
+it. So the posture is:
 
 **Converge on the artifacts.** The plugin, the upstream image and the
 integration reference are the *same facts* on both sides, and a fix to one
-should reach the other. Where they have already forked, it is tracked rather
-than tolerated:
+should reach the other. The plugin already is one fact: plow's blessed image
+stages it from `runtime/plow-chat-plugin.ref` at build time. Where the two
+still fork, it is tracked rather than tolerated:
 
-- [`plow-pbc/plow#1394`](https://github.com/plow-pbc/plow/issues/1394) —
-  `cloud-agents/hermes` carries its own copy of the plugin, under the same id
 - [`#2`](https://github.com/plow-pbc/agent-mgr/issues/2) — the upstream image
   pin here drifts from plow's blessed base
-- [`plow-pbc/hermes-plow-chat#2`](https://github.com/plow-pbc/hermes-plow-chat/issues/2) —
-  the plugin this repo pins loses inbound turns across a socket gap, which
-  plow's copy already fixed
 
 **Keep the managers separate.** Provisioning here is a bash CLI over Compose;
 there it is a `Provider` protocol behind an HTTP endpoint. Activation here is a

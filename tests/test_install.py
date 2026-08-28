@@ -385,13 +385,22 @@ def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
         assert "refused" in r.stderr
 
 
-def _external(instance, run, tmp_path):
-    """A registered agent whose descriptor asks for confirmed transitions --
-    the canonical case being a real external person behind it."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_CONFIRM_TRANSITIONS=1\n")))
+def _live(instance, run, tmp_path):
+    """A registered agent that declares itself live: real people's workflows
+    run through it, so a transition needs a deliberate operator."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_LIVE=1\n")))
     from conftest import fake_docker
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     return {"PATH": f"{b}:{os.environ['PATH']}"}
+
+
+def test_the_old_key_dies_instead_of_dropping_the_guard(run, instance, tmp_path):
+    """AGENT_CONFIRM_TRANSITIONS was renamed. Ignoring it would strip a live
+    agent's guard on the very next command; the rename is named instead."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_CONFIRM_TRANSITIONS=1\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode != 0
+    assert "AGENT_LIVE" in r.stderr
 
 
 def _run_tty(argv, reply, registry, tmp_path, env_path, timeout=None):
@@ -411,17 +420,17 @@ def _run_tty(argv, reply, registry, tmp_path, env_path, timeout=None):
         os.close(slave)
 
 
-def test_a_confirm_transitions_agent_refuses_a_non_interactive_transition(run, instance, tmp_path):
+def test_a_live_agent_refuses_a_non_interactive_transition(run, instance, tmp_path):
     """The gateway messages its person at every restart, so a transition on a
-    confirm-transitions agent needs a deliberate operator. Without a terminal
+    live agent needs a deliberate operator. Without a terminal
     and without the acknowledgement, every transition route refuses -- and the
     refusal names the acknowledgement, because a deploy script hitting this is
     being told how to say "the restart is the point"."""
-    env = _external(instance, run, tmp_path)
+    env = _live(instance, run, tmp_path)
     for cmd in (["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
                 ["compose", "rowan", "up", "-d", "--force-recreate"]):
         r = run(*cmd, env=env)
-        assert r.returncode != 0, f"{cmd} transitioned a confirm-transitions agent silently"
+        assert r.returncode != 0, f"{cmd} transitioned a live agent silently"
         assert "AGENT_TRANSITION_ACK" in r.stderr
     r = run("logs", "rowan", env=env)
     assert "AGENT_TRANSITION_ACK" not in r.stderr, "logs is a read, not a transition"
@@ -433,7 +442,7 @@ def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, insta
     on the pty, a re-prompt would block on the empty terminal and fail this
     test by timeout, and a refusal would fail it by exit code."""
     r = _run_tty(["restore", "rowan"], "y", registry, tmp_path,
-                 _external(instance, run, tmp_path), timeout=120)
+                 _live(instance, run, tmp_path), timeout=120)
     assert r.returncode == 0, r.stderr
     # And the reload actually ran -- exit 0 with the reload silently skipped
     # would leave this test covering nothing.
@@ -445,7 +454,7 @@ def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_p
     refusing has already done the thing the refusal exists to prevent. The
     ack check sits in the preflight beside the veto, so the home stays
     untouched -- and the same restore proceeds once acknowledged."""
-    env = _external(instance, run, tmp_path)
+    env = _live(instance, run, tmp_path)
     r = run("restore", "rowan", env=env)
     assert r.returncode != 0
     assert "AGENT_TRANSITION_ACK" in r.stderr
@@ -462,7 +471,7 @@ def test_the_interactive_prompt_defaults_to_no(run, registry, instance, tmp_path
     yes proceeds; empty and garbage refuse -- the default answer to "message a
     real person?" is No."""
     r = _run_tty(["up", "rowan"], reply, registry, tmp_path,
-                 _external(instance, run, tmp_path))
+                 _live(instance, run, tmp_path))
     assert (r.returncode == 0) == ok, (reply, r.stderr)
 
 
