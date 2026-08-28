@@ -342,7 +342,11 @@ case "$cmd" in
         # has moved an agent to a fresh line, the old line's DM is the uid that
         # brings its group chats back.
         home_uid="$(dotenv_read PLOW_CHAT_CHAT_UID "$AGENT_HOME/.env")"
-        plow_chats_json | HOME_UID="$home_uid" python3 -I -c '
+        # Captured, not piped: a die inside the left side of a pipeline only
+        # exits its subshell, and the Python below would then crash on empty
+        # stdin with a traceback burying the real error.
+        chats_json="$(plow_chats_json)"
+        printf '%s' "$chats_json" | HOME_UID="$home_uid" python3 -I -c '
 import json, os, sys
 home = os.environ.get("HOME_UID", "")
 rows = []
@@ -372,7 +376,10 @@ if home and home not in {r[1] for r in rows}:
         # line and stranded the old line's group chats. A uid outside the
         # listing is a typo or a sibling account's chat; writing it would take
         # the agent off its chat entirely, so it dies here instead.
-        plow_chats_json | CHAT_UID="$chat_uid" python3 -I -c '
+        # Captured for the same reason as in `chats`: a fetch failure must die
+        # with its own message, not fall through to the not-among-chats one.
+        chats_json="$(plow_chats_json)"
+        printf '%s' "$chats_json" | CHAT_UID="$chat_uid" python3 -I -c '
 import json, os, sys
 uids = {c["uid"] for c in json.load(sys.stdin).get("data", [])}
 sys.exit(0 if os.environ["CHAT_UID"] in uids else 1)

@@ -316,3 +316,84 @@ def test_no_doc_hardcodes_the_conventional_dotenv_path():
         "these name the conventional dotenv path, which is wrong for a "
         f"declared-home instance -- use $AGENT_HOME/.env: {offenders}"
     )
+
+
+# --- chats / set-home ---------------------------------------------------------
+
+def _chats_response(*uids_and_names):
+    """The /v1/chats body the fake curl serves, with the HTTP code on the line
+    the real probe appends via `-w '\n%{http_code}'`. Quoted, because the fake
+    docker interpolates exec_output into an unquoted `echo`."""
+    import json
+    from conftest import shlex_quote
+    data = [{
+        "uid": uid,
+        "display_name": name,
+        "participants": [
+            {"type": "agent", "line": {"uid": "ln_p2", "provider_key": "+16505550100"}},
+            {"type": "member", "display_name": "Sam"},
+        ],
+    } for uid, name in uids_and_names]
+    return shlex_quote(json.dumps({"data": data}) + "\n200")
+
+
+def _with_plow(tmp_path, name, home_uid="cht_old_dm"):
+    (tmp_path / "home" / f".hermes-{name}" / ".env").write_text(
+        f"HOSTEX_TOKEN=keepme\nPLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID={home_uid}\n")
+
+
+def test_chats_marks_the_home_and_keeps_the_token_off_argv(run, instance, tmp_path):
+    run("register", "property", str(instance("property")))
+    run("restore", "property")
+    _with_plow(tmp_path, "property")
+    log = tmp_path / "docker.log"
+    r = run("chats", "property", env=_bin(
+        tmp_path, "property", log=log,
+        exec_output=_chats_response(("cht_old_dm", None), ("cht_group", "STR Owners"))))
+    assert r.returncode == 0, r.stderr
+    marked = [l for l in r.stdout.splitlines() if l.startswith("*")]
+    assert len(marked) == 1 and "cht_old_dm" in marked[0]
+    assert "STR Owners" in r.stdout and "ln_p2" in r.stdout
+    # Same contract as check-latch: the credential rides stdin, never argv.
+    assert "tok_plow" not in log.read_text()
+    assert 'header = "Authorization: Bearer tok_plow"' in (tmp_path / "docker.log.stdin").read_text()
+
+
+def test_set_home_refuses_a_malformed_uid_before_touching_docker(run, instance, tmp_path):
+    run("register", "property", str(instance("property")))
+    run("restore", "property")
+    _with_plow(tmp_path, "property")
+    r = run("set-home", "property", "banana", env=_bin(tmp_path, "property"))
+    assert r.returncode != 0
+    assert "cht_" in r.stderr
+
+
+def test_set_home_refuses_a_uid_the_token_cannot_see(run, instance, tmp_path):
+    """A foreign or mistyped uid written to the dotenv takes the agent off its
+    chat entirely; the membership gate is what stands between a typo and that."""
+    run("register", "property", str(instance("property")))
+    run("restore", "property")
+    _with_plow(tmp_path, "property")
+    env_file = tmp_path / "home" / ".hermes-property" / ".env"
+    before = env_file.read_text()
+    r = run("set-home", "property", "cht_not_mine", env=_bin(
+        tmp_path, "property", exec_output=_chats_response(("cht_old_dm", None))))
+    assert r.returncode != 0
+    assert "not among this token's chats" in r.stderr
+    assert env_file.read_text() == before
+
+
+def test_set_home_writes_the_home_and_carries_every_other_key_through(run, instance, tmp_path):
+    """The single-key upsert-env invocation, through the production path -- every
+    other success-path caller drives the two-key DOMO pair."""
+    run("register", "property", str(instance("property")))
+    run("restore", "property")
+    _with_plow(tmp_path, "property", home_uid="cht_new_dm")
+    r = run("set-home", "property", "cht_old_dm", env=_bin(
+        tmp_path, "property",
+        exec_output=_chats_response(("cht_old_dm", None), ("cht_new_dm", None))))
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "home" / ".hermes-property" / ".env").read_text().splitlines()
+    assert "PLOW_CHAT_CHAT_UID=cht_old_dm" in lines
+    assert "HOSTEX_TOKEN=keepme" in lines
+    assert "PLOW_CHAT_TOKEN=tok_plow" in lines
