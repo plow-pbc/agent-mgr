@@ -76,9 +76,9 @@ def main(argv):
     if len(argv) < 2:
         die("usage: upsert-env <home> KEY [KEY...]  (one value per key on stdin)")
     home = argv[0]
-    # Keys arrive as literals from the two agent-mgr call sites (set-latch,
-    # set-home) -- no validation beyond that; an operator does not reach this
-    # helper directly.
+    # Keys arrive as literals from the agent-mgr call sites (set-latch,
+    # set-home, migrate_plow_env) -- no validation beyond that; an operator
+    # does not reach this helper directly.
     keys = tuple(k.encode("ascii") for k in argv[1:])
 
     fields = sys.stdin.buffer.read().split(b"\n")

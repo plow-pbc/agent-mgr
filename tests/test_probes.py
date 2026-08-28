@@ -343,7 +343,7 @@ def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
     run("restore", "property")
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
     env_file.write_text(
-        f"HOSTEX_TOKEN=keepme\nPLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID={home_uid}\n")
+        f"HOSTEX_TOKEN=keepme\nPLOW_AGENT_TOKEN=tok_plow\nPLOW_HOME_CHANNEL={home_uid}\n")
     return env_file
 
 
@@ -391,9 +391,9 @@ def test_set_home_writes_the_home_and_carries_every_other_key_through(run, insta
         exec_output=_chats_response(("cht_old_dm", None), ("cht_new_dm", None))))
     assert r.returncode == 0, r.stderr
     lines = (tmp_path / "home" / ".hermes-property" / ".env").read_text().splitlines()
-    assert "PLOW_CHAT_CHAT_UID=cht_old_dm" in lines
+    assert "PLOW_HOME_CHANNEL=cht_old_dm" in lines
     assert "HOSTEX_TOKEN=keepme" in lines
-    assert "PLOW_CHAT_TOKEN=tok_plow" in lines
+    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
 
 
 @pytest.mark.parametrize("command, extra", [("chats", ()), ("set-home", ("cht_old_dm",))])

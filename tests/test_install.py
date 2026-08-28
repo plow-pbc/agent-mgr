@@ -21,7 +21,7 @@ def test_restore_writes_a_dotenv_skeleton_carrying_both_platforms(run, instance,
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_CHAT_TOKEN" in env
+    assert "PLOW_AGENT_TOKEN" in env
     assert "DOMO_MCP_TOKEN" in env, "latch is baseline, not an opt-in"
 
 
@@ -29,9 +29,45 @@ def test_restore_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=real\n")
+    env.write_text("PLOW_AGENT_TOKEN=real\n")
     run("restore", "rowan")
-    assert env.read_text() == "PLOW_CHAT_TOKEN=real\n"
+    assert env.read_text() == "PLOW_AGENT_TOKEN=real\n"
+
+
+def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance, tmp_path):
+    """The fleet migration step: legacy PLOW_CHAT_* values land under the names
+    the unified plugin reads, the old lines stay (a pre-rename plugin still
+    reads them mid-migration; a later cleanup removes them), and a second run
+    writes nothing."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\nHOSTEX_TOKEN=keepme\n")
+
+    r = run("migrate-plugin-env", "rowan")
+    assert r.returncode == 0, r.stderr
+    lines = env.read_text().splitlines()
+    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
+    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
+    assert "PLOW_CHAT_TOKEN=tok_plow" in lines, "the legacy lines must survive until the cleanup"
+    assert "HOSTEX_TOKEN=keepme" in lines
+    # One ledger line per var written, no values on stdout.
+    assert "wrote PLOW_AGENT_TOKEN from PLOW_CHAT_TOKEN" in r.stdout
+    assert "wrote PLOW_HOME_CHANNEL from PLOW_CHAT_CHAT_UID" in r.stdout
+    assert "tok_plow" not in r.stdout + r.stderr, "a credential value leaked into the ledger"
+
+    before = env.read_text()
+    r = run("migrate-plugin-env", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert env.read_text() == before, "a second run must write nothing"
+    assert "wrote" not in r.stdout
+
+
+def test_migrate_plugin_env_without_a_dotenv_points_at_restore(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    r = run("migrate-plugin-env", "rowan")
+    assert r.returncode != 0
+    assert "restore" in r.stderr
 
 
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
@@ -86,7 +122,7 @@ def test_no_template_carries_a_literal_credential():
         for line in text.splitlines():
             if line.lstrip().startswith("#"):
                 continue
-            for key in ("PLOW_CHAT_TOKEN", "DOMO_MCP_TOKEN"):
+            for key in ("PLOW_AGENT_TOKEN", "DOMO_MCP_TOKEN"):
                 if line.strip().startswith(f"{key}="):
                     assert line.strip() == f"{key}=", f"{name} ships a value for {key}"
 
@@ -129,7 +165,7 @@ def test_an_instance_dotenv_example_wins_over_the_fleet_template(run, instance, 
     fleet template does; a skeleton missing those keys is a first run that looks
     complete and is not."""
     repo = instance("str")
-    (repo / ".env.example").write_text("HOSTEX_TOKEN=\nSEAM_API_KEY=\nPLOW_CHAT_TOKEN=\n")
+    (repo / ".env.example").write_text("HOSTEX_TOKEN=\nSEAM_API_KEY=\nPLOW_AGENT_TOKEN=\n")
     run("register", "str", str(repo))
     run("restore", "str")
     env = (tmp_path / "home" / ".hermes-str" / ".env").read_text()
@@ -140,7 +176,7 @@ def test_the_fleet_template_is_used_when_an_instance_ships_none(run, instance, t
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_CHAT_TOKEN" in env and "DOMO_MCP_TOKEN" in env
+    assert "PLOW_AGENT_TOKEN" in env and "DOMO_MCP_TOKEN" in env
 
 
 def test_restore_is_the_whole_deploy_including_the_instances_own_step(run, instance, tmp_path):
