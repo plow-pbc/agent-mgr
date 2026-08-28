@@ -385,6 +385,87 @@ def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
         assert "refused" in r.stderr
 
 
+def _external(instance, run, tmp_path):
+    """A registered agent whose descriptor asks for confirmed transitions --
+    the canonical case being a real external person behind it."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_CONFIRM_TRANSITIONS=1\n")))
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    return {"PATH": f"{b}:{os.environ['PATH']}"}
+
+
+def _run_tty(argv, reply, registry, tmp_path, env_path, timeout=None):
+    """agent-mgr on a real pty: [ -t 0 ] is the branch these tests exercise."""
+    import pty
+    import subprocess
+    env = dict(os.environ)
+    env.update({"AGENT_MGR_REGISTRY": str(registry), "HOME": str(tmp_path / "home"),
+                **env_path})
+    master, slave = pty.openpty()
+    try:
+        os.write(master, f"{reply}\n".encode())
+        return subprocess.run([str(ROOT / "agent-mgr"), *argv], stdin=slave,
+                              capture_output=True, text=True, env=env, timeout=timeout)
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
+def test_a_confirm_transitions_agent_refuses_a_non_interactive_transition(run, instance, tmp_path):
+    """The gateway messages its person at every restart, so a transition on a
+    confirm-transitions agent needs a deliberate operator. Without a terminal
+    and without the acknowledgement, every transition route refuses -- and the
+    refusal names the acknowledgement, because a deploy script hitting this is
+    being told how to say "the restart is the point"."""
+    env = _external(instance, run, tmp_path)
+    for cmd in (["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
+                ["compose", "rowan", "up", "-d", "--force-recreate"]):
+        r = run(*cmd, env=env)
+        assert r.returncode != 0, f"{cmd} transitioned a confirm-transitions agent silently"
+        assert "AGENT_TRANSITION_ACK" in r.stderr
+    r = run("logs", "rowan", env=env)
+    assert "AGENT_TRANSITION_ACK" not in r.stderr, "logs is a read, not a transition"
+
+
+def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, instance, tmp_path):
+    """restore asks at its preflight and ends with a reload in a child process.
+    The yes is exported, so the child never asks again -- with only ONE answer
+    on the pty, a re-prompt would block on the empty terminal and fail this
+    test by timeout, and a refusal would fail it by exit code."""
+    r = _run_tty(["restore", "rowan"], "y", registry, tmp_path,
+                 _external(instance, run, tmp_path), timeout=120)
+    assert r.returncode == 0, r.stderr
+    # And the reload actually ran -- exit 0 with the reload silently skipped
+    # would leave this test covering nothing.
+    assert "restarting rowan's gateway" in r.stdout, r.stdout
+
+
+def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_path):
+    """restore's preflight rule: a command that installs everything before
+    refusing has already done the thing the refusal exists to prevent. The
+    ack check sits in the preflight beside the veto, so the home stays
+    untouched -- and the same restore proceeds once acknowledged."""
+    env = _external(instance, run, tmp_path)
+    r = run("restore", "rowan", env=env)
+    assert r.returncode != 0
+    assert "AGENT_TRANSITION_ACK" in r.stderr
+    assert not (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists(), (
+        "restore wrote into the home before refusing")
+    r = run("restore", "rowan", env={**env, "AGENT_TRANSITION_ACK": "1"})
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").is_file()
+
+
+@pytest.mark.parametrize("reply,ok", [("y", True), ("yes", True), ("n", False), ("", False)])
+def test_the_interactive_prompt_defaults_to_no(run, registry, instance, tmp_path, reply, ok):
+    """A real pty, because [ -t 0 ] is the branch under test. Only an explicit
+    yes proceeds; empty and garbage refuse -- the default answer to "message a
+    real person?" is No."""
+    r = _run_tty(["up", "rowan"], reply, registry, tmp_path,
+                 _external(instance, run, tmp_path))
+    assert (r.returncode == 0) == ok, (reply, r.stderr)
+
+
 def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instance, tmp_path):
     """The one command a refusal must not fail. By the reload the one-time
     activation is already spent and the token written, so a red exit reads as

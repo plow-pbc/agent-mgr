@@ -68,6 +68,7 @@ case "$cmd" in
         # thing the refusal exists to prevent.
         "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
         require_transition_allowed
+        require_transition_confirmed
         # Preflight everything this command depends on BEFORE it writes
         # anything. A hook validated only at the end meant a missing one left
         # the plugin and config installed under a message saying the deploy did
