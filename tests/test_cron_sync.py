@@ -1,6 +1,7 @@
 """The converger, run as code. Tests import the real lib/cron-sync.py."""
 import importlib.util
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -82,3 +83,99 @@ def test_registered_malformed_raises(tmp_path, content):
     p.write_text(content)
     with pytest.raises(Exception):
         cron_sync.registered(str(p))
+
+
+def existing_job(**over):
+    """A stored job in hermes's own shape, from the fixture's first entry."""
+    j = json.loads(FIXTURE.read_text())["jobs"][0].copy()
+    j.update(over)
+    return j
+
+
+def match_of(r):
+    """The stored form of spec row r, healthy."""
+    return existing_job(name=r["name"], prompt=r.get("prompt", ""),
+                        script=r.get("script"), no_agent=bool(r.get("no_agent")),
+                        skills=r.get("skills", []), deliver=r["deliver"],
+                        schedule_display=r["schedule"],
+                        schedule={"kind": "cron", "expr": r["schedule"],
+                                  "display": r["schedule"]},
+                        enabled=True, paused_at=None)
+
+
+def test_absent_is_created_present_is_not():
+    rows = [row(name="new"), row(name="old")]
+    actions = dict((r["name"], a) for a, r in
+                   cron_sync.classify(rows, {"old": match_of(row(name="old"))}))
+    assert actions == {"new": "create", "old": "ok"}
+
+
+def test_an_interval_schedule_matches_its_display_form():
+    """hermes stores `every 2m` as {kind: interval, minutes: 2} -- no expr at
+    all -- so a converger reading only expr would false-drift every interval
+    job on the fleet (both live str jobs were the two kinds)."""
+    r = row(schedule="every 2m")
+    stored = match_of(r)
+    stored["schedule"] = {"kind": "interval", "minutes": 2, "display": "every 2m"}
+    stored["schedule_display"] = "every 2m"
+    assert cron_sync.classify([r], {"j1": stored}) == [("ok", r)]
+
+
+def test_paused_refuses_rather_than_duplicate_or_skip():
+    r = row()
+    stored = match_of(r); stored["paused_at"] = "2026-08-01T00:00:00Z"
+    assert cron_sync.classify([r], {"j1": stored}) == [("paused", r)]
+
+
+@pytest.mark.parametrize("field,value", [
+    ("deliver", "plow_chat:cht_other"),
+    ("prompt", "different words"),
+    ("skills", ["extra"]),
+    ("schedule_display", "0 9 * * *"),
+])
+def test_drift_is_loud(field, value):
+    r = row()
+    stored = match_of(r); stored[field] = value
+    if field == "schedule_display":
+        stored["schedule"]["expr"] = stored["schedule"]["display"] = value
+    assert cron_sync.classify([r], {"j1": stored}) == [("drifted", r)]
+
+
+def test_blocked_absent_is_quiet_blocked_live_is_not():
+    b = row(blocked="latch#183")
+    assert cron_sync.classify([b], {}) == [("blocked", b)]
+    assert cron_sync.classify([b], {"j1": match_of(row())}) == [("blocked-live", b)]
+
+
+def test_foreign_jobs_are_invisible():
+    agent_authored = match_of(row(name="remind-me"))
+    assert cron_sync.classify([row()], {"remind-me": agent_authored, "j1": match_of(row())}) \
+        == [("ok", row())]
+
+
+def test_create_argv_shapes():
+    p = cron_sync.create_argv(row(skills=["ld-weather"]))
+    assert p == [cron_sync.HERMES, "cron", "create", "0 6 * * *", "do it",
+                 "--name", "j1", "--deliver", "local", "--skill", "ld-weather"]
+    s = cron_sync.create_argv({"name": "n", "schedule": "0 3 * * *",
+                               "script": "nightly.sh", "no_agent": True,
+                               "deliver": "local"})
+    assert s == [cron_sync.HERMES, "cron", "create", "0 3 * * *",
+                 "--name", "n", "--deliver", "local",
+                 "--script", "nightly.sh", "--no-agent"]
+
+
+def test_main_exit_codes(tmp_path, capsys):
+    jobs = {"jobs": [match_of(row(name="held"))], "updated_at": "x"}
+    jf = tmp_path / "jobs.json"; jf.write_text(json.dumps(jobs))
+    calls = []
+    def runner(argv, **kw):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0)
+    spec = json.dumps([row(name="fresh"), row(name="held")])
+    rc = cron_sync.main(["--spec-json", spec, "--jobs-file", str(jf)], runner=runner)
+    assert rc == 0 and len(calls) == 1 and "fresh" in " ".join(calls[0])
+    held = json.loads(jf.read_text()); held["jobs"][0]["paused_at"] = "t"
+    jf.write_text(json.dumps(held))
+    rc = cron_sync.main(["--spec-json", spec, "--jobs-file", str(jf)], runner=runner)
+    assert rc == 1 and "paused" in capsys.readouterr().out

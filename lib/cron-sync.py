@@ -95,3 +95,99 @@ def registered(jobs_path=JOBS_FILE):
         job["enabled"], job["paused_at"]
         out[job["name"]] = job
     return out
+
+
+def _stored_schedule_matches(row_schedule, job):
+    # Accept any of hermes's renderings: `create 'every 2m'` is stored as
+    # {kind: interval, minutes: 2} with only a display -- no expr at all --
+    # so exact-match against ONE field would false-drift every interval job.
+    # A miss is only ever a loud complaint, never a duplicate.
+    sched = job["schedule"]
+    return row_schedule in {sched.get("expr"), sched["display"], job["schedule_display"]}
+
+
+def _drifted(row, job):
+    return not (
+        _stored_schedule_matches(row["schedule"], job)
+        and job["prompt"] == row.get("prompt", "")
+        and job["script"] == row.get("script")
+        and bool(job["no_agent"]) == bool(row.get("no_agent"))
+        and job["skills"] == row.get("skills", [])
+        and job["deliver"] == row["deliver"]
+    )
+
+
+def classify(rows, existing):
+    out = []
+    for r in rows:
+        job = existing.get(r["name"])
+        if r.get("blocked"):
+            out.append(("blocked-live" if job else "blocked", r))
+        elif job is None:
+            out.append(("create", r))
+        elif job["paused_at"] or not job["enabled"]:
+            out.append(("paused", r))
+        elif _drifted(r, job):
+            out.append(("drifted", r))
+        else:
+            out.append(("ok", r))
+    return out
+
+
+def create_argv(row):
+    argv = [HERMES, "cron", "create", row["schedule"]]
+    if row.get("prompt"):
+        argv.append(row["prompt"])
+    argv += ["--name", row["name"], "--deliver", row["deliver"]]
+    for s in row.get("skills", []):
+        argv += ["--skill", s]
+    if row.get("script"):
+        argv += ["--script", row["script"]]
+    if row.get("no_agent"):
+        argv.append("--no-agent")
+    return argv
+
+
+REFUSALS = {
+    "paused": "registered but will never fire -- re-creating would duplicate it, "
+              "skipping hides a job that stopped. Decide: hermes cron resume {name}, "
+              "or remove the row",
+    "drifted": "live job differs from the spec. v1 does not auto-edit; inspect with "
+               "hermes cron list and reconcile with hermes cron edit {name} (or "
+               "remove + re-run)",
+    "blocked-live": "spec marks this blocked ({blocked}) but a live job exists -- "
+                    "remove it or unblock the row",
+}
+
+
+def main(argv=None, runner=subprocess.run):
+    global HERMES
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("--spec-json", required=True)
+    ap.add_argument("--jobs-file", default=JOBS_FILE)
+    ap.add_argument("--hermes", default=HERMES)
+    args = ap.parse_args(argv)
+    HERMES = args.hermes
+    rows = load_spec(args.spec_json, env=os.environ)
+    failed = False
+    for action, r in classify(rows, registered(args.jobs_file)):
+        if action == "create":
+            # The create's own echo is the confirmation; not captured.
+            res = runner(create_argv(r))
+            if res.returncode != 0:
+                print(f"create failed for {r['name']} (exit {res.returncode})")
+                failed = True
+            else:
+                print(f"created {r['name']}")
+        elif action == "ok":
+            print(f"ok {r['name']}")
+        elif action == "blocked":
+            print(f"blocked {r['name']}: {r['blocked']} (not registered, by design)")
+        else:
+            print(f"REFUSED {r['name']} ({action}): " + REFUSALS[action].format(**r))
+            failed = True
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
