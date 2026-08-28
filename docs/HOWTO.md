@@ -121,6 +121,7 @@ because two of them block:
 | 4 | **them** | open the URL in *their* browser, enter the code |
 | 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
 | 6 | you | put the pair in that same dotenv — the one `agent-mgr resolve bob` names — then `check-latch bob` and `restart bob` |
+| 7 | you | `agent-mgr cron-sync bob` — only if the repo's `agent.env` names a cron spec; the gateway it needs is already up |
 
 **Neither code can be sent ahead.** `activate` does not return when it prints
 the code; it polls `/v1/auth/activate/redeem` until the text arrives, and the
