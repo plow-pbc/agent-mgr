@@ -399,6 +399,9 @@ def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
     # add-skill fetches a tarball. A RUNNING gateway for all three -- the reload
     # exits before the guard when there is none.
     (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
+    # install-plugin migrates the dotenv before the ref install; a real home
+    # always has one (restore writes the skeleton first).
+    (home / ".env").write_text("")
     b = fake_skill_gh(tmp_path)
     fake_docker(tmp_path, home=home, name="rowan")
     r = run(*args, env={"PATH": f"{b}:{os.environ['PATH']}"})

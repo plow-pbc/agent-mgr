@@ -527,6 +527,7 @@ that rule — restating it here is how this page came to state the opposite of t
 code for a commit.
 
 After bumping `runtime/plow-chat-plugin.ref` alone,
-`agent-mgr install-plugin <name>` does just that step — useful when an agent's
+`agent-mgr install-plugin <name>` does just that step (plus the idempotent
+legacy-dotenv migration every install path carries) — useful when an agent's
 restore hook is expensive (the rentals agent re-seeds a vault and rebuilds its
 property hubs) and nothing else changed.
