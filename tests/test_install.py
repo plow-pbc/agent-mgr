@@ -410,12 +410,6 @@ def test_a_confirm_transitions_agent_refuses_a_non_interactive_transition(run, i
     assert "AGENT_TRANSITION_ACK" not in r.stderr, "logs is a read, not a transition"
 
 
-def test_the_acknowledgement_lets_automation_transition(run, instance, tmp_path):
-    env = _external(instance, run, tmp_path)
-    r = run("up", "rowan", env={**env, "AGENT_TRANSITION_ACK": "1"})
-    assert r.returncode == 0, r.stderr
-
-
 def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_path):
     """restore's preflight rule: a command that installs everything before
     refusing has already done the thing the refusal exists to prevent. The

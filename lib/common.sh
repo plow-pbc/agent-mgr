@@ -751,7 +751,11 @@ require_transition_confirmed() {
         local reply
         read -r reply
         case "$reply" in
-            [yY]|[yY][eE][sS]) return 0 ;;
+            # Exported so one yes answers the whole command: restore's closing
+            # reload runs as a child process and would otherwise ask again --
+            # and a refusal THERE strands a running gateway on stale state the
+            # operator already approved writing.
+            [yY]|[yY][eE][sS]) export AGENT_TRANSITION_ACK=1; return 0 ;;
         esac
         die "refused -- not transitioning $AGENT_NAME"
     fi
