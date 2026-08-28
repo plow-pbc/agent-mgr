@@ -211,7 +211,7 @@ case "$cmd" in
         # as "activation failed" and invite a second spend.
         if [ -f "$AGENT_HOME/.env" ]; then
             (migrate_plow_env --sync) \
-                || echo "activation SUCCEEDED under the legacy PLOW_CHAT_* names -- do NOT re-run activate; run 'agent-mgr migrate-plugin-env $AGENT_NAME' to finish the rename." >&2
+                || echo "activation SUCCEEDED under the legacy PLOW_CHAT_* names -- do NOT re-run activate; run 'agent-mgr migrate-plugin-env $AGENT_NAME --sync' to finish the rename (--sync overwrites the current names from the values the pinned script just wrote)." >&2
         fi
         # Non-fatal, and the message matters more than the restart: by this line
         # the one-time activation is already spent and the token is written. A
@@ -448,10 +448,13 @@ if os.environ["CHAT_UID"] not in uids:
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the home chat just re-pointed"
         ;;
     migrate-plugin-env)
+        # `--sync` (after the name) forwards the overwrite mode — the recovery
+        # path activate prints when its own sync failed: the fresh token sits
+        # only under the legacy names, so idempotent skip-if-set cannot finish.
         load_agent "${1:-}"
         # Writes into a home like set-home does, so it takes the same guard.
         require_own_home
-        migrate_plow_env
+        migrate_plow_env "${2:-}"
         ;;
     check-connectors)
         load_agent "${1:-}"

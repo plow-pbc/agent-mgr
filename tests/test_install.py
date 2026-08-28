@@ -63,14 +63,23 @@ def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance,
     assert "wrote" not in r.stdout
 
 
-def test_activate_copies_the_pinned_scripts_legacy_names_onto_the_new_ones(run, instance, tmp_path):
-    """The pinned activate script is frozen and still writes PLOW_CHAT_*; the
-    wiring under test is activate's post-step copying those onto the names the
-    plugin reads -- a break there passes every other activate test, because
-    their stub scripts write no dotenv at all."""
+@pytest.mark.parametrize("preexisting", [
+    pytest.param("", id="fresh_dotenv"),
+    # The stale row is the bug that shipped: activate's copy skipped set keys,
+    # so re-activation left the PREVIOUS (dead) token under the current name.
+    pytest.param("PLOW_AGENT_TOKEN=tok_stale\nPLOW_HOME_CHANNEL=cht_old\n", id="stale_current_values"),
+])
+def test_activate_syncs_legacy_names(run, instance, tmp_path, preexisting):
+    """The pinned activate script is frozen and writes PLOW_CHAT_*; activate's
+    post-step must SYNC those onto the current names — overwriting, because the
+    script just minted the freshest values there are. A break here passes every
+    other activate test: their stub scripts write no dotenv at all."""
     from conftest import fake_curl
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    if preexisting:
+        env.write_text(preexisting)
     (tmp_path / "act").mkdir()
     b = fake_curl(tmp_path / "act", body=(
         "#!/usr/bin/env bash\n"
@@ -79,34 +88,26 @@ def test_activate_copies_the_pinned_scripts_legacy_names_onto_the_new_ones(run, 
         "printf 'PLOW_CHAT_TOKEN=tok_live\\nPLOW_CHAT_CHAT_UID=cht_dm\\n' >> \"$d/.env\"\n"))
     r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
-    lines = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text().splitlines()
+    lines = env.read_text().splitlines()
     assert "PLOW_AGENT_TOKEN=tok_live" in lines
     assert "PLOW_HOME_CHANNEL=cht_dm" in lines
     assert "PLOW_CHAT_TOKEN=tok_live" in lines, "the pinned script's own lines must survive"
+    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
 
 
-def test_reactivation_overwrites_stale_current_keys(run, instance, tmp_path):
-    """activate's copy runs in SYNC mode, not migrate mode. The pinned script
-    just minted a FRESH credential under the legacy names; if the copy skipped
-    an already-set current key, every re-activation would leave
-    PLOW_AGENT_TOKEN carrying the PREVIOUS (now dead) token -- `chats` and
-    `set-home` keep presenting it while activate reports success."""
-    from conftest import fake_curl
+def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path):
+    """The recovery command activate prints must be able to finish the job.
+    Idempotent mode skips set keys, so after a failed in-activate sync the
+    fresh token sits only under the legacy name — `--sync` is the forwarded
+    mode that overwrites."""
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_AGENT_TOKEN=tok_stale\nPLOW_HOME_CHANNEL=cht_old\n")
-    (tmp_path / "act").mkdir()
-    b = fake_curl(tmp_path / "act", body=(
-        "#!/usr/bin/env bash\n"
-        'd=""\n'
-        'while [ $# -gt 0 ]; do case "$1" in --data-dir) d="$2"; shift 2 ;; *) shift ;; esac; done\n'
-        "printf 'PLOW_CHAT_TOKEN=tok_fresh\\nPLOW_CHAT_CHAT_UID=cht_new\\n' >> \"$d/.env\"\n"))
-    r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    env.write_text("PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n")
+    r = run("migrate-plugin-env", "rowan", "--sync")
     assert r.returncode == 0, r.stderr
     lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_fresh" in lines, "re-activation must replace the dead token under the new name"
-    assert "PLOW_HOME_CHANNEL=cht_new" in lines
+    assert "PLOW_AGENT_TOKEN=tok_fresh" in lines
     assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
 
 

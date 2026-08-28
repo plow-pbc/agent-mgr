@@ -122,7 +122,7 @@ usage: agent-mgr <command> [args]
 
   restore <name>              install config.yaml + .env skeleton into its home
   install-plugin <name>       Plow Chat plugin, from the fleet-wide pinned SHA
-  migrate-plugin-env <name>   copy legacy PLOW_CHAT_* dotenv values onto the current names
+  migrate-plugin-env <name> [--sync]  copy legacy PLOW_CHAT_* dotenv values onto the current names (--sync overwrites)
   add-skill <name> <repo> [--ref SHA] [--dest PATH] [--src PATH]
   cron-sync <name>            converge the repo's cron spec onto the scheduler
   activate <name>             mint the Plow Chat credential pair
@@ -882,7 +882,12 @@ plow_chats_json() {
 #
 # Caller must have run load_agent.
 migrate_plow_env() {
-    local sync=""; [ "${1:-}" = "--sync" ] && sync=1
+    local sync=""
+    case "${1:-}" in
+        --sync) sync=1 ;;
+        "") ;;
+        *) die "migrate_plow_env: unknown mode '${1}' -- the only mode is --sync" ;;
+    esac
     local env_file="$AGENT_HOME/.env" pair old new val
     [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
     for pair in PLOW_CHAT_TOKEN:PLOW_AGENT_TOKEN \
