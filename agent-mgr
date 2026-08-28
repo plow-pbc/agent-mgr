@@ -145,6 +145,24 @@ case "$cmd" in
         # (unprivileged, remapped) then cannot rewrite.
         compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes hermes chat -q "$*"
         ;;
+    cron-sync)
+        # Registration is an operator action, run when jobs change -- restore
+        # does not grow a cron step. The converger travels over stdin per
+        # invocation and the spec as an argument: nothing is installed into the
+        # container or the home, so nothing can go stale.
+        load_agent "${1:-}"
+        # Spec preflight before the container guards: "this agent ships no
+        # jobs" and "the spec file is gone" are answers about the REPO, and
+        # neither should require a running gateway to hear.
+        [ -n "$AGENT_CRON_SPEC" ] || die "$AGENT_NAME sets no AGENT_CRON_SPEC in agent.env -- it ships no scheduled jobs, so there is nothing to sync"
+        [ -f "$AGENT_CRON_SPEC" ] || die "AGENT_CRON_SPEC names $AGENT_CRON_SPEC, which does not exist"
+        require_running
+        # --user for the same reason `agent` spells out: exec skips the
+        # entrypoint that remaps the in-image user, and the creates below write
+        # hermes's own cron state under /opt/data.
+        compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes python3 - --spec-json "$(cat "$AGENT_CRON_SPEC")" \
+            < "$AGENT_MGR_ROOT/lib/cron-sync.py"
+        ;;
     activate)
         load_agent "${1:-}"
         # activate rewrites PLOW_CHAT_CHAT_UID and PLOW_CHAT_TOKEN in place.

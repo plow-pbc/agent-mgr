@@ -123,6 +123,7 @@ usage: agent-mgr <command> [args]
   restore <name>              install config.yaml + .env skeleton into its home
   install-plugin <name>       Plow Chat plugin, from the fleet-wide pinned SHA
   add-skill <name> <repo> [--ref SHA] [--dest PATH] [--src PATH]
+  cron-sync <name>            converge the repo's cron spec onto the scheduler
   activate <name>             mint the Plow Chat credential pair
   sign-in <name>              model OAuth for this agent
   set-latch <name>            read the Latch pair on stdin into its dotenv
@@ -134,16 +135,18 @@ usage: agent-mgr <command> [args]
 USAGE
 }
 
-# The agent-supplied executables: the keys whose value is a path resolved against
-# the agent's repo, and whose default is empty. Those two properties travel
+# The agent-supplied repo-relative paths: the keys whose value is a path
+# resolved against the agent's repo, and whose default is empty. Those two properties travel
 # together, and three consumers key off them -- load_agent defines them from this
 # list, the path loop below resolves them, and the parser exempts them from the
 # empty-value refusal. Empty and unset mean the same thing here, so nothing fills
 # in behind the operator and `AGENT_RESTORE_HOOK=` is the natural way to write
 # "this agent has no restore step"; every other consumed key defaults to a real
 # value, which is what makes an empty one a silent substitution. A key with an
-# empty default that is NOT a repo-relative path does not belong here.
-AGENT_HOOKS="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
+# empty default that is NOT a repo-relative path does not belong here. Not all
+# of them are executables -- AGENT_CRON_SPEC names a data file, and each use
+# site owns its own existence/executability check.
+AGENT_HOOKS="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION AGENT_CRON_SPEC"
 
 # Descriptor keys this tool owns. Every one is unset from the inherited
 # environment before the descriptor is read, because Compose resolves shell
