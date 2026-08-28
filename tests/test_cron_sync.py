@@ -8,7 +8,6 @@ from pathlib import Path
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURE = Path(__file__).resolve().parent / "fixtures" / "hermes-cron-jobs.json"
 
 # No bytecode: importing the real script must not drop a __pycache__ into lib/,
 # where the tests that walk lib/'s scripts would trip over the directory.
@@ -24,26 +23,45 @@ def row(**over):
     return {k: v for k, v in base.items() if v is not None}
 
 
-@pytest.mark.parametrize("bad,why", [
-    (row(deliver=None), "deliver"),                    # deliver is required, always
-    (row(prompt=None), "prompt"),                      # at least one of prompt/script
-    (row(name=None), "name"),
-    (row(schedule=None), "schedule"),
-    (row(no_agent=True), "no_agent"),                  # no_agent means no agent turn, so a prompt is dead weight
-    (row(prompt=None, script="x.sh", no_agent=True, extra="?"), "unknown"),
-    (row(deliver="plow_chat:${NO_SUCH_VAR}"), "NO_SUCH_VAR"),  # unset var refuses, never empty-expands
-    (row(deliver="plow_chat:$"), "deliver"),           # malformed placeholder refuses, not a traceback
+def existing_job(**over):
+    """A stored job with the fields the converger touches, in hermes's own
+    shape -- confirmed against a live agent's jobs.json (2026-08-27)."""
+    job = {"name": "seed", "enabled": True, "paused_at": None,
+           "prompt": "", "script": None, "no_agent": False, "skills": [],
+           "deliver": "local",
+           "schedule": {"kind": "cron", "expr": "0 6 * * *", "display": "0 6 * * *"},
+           "schedule_display": "0 6 * * *"}
+    job.update(over)
+    return job
+
+
+def match_of(r):
+    """The stored form of spec row r, healthy."""
+    return existing_job(name=r["name"], prompt=r.get("prompt", ""),
+                        script=r.get("script"), no_agent=bool(r.get("no_agent")),
+                        skills=r.get("skills", []), deliver=r["deliver"],
+                        schedule_display=r["schedule"],
+                        schedule={"kind": "cron", "expr": r["schedule"],
+                                  "display": r["schedule"]})
+
+
+@pytest.mark.parametrize("rows,why", [
+    ([row(deliver=None)], "deliver"),                  # deliver is required, always
+    ([row(prompt=None)], "prompt"),                    # at least one of prompt/script
+    ([row(name=None)], "name"),
+    ([row(schedule=None)], "schedule"),
+    ([row(no_agent=True)], "no_agent"),                # no_agent means no agent turn, so a prompt is dead weight
+    ([row(prompt=None, script="x.sh", no_agent=True, extra="?")], "unknown"),
+    ([row(deliver="plow_chat:${NO_SUCH_UID}")], "NO_SUCH_UID"),  # unset var refuses, never empty-expands
+    ([row(deliver="plow_chat:$")], "deliver"),         # malformed placeholder refuses, not a traceback
+    ([row(), row()], "twice"),                         # duplicate spec name
+    (["oops"], "object"),                              # a row must be an object
+    ([["nested"]], "object"),
 ])
-def test_load_spec_refuses(bad, why):
+def test_load_spec_refuses(rows, why):
     with pytest.raises(SystemExit) as exc:
-        cron_sync.load_spec(json.dumps([bad]), env={})
+        cron_sync.load_spec(json.dumps(rows), env={})
     assert why in str(exc.value)
-
-
-def test_load_spec_refuses_a_duplicate_name():
-    with pytest.raises(SystemExit) as exc:
-        cron_sync.load_spec(json.dumps([row(), row()]), env={})
-    assert "twice" in str(exc.value)
 
 
 def test_a_script_can_feed_the_agents_prompt():
@@ -55,9 +73,25 @@ def test_a_script_can_feed_the_agents_prompt():
 
 
 def test_load_spec_expands_deliver_from_env():
-    text = json.dumps([row(deliver="plow_chat:${CHAT}")])
-    rows = cron_sync.load_spec(text, env={"CHAT": "cht_abc"})
+    text = json.dumps([row(deliver="plow_chat:${CHAT_UID}")])
+    rows = cron_sync.load_spec(text, env={"CHAT_UID": "cht_abc"})
     assert rows[0]["deliver"] == "plow_chat:cht_abc"
+
+
+@pytest.mark.parametrize("deliver,env,why", [
+    # The env source holds credentials beside delivery ids, and an expanded
+    # deliver lands in hermes argv and persists verbatim in jobs.json -- so
+    # only names ending _UID may be referenced, even when the var is set.
+    ("plow_chat:${PLOW_CHAT_TOKEN}", {"PLOW_CHAT_TOKEN": "tok"}, "PLOW_CHAT_TOKEN"),
+    # activate writes PLOW_CHAT_CHAT_UID= empty until it runs; "plow_chat:" is
+    # the silent-drop target this field exists to close.
+    ("plow_chat:${CHAT_UID}", {"CHAT_UID": ""}, "empty"),
+    ("plow_chat:${CHAT_UID}", {"CHAT_UID": "  "}, "empty"),
+])
+def test_deliver_expansion_is_allowlisted(deliver, env, why):
+    with pytest.raises(SystemExit) as exc:
+        cron_sync.load_spec(json.dumps([row(deliver=deliver)]), env=env)
+    assert why in str(exc.value)
 
 
 def test_load_spec_blocked_row_keeps_its_reason():
@@ -66,11 +100,11 @@ def test_load_spec_blocked_row_keeps_its_reason():
     assert cron_sync.load_spec(text, env={})[0]["blocked"] == "waiting on latch#183"
 
 
-def test_registered_reads_hermes_own_state():
-    jobs = cron_sync.registered(str(FIXTURE))
-    assert jobs  # the captured file has entries
-    j = next(iter(jobs.values()))
-    assert {"enabled", "paused_at", "deliver"} <= set(j)
+def test_registered_reads_hermes_own_state(tmp_path):
+    p = tmp_path / "jobs.json"
+    p.write_text(json.dumps({"jobs": [existing_job()], "updated_at": "x"}))
+    jobs = cron_sync.registered(str(p))
+    assert set(jobs) == {"seed"}
 
 
 def test_registered_absent_file_is_the_only_empty(tmp_path):
@@ -86,22 +120,15 @@ def test_registered_malformed_raises(tmp_path, content):
         cron_sync.registered(str(p))
 
 
-def existing_job(**over):
-    """A stored job in hermes's own shape, from the fixture's first entry."""
-    j = json.loads(FIXTURE.read_text())["jobs"][0].copy()
-    j.update(over)
-    return j
-
-
-def match_of(r):
-    """The stored form of spec row r, healthy."""
-    return existing_job(name=r["name"], prompt=r.get("prompt", ""),
-                        script=r.get("script"), no_agent=bool(r.get("no_agent")),
-                        skills=r.get("skills", []), deliver=r["deliver"],
-                        schedule_display=r["schedule"],
-                        schedule={"kind": "cron", "expr": r["schedule"],
-                                  "display": r["schedule"]},
-                        enabled=True, paused_at=None)
+def test_registered_refuses_a_duplicate_stored_name(tmp_path):
+    """hermes happily persists two jobs under one name; first-wins here would
+    print `ok` while the OTHER copy still fires -- duplicate work, silently."""
+    p = tmp_path / "jobs.json"
+    p.write_text(json.dumps({"jobs": [existing_job(), existing_job()],
+                             "updated_at": "x"}))
+    with pytest.raises(SystemExit) as exc:
+        cron_sync.registered(str(p))
+    assert "seed" in str(exc.value)
 
 
 def test_absent_is_created_present_is_not():
@@ -168,53 +195,49 @@ def test_create_argv_shapes():
                  "--script", "nightly.sh", "--no-agent"]
 
 
-def test_main_exit_codes(tmp_path, capsys):
-    jobs = {"jobs": [match_of(row(name="held"))], "updated_at": "x"}
-    jf = tmp_path / "jobs.json"; jf.write_text(json.dumps(jobs))
+def _wire(monkeypatch, tmp_path, jobs=None, env=None, rc=0):
+    """Point the converger's three collaborators at test doubles.
+
+    The production script has no override seams for these -- they are fixed
+    paths inside the container by design -- so tests patch the module attrs.
+    Returns the list create_argv calls land in.
+    """
+    jf = tmp_path / "jobs.json"
+    if jobs is not None:
+        jf.write_text(json.dumps({"jobs": jobs, "updated_at": "x"}))
+    monkeypatch.setattr(cron_sync, "JOBS_FILE", str(jf))
+    monkeypatch.setattr(cron_sync, "gateway_env", lambda: dict(env or {}))
     calls = []
-    def runner(argv, **kw):
+    def run(argv, **kw):
         calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0)
+        return subprocess.CompletedProcess(argv, rc)
+    monkeypatch.setattr(cron_sync.subprocess, "run", run)
+    return calls
+
+
+def test_main_exit_codes(monkeypatch, tmp_path, capsys):
+    calls = _wire(monkeypatch, tmp_path, jobs=[match_of(row(name="held"))])
     spec = json.dumps([row(name="fresh"), row(name="held")])
-    rc = cron_sync.main(["--spec-json", spec, "--jobs-file", str(jf)], runner=runner)
+    rc = cron_sync.main(["--spec-json", spec])
     assert rc == 0 and len(calls) == 1 and "fresh" in " ".join(calls[0])
-    held = json.loads(jf.read_text()); held["jobs"][0]["paused_at"] = "t"
-    jf.write_text(json.dumps(held))
-    rc = cron_sync.main(["--spec-json", spec, "--jobs-file", str(jf)], runner=runner)
+    held = match_of(row(name="held")); held["paused_at"] = "t"
+    calls = _wire(monkeypatch, tmp_path, jobs=[match_of(row(name="fresh")), held])
+    rc = cron_sync.main(["--spec-json", spec])
     assert rc == 1 and "paused" in capsys.readouterr().out
 
 
-def test_main_expands_deliver_from_the_gateways_dotenv(tmp_path):
-    """The env source is /opt/data/.env, the file the GATEWAY loads -- an exec
-    session's own env never carries the per-instance PLOW_CHAT_* values, which
-    is exactly the expansion this feature exists for."""
-    dotenv = tmp_path / ".env"
-    # An indented line reads as ABSENT, exactly as common.sh's dotenv_read
-    # reads it: one grammar, KEY=value at column 0, and the two tools must
-    # not disagree about the same file.
-    dotenv.write_text("# creds\nCHAT=cht_stale\nCHAT=cht_abc\n  CHAT=cht_indented\n")
-    calls = []
-    def runner(argv, **kw):
-        calls.append(argv)
-        return subprocess.CompletedProcess(argv, 0)
-    spec = json.dumps([row(deliver="plow_chat:${CHAT}")])
-    rc = cron_sync.main(["--spec-json", spec, "--jobs-file", str(tmp_path / "nope.json"),
-                         "--dotenv", str(dotenv)], runner=runner)
+def test_main_expands_deliver_from_the_gateways_env(monkeypatch, tmp_path):
+    """The env source is the gateway's own loader (hermes_cli.load_env) -- an
+    exec session's env never carries the per-instance PLOW_CHAT_* values,
+    which is exactly the expansion this feature exists for."""
+    calls = _wire(monkeypatch, tmp_path, env={"CHAT_UID": "cht_abc"})
+    rc = cron_sync.main(["--spec-json",
+                         json.dumps([row(deliver="plow_chat:${CHAT_UID}")])])
     assert rc == 0
-    assert "plow_chat:cht_abc" in calls[0]  # last-wins, like the gateway
+    assert "plow_chat:cht_abc" in calls[0]
 
 
-@pytest.mark.parametrize("text", ['["oops"]', '[["nested"]]'])
-def test_load_spec_refuses_a_non_object_row(text):
-    with pytest.raises(SystemExit) as exc:
-        cron_sync.load_spec(text, env={})
-    assert "object" in str(exc.value)
-
-
-def test_a_failed_create_fails_the_run(tmp_path, capsys):
-    def runner(argv, **kw):
-        return subprocess.CompletedProcess(argv, 1)
-    rc = cron_sync.main(["--spec-json", json.dumps([row()]),
-                         "--jobs-file", str(tmp_path / "nope.json"),
-                         "--dotenv", str(tmp_path / "no.env")], runner=runner)
+def test_a_failed_create_fails_the_run(monkeypatch, tmp_path, capsys):
+    _wire(monkeypatch, tmp_path, rc=1)
+    rc = cron_sync.main(["--spec-json", json.dumps([row()])])
     assert rc == 1 and "create failed" in capsys.readouterr().out

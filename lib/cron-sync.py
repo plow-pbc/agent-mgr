@@ -29,7 +29,6 @@ import sys
 
 HERMES = "/opt/hermes/bin/hermes"
 JOBS_FILE = "/opt/data/cron/jobs.json"
-DOTENV = "/opt/data/.env"
 
 ROW_KEYS = {"name", "schedule", "prompt", "script", "no_agent", "skills",
             "deliver", "blocked"}
@@ -72,16 +71,24 @@ def load_spec(text, env):
             if r.get("prompt"):
                 raise SystemExit(f"row {r['name']!r}: no_agent skips the agent, "
                                  "so its prompt would never be read")
-        # Expand ${VAR} now, loudly. string.Template.substitute raises KeyError
-        # on an unset name, which is the refusal -- an empty expansion would
-        # register a job whose delivery target is garbage, silently.
-        try:
-            r["deliver"] = string.Template(r["deliver"]).substitute(env)
-        except KeyError as exc:
-            raise SystemExit(f"row {r['name']!r}: deliver names {exc} "
-                             "which is unset in this container")
-        except ValueError as exc:
-            raise SystemExit(f"row {r['name']!r}: malformed ${{...}} in deliver: {exc}")
+        # Expand ${VAR} now, loudly. The env source holds credentials beside
+        # delivery ids (PLOW_CHAT_TOKEN one line under PLOW_CHAT_CHAT_UID), and
+        # an expanded deliver lands in hermes argv AND is persisted verbatim in
+        # jobs.json -- so only delivery identifiers, names ending in _UID, may
+        # be referenced at all. A blank resolved value refuses too: activate
+        # writes PLOW_CHAT_CHAT_UID= empty until it runs, and "plow_chat:" is
+        # the silent-drop target this field exists to close.
+        tmpl = string.Template(r["deliver"])
+        if not tmpl.is_valid():
+            raise SystemExit(f"row {r['name']!r}: malformed ${{...}} in deliver")
+        for n in tmpl.get_identifiers():
+            if not n.endswith("_UID"):
+                raise SystemExit(f"row {r['name']!r}: deliver may only reference "
+                                 f"delivery identifiers (names ending _UID), not {n!r}")
+            if not env.get(n, "").strip():
+                raise SystemExit(f"row {r['name']!r}: deliver names {n}, "
+                                 "which is unset or empty in this container")
+        r["deliver"] = tmpl.substitute(env)
     return rows
 
 
@@ -94,41 +101,35 @@ def registered(jobs_path=JOBS_FILE):
     out = {}
     for job in jobs:
         # Subscript, not .get: every entry hermes writes carries these
-        # (pinned by tests/fixtures/hermes-cron-jobs.json, captured live).
-        # A default would be semantics for a shape that does not occur --
-        # and the wrong ones if it ever did.
+        # (confirmed against a live agent's jobs.json, 2026-08-27). A default
+        # would be semantics for a shape that does not occur -- and the wrong
+        # ones if it ever did.
         job["enabled"], job["paused_at"]
+        if job["name"] in out:
+            # hermes happily persists two jobs under one name, and first-wins
+            # here would print `ok` while the OTHER copy still fires -- the
+            # duplicate-work failure this whole tool exists to prevent.
+            raise SystemExit(f"jobs.json holds more than one job named "
+                             f"{job['name']!r} -- remove the extra "
+                             f"(hermes cron remove) before syncing")
         out[job["name"]] = job
     return out
 
 
-def dotenv_env(path=DOTENV):
-    """The gateway's own env source, for ${VAR} expansion in deliver.
+def gateway_env():
+    """The gateway's own env, through the gateway's own loader.
 
     A `docker exec` session sees the container's CONFIG env -- image ENV plus
     compose `environment:` -- never the gateway's runtime env: the per-instance
-    values deliver expansion exists for (PLOW_CHAT_* and friends) live in
-    /opt/data/.env, which the gateway loads itself at boot. So read the same
-    file the same way it does: canonical KEY=value lines, last-wins
-    (hermes_cli/config.py assigns into a dict). Absent means a fresh instance
-    and an empty source -- a ${VAR} row still refuses loudly, naming the var.
-
-    ONE spelling, the same one lib/common.sh's dotenv_read pins: KEY=value at
-    column 0, key untouched. A hand edit in some other spelling reads as
-    absent -- the loud failure this repo prefers -- and this parser agreeing
-    with dotenv_read about that is what keeps the fleet at one grammar.
+    values deliver expansion exists for (PLOW_CHAT_* and friends) live in the
+    home's .env, which the gateway loads itself at boot. hermes_cli ships the
+    loader that does that load, so use it rather than reimplement its grammar;
+    this is why agent-mgr runs this script under /opt/hermes/.venv/bin/python3
+    with HOME set to the home mount. Imported here, not at module top: the
+    contract suite imports this module on a host with no hermes installed.
     """
-    try:
-        text = pathlib.Path(path).read_text()
-    except FileNotFoundError:
-        return {}
-    out = {}
-    for line in text.splitlines():
-        if line.startswith("#") or "=" not in line:
-            continue
-        k, _, v = line.partition("=")
-        out[k] = v.strip()
-    return out
+    from hermes_cli.config import load_env
+    return load_env()
 
 
 def _stored_schedule_matches(row_schedule, job):
@@ -168,8 +169,8 @@ def classify(rows, existing):
     return out
 
 
-def create_argv(row, hermes=HERMES):
-    argv = [hermes, "cron", "create", row["schedule"]]
+def create_argv(row):
+    argv = [HERMES, "cron", "create", row["schedule"]]
     if row.get("prompt"):
         argv.append(row["prompt"])
     argv += ["--name", row["name"], "--deliver", row["deliver"]]
@@ -194,21 +195,18 @@ REFUSALS = {
 }
 
 
-def main(argv=None, runner=subprocess.run):
+def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--spec-json", required=True)
-    ap.add_argument("--jobs-file", default=JOBS_FILE)
-    ap.add_argument("--hermes", default=HERMES)
-    ap.add_argument("--dotenv", default=DOTENV)
     args = ap.parse_args(argv)
-    # The dotenv over the session env: the gateway's own values win, and the
-    # session env still answers for anything compose set (TZ and friends).
-    rows = load_spec(args.spec_json, env={**os.environ, **dotenv_env(args.dotenv)})
+    # The gateway's dotenv over the session env: the gateway's own values win,
+    # and the session env still answers for anything compose set (TZ and friends).
+    rows = load_spec(args.spec_json, env={**os.environ, **gateway_env()})
     failed = False
-    for action, r in classify(rows, registered(args.jobs_file)):
+    for action, r in classify(rows, registered(JOBS_FILE)):
         if action == "create":
             # The create's own echo is the confirmation; not captured.
-            res = runner(create_argv(r, args.hermes))
+            res = subprocess.run(create_argv(r))
             if res.returncode != 0:
                 print(f"create failed for {r['name']} (exit {res.returncode})")
                 failed = True

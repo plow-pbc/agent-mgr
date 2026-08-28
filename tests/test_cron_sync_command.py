@@ -2,6 +2,8 @@
 import os
 from pathlib import Path
 
+import pytest
+
 from conftest import fake_docker
 
 
@@ -10,20 +12,17 @@ def _bin(tmp_path, name, **kw):
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
-def test_refuses_without_a_spec(run, instance):
-    """Unset means the agent declares no shipped jobs -- a refusal, never a
-    silent no-op that reads as 'everything converged'."""
-    run("register", "str", str(instance("str")))
+@pytest.mark.parametrize("descriptor,why", [
+    # Unset means the agent declares no shipped jobs -- a refusal, never a
+    # silent no-op that reads as 'everything converged'.
+    ("", "AGENT_CRON_SPEC"),
+    ("AGENT_CRON_SPEC=crons.json\n", "crons.json"),   # named but absent
+])
+def test_cron_sync_preflight_refusals(run, instance, descriptor, why):
+    run("register", "str", str(instance("str", descriptor=descriptor)))
     r = run("cron-sync", "str")
     assert r.returncode != 0
-    assert "AGENT_CRON_SPEC" in r.stderr
-
-
-def test_refuses_a_missing_spec_file(run, instance):
-    run("register", "str", str(instance("str", descriptor="AGENT_CRON_SPEC=crons.json\n")))
-    r = run("cron-sync", "str")
-    assert r.returncode != 0
-    assert "crons.json" in r.stderr
+    assert why in r.stderr
 
 
 def test_refuses_when_the_gateway_is_not_running(run, instance, tmp_path):
