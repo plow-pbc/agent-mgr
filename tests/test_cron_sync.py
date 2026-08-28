@@ -32,6 +32,7 @@ def row(**over):
     (row(no_agent=True), "no_agent"),                  # no_agent means no agent turn, so a prompt is dead weight
     (row(prompt=None, script="x.sh", no_agent=True, extra="?"), "unknown"),
     (row(deliver="plow_chat:${NO_SUCH_VAR}"), "NO_SUCH_VAR"),  # unset var refuses, never empty-expands
+    (row(deliver="plow_chat:$"), "deliver"),           # malformed placeholder refuses, not a traceback
 ])
 def test_load_spec_refuses(bad, why):
     with pytest.raises(SystemExit) as exc:
@@ -132,6 +133,8 @@ def test_paused_refuses_rather_than_duplicate_or_skip():
     ("prompt", "different words"),
     ("skills", ["extra"]),
     ("schedule_display", "0 9 * * *"),
+    ("script", "other.sh"),
+    ("no_agent", True),
 ])
 def test_drift_is_loud(field, value):
     r = row()
@@ -199,3 +202,19 @@ def test_main_expands_deliver_from_the_gateways_dotenv(tmp_path):
                          "--dotenv", str(dotenv)], runner=runner)
     assert rc == 0
     assert "plow_chat:cht_abc" in calls[0]  # last-wins, like the gateway
+
+
+@pytest.mark.parametrize("text", ['["oops"]', '[["nested"]]'])
+def test_load_spec_refuses_a_non_object_row(text):
+    with pytest.raises(SystemExit) as exc:
+        cron_sync.load_spec(text, env={})
+    assert "object" in str(exc.value)
+
+
+def test_a_failed_create_fails_the_run(tmp_path, capsys):
+    def runner(argv, **kw):
+        return subprocess.CompletedProcess(argv, 1)
+    rc = cron_sync.main(["--spec-json", json.dumps([row()]),
+                         "--jobs-file", str(tmp_path / "nope.json"),
+                         "--dotenv", str(tmp_path / "no.env")], runner=runner)
+    assert rc == 1 and "create failed" in capsys.readouterr().out

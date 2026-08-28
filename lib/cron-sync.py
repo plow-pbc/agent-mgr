@@ -45,6 +45,8 @@ def load_spec(text, env):
         raise SystemExit("spec must be a non-empty JSON list of job rows")
     seen = set()
     for r in rows:
+        if not isinstance(r, dict):
+            raise SystemExit(f"spec row must be an object, got {type(r).__name__}")
         unknown = set(r) - ROW_KEYS
         if unknown:
             raise SystemExit(f"row {r.get('name')!r}: unknown keys {sorted(unknown)}")
@@ -78,6 +80,8 @@ def load_spec(text, env):
         except KeyError as exc:
             raise SystemExit(f"row {r['name']!r}: deliver names {exc} "
                              "which is unset in this container")
+        except ValueError as exc:
+            raise SystemExit(f"row {r['name']!r}: malformed ${{...}} in deliver: {exc}")
     return rows
 
 
@@ -164,8 +168,8 @@ def classify(rows, existing):
     return out
 
 
-def create_argv(row):
-    argv = [HERMES, "cron", "create", row["schedule"]]
+def create_argv(row, hermes=HERMES):
+    argv = [hermes, "cron", "create", row["schedule"]]
     if row.get("prompt"):
         argv.append(row["prompt"])
     argv += ["--name", row["name"], "--deliver", row["deliver"]]
@@ -191,14 +195,12 @@ REFUSALS = {
 
 
 def main(argv=None, runner=subprocess.run):
-    global HERMES
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--spec-json", required=True)
     ap.add_argument("--jobs-file", default=JOBS_FILE)
     ap.add_argument("--hermes", default=HERMES)
     ap.add_argument("--dotenv", default=DOTENV)
     args = ap.parse_args(argv)
-    HERMES = args.hermes
     # The dotenv over the session env: the gateway's own values win, and the
     # session env still answers for anything compose set (TZ and friends).
     rows = load_spec(args.spec_json, env={**os.environ, **dotenv_env(args.dotenv)})
@@ -206,7 +208,7 @@ def main(argv=None, runner=subprocess.run):
     for action, r in classify(rows, registered(args.jobs_file)):
         if action == "create":
             # The create's own echo is the confirmation; not captured.
-            res = runner(create_argv(r))
+            res = runner(create_argv(r, args.hermes))
             if res.returncode != 0:
                 print(f"create failed for {r['name']} (exit {res.returncode})")
                 failed = True
