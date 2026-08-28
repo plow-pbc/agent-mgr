@@ -232,10 +232,8 @@ is ignored, including one `agent-mgr` owns.
 ## What this builds on
 
 ```
-  plow-pbc/seed-plow-chat        the Plow Chat wire protocol, REST + WSS
-            │                    (spec, not SDK — this repo never calls it directly)
-            │ implemented by
   plow-pbc/hermes-plow-chat      the plow-chat-platform plugin: the phone line
+            │                    implementing the Plow Chat API (api.plow.co/openapi.json)
             │                    — and, at an earlier SHA, the activation script
             │ pinned TWICE, each by 40-char SHA:
             │   runtime/plow-chat-plugin.ref     the plugin directory
@@ -251,7 +249,6 @@ is ignored, including one `agent-mgr` owns.
 | [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **`sha256:` digest** |
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, in `runtime/plow-chat-plugin.ref` |
 | the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, in `runtime/plow-chat-activate.ref` |
-| [`plow-pbc/seed-plow-chat`](https://github.com/plow-pbc/seed-plow-chat) | the protocol that plugin implements | not consumed directly |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
 All three pins are exact on purpose — a `sha256:` digest for the image, a
