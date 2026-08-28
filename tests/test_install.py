@@ -431,6 +431,9 @@ def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, insta
         os.close(master)
         os.close(slave)
     assert r.returncode == 0, r.stderr
+    # And the reload actually ran -- exit 0 with the reload silently skipped
+    # would leave this test covering nothing.
+    assert "restarting rowan's gateway" in r.stdout, r.stdout
 
 
 def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_path):
