@@ -63,6 +63,28 @@ def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance,
     assert "wrote" not in r.stdout
 
 
+def test_activate_copies_the_pinned_scripts_legacy_names_onto_the_new_ones(run, instance, tmp_path):
+    """The pinned activate script is frozen and still writes PLOW_CHAT_*; the
+    wiring under test is activate's post-step copying those onto the names the
+    plugin reads -- a break there passes every other activate test, because
+    their stub scripts write no dotenv at all."""
+    from conftest import fake_curl
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    (tmp_path / "act").mkdir()
+    b = fake_curl(tmp_path / "act", body=(
+        "#!/usr/bin/env bash\n"
+        'd=""\n'
+        'while [ $# -gt 0 ]; do case "$1" in --data-dir) d="$2"; shift 2 ;; *) shift ;; esac; done\n'
+        "printf 'PLOW_CHAT_TOKEN=tok_live\\nPLOW_CHAT_CHAT_UID=cht_dm\\n' >> \"$d/.env\"\n"))
+    r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text().splitlines()
+    assert "PLOW_AGENT_TOKEN=tok_live" in lines
+    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
+    assert "PLOW_CHAT_TOKEN=tok_live" in lines, "the pinned script's own lines must survive"
+
+
 def test_migrate_plugin_env_without_a_dotenv_points_at_restore(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("migrate-plugin-env", "rowan")
