@@ -93,12 +93,19 @@ def load_spec(text, env):
 
 
 def registered(jobs_path=JOBS_FILE):
-    """{name: raw job dict} from hermes's own persisted state."""
+    """({name: raw job dict}, duplicate names) from hermes's persisted state.
+
+    hermes happily persists two jobs under one name. Duplicates are RETURNED,
+    not refused here: only a spec-named duplicate fails the run (last-wins
+    would print `ok` while the other copy still fires), while a duplicate
+    among the agent's own crons stays the agent's business -- the spec never
+    names it, and the invisibility contract in the module docstring holds.
+    """
     try:
         jobs = json.loads(pathlib.Path(jobs_path).read_text())["jobs"]
     except FileNotFoundError:
-        return {}          # a fresh instance -- the ONLY absence that means empty
-    out = {}
+        return {}, set()   # a fresh instance -- the ONLY absence that means empty
+    out, dupes = {}, set()
     for job in jobs:
         # Subscript, not .get: every entry hermes writes carries these
         # (confirmed against a live agent's jobs.json, 2026-08-27). A default
@@ -106,14 +113,9 @@ def registered(jobs_path=JOBS_FILE):
         # ones if it ever did.
         job["enabled"], job["paused_at"]
         if job["name"] in out:
-            # hermes happily persists two jobs under one name, and first-wins
-            # here would print `ok` while the OTHER copy still fires -- the
-            # duplicate-work failure this whole tool exists to prevent.
-            raise SystemExit(f"jobs.json holds more than one job named "
-                             f"{job['name']!r} -- remove the extra "
-                             f"(hermes cron remove) before syncing")
+            dupes.add(job["name"])
         out[job["name"]] = job
-    return out
+    return out, dupes
 
 
 def gateway_env():
@@ -202,9 +204,15 @@ def main(argv=None):
     # The gateway's dotenv over the session env: the gateway's own values win,
     # and the session env still answers for anything compose set (TZ and friends).
     rows = load_spec(args.spec_json, env={**os.environ, **gateway_env()})
+    existing, dupes = registered(JOBS_FILE)
     failed = False
-    for action, r in classify(rows, registered(JOBS_FILE)):
-        if action == "create":
+    for action, r in classify(rows, existing):
+        if r["name"] in dupes:
+            print(f"REFUSED {r['name']} (duplicate): jobs.json holds more than "
+                  "one job under this name -- remove the extra "
+                  "(hermes cron remove) before syncing")
+            failed = True
+        elif action == "create":
             # The create's own echo is the confirmation; not captured.
             res = subprocess.run(create_argv(r))
             if res.returncode != 0:

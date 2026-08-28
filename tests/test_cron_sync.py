@@ -103,12 +103,12 @@ def test_load_spec_blocked_row_keeps_its_reason():
 def test_registered_reads_hermes_own_state(tmp_path):
     p = tmp_path / "jobs.json"
     p.write_text(json.dumps({"jobs": [existing_job()], "updated_at": "x"}))
-    jobs = cron_sync.registered(str(p))
-    assert set(jobs) == {"seed"}
+    jobs, dupes = cron_sync.registered(str(p))
+    assert set(jobs) == {"seed"} and not dupes
 
 
 def test_registered_absent_file_is_the_only_empty(tmp_path):
-    assert cron_sync.registered(str(tmp_path / "nope.json")) == {}
+    assert cron_sync.registered(str(tmp_path / "nope.json")) == ({}, set())
 
 
 @pytest.mark.parametrize("content", ["not json", '{"no_jobs_key": []}',
@@ -120,15 +120,23 @@ def test_registered_malformed_raises(tmp_path, content):
         cron_sync.registered(str(p))
 
 
-def test_registered_refuses_a_duplicate_stored_name(tmp_path):
-    """hermes happily persists two jobs under one name; first-wins here would
-    print `ok` while the OTHER copy still fires -- duplicate work, silently."""
-    p = tmp_path / "jobs.json"
-    p.write_text(json.dumps({"jobs": [existing_job(), existing_job()],
-                             "updated_at": "x"}))
-    with pytest.raises(SystemExit) as exc:
-        cron_sync.registered(str(p))
-    assert "seed" in str(exc.value)
+def test_a_spec_named_duplicate_fails_the_run(monkeypatch, tmp_path, capsys):
+    """hermes happily persists two jobs under one name; last-wins would print
+    `ok` while the OTHER copy still fires -- duplicate work, silently."""
+    _wire(monkeypatch, tmp_path,
+          jobs=[match_of(row(name="held")), match_of(row(name="held"))])
+    rc = cron_sync.main(["--spec-json", json.dumps([row(name="held")])])
+    assert rc == 1 and "duplicate" in capsys.readouterr().out
+
+
+def test_an_agent_authored_duplicate_stays_invisible(monkeypatch, tmp_path):
+    """A duplicate among the agent's OWN crons is the agent's business -- the
+    spec never names it, and failing the sync on it would block convergence
+    of unrelated rows."""
+    calls = _wire(monkeypatch, tmp_path,
+                  jobs=[match_of(row(name="remind-me")), match_of(row(name="remind-me"))])
+    rc = cron_sync.main(["--spec-json", json.dumps([row(name="fresh")])])
+    assert rc == 0 and len(calls) == 1
 
 
 def test_absent_is_created_present_is_not():
