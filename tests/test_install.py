@@ -21,7 +21,7 @@ def test_restore_writes_a_dotenv_skeleton_carrying_both_platforms(run, instance,
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_CHAT_TOKEN" in env
+    assert "PLOW_AGENT_TOKEN" in env
     assert "DOMO_MCP_TOKEN" in env, "latch is baseline, not an opt-in"
 
 
@@ -29,9 +29,103 @@ def test_restore_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=real\n")
+    env.write_text("PLOW_AGENT_TOKEN=real\n")
     run("restore", "rowan")
-    assert env.read_text() == "PLOW_CHAT_TOKEN=real\n"
+    assert env.read_text() == "PLOW_AGENT_TOKEN=real\n"
+
+
+def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance, tmp_path):
+    """The fleet migration step: legacy PLOW_CHAT_* values land under the names
+    the unified plugin reads, the old lines stay (a pre-rename plugin still
+    reads them mid-migration; a later cleanup removes them), and a second run
+    writes nothing."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\nHOSTEX_TOKEN=keepme\n")
+
+    r = run("migrate-plugin-env", "rowan")
+    assert r.returncode == 0, r.stderr
+    lines = env.read_text().splitlines()
+    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
+    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
+    assert "PLOW_CHAT_TOKEN=tok_plow" in lines, "the legacy lines must survive until the cleanup"
+    assert "HOSTEX_TOKEN=keepme" in lines
+    # One ledger line per var written, no values on stdout.
+    assert "wrote PLOW_AGENT_TOKEN from PLOW_CHAT_TOKEN" in r.stdout
+    assert "wrote PLOW_HOME_CHANNEL from PLOW_CHAT_CHAT_UID" in r.stdout
+    assert "tok_plow" not in r.stdout + r.stderr, "a credential value leaked into the ledger"
+
+    before = env.read_text()
+    r = run("migrate-plugin-env", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert env.read_text() == before, "a second run must write nothing"
+    assert "wrote" not in r.stdout
+
+
+@pytest.mark.parametrize("preexisting", [
+    pytest.param("", id="fresh_dotenv"),
+    # The stale row is the bug that shipped: activate's copy skipped set keys,
+    # so re-activation left the PREVIOUS (dead) token under the current name.
+    pytest.param("PLOW_AGENT_TOKEN=tok_stale\nPLOW_HOME_CHANNEL=cht_old\n", id="stale_current_values"),
+])
+def test_activate_syncs_legacy_names(run, instance, tmp_path, preexisting):
+    """The pinned activate script is frozen and writes PLOW_CHAT_*; activate's
+    post-step must SYNC those onto the current names — overwriting, because the
+    script just minted the freshest values there are. A break here passes every
+    other activate test: their stub scripts write no dotenv at all."""
+    from conftest import fake_curl
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    if preexisting:
+        env.write_text(preexisting)
+    (tmp_path / "act").mkdir()
+    b = fake_curl(tmp_path / "act", body=(
+        "#!/usr/bin/env bash\n"
+        'd=""\n'
+        'while [ $# -gt 0 ]; do case "$1" in --data-dir) d="$2"; shift 2 ;; *) shift ;; esac; done\n'
+        "printf 'PLOW_CHAT_TOKEN=tok_live\\nPLOW_CHAT_CHAT_UID=cht_dm\\n' >> \"$d/.env\"\n"))
+    r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    lines = env.read_text().splitlines()
+    assert "PLOW_AGENT_TOKEN=tok_live" in lines
+    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
+    assert "PLOW_CHAT_TOKEN=tok_live" in lines, "the pinned script's own lines must survive"
+    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
+
+
+def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path):
+    """The recovery command activate prints must be able to finish the job.
+    Idempotent mode skips set keys, so after a failed in-activate sync the
+    fresh token sits only under the legacy name — `--sync` is the forwarded
+    mode that overwrites."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env.write_text("PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n")
+    r = run("migrate-plugin-env", "rowan", "--sync")
+    assert r.returncode == 0, r.stderr
+    lines = env.read_text().splitlines()
+    assert "PLOW_AGENT_TOKEN=tok_fresh" in lines
+    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
+
+
+def test_migrate_plugin_env_rejects_an_unknown_mode(run, instance, tmp_path):
+    """Fail-fast on a typo'd flag: silently running in the OTHER mode is the
+    stale-token bug this pair of modes exists to prevent."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    r = run("migrate-plugin-env", "rowan", "--bogus")
+    assert r.returncode != 0
+    assert "unknown mode" in r.stderr and "--sync" in r.stderr
+
+
+def test_migrate_plugin_env_without_a_dotenv_points_at_restore(run, instance, tmp_path):
+    run("register", "rowan", str(instance("rowan")))
+    r = run("migrate-plugin-env", "rowan")
+    assert r.returncode != 0
+    assert "restore" in r.stderr
 
 
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
@@ -86,7 +180,7 @@ def test_no_template_carries_a_literal_credential():
         for line in text.splitlines():
             if line.lstrip().startswith("#"):
                 continue
-            for key in ("PLOW_CHAT_TOKEN", "DOMO_MCP_TOKEN"):
+            for key in ("PLOW_AGENT_TOKEN", "DOMO_MCP_TOKEN"):
                 if line.strip().startswith(f"{key}="):
                     assert line.strip() == f"{key}=", f"{name} ships a value for {key}"
 
@@ -129,7 +223,7 @@ def test_an_instance_dotenv_example_wins_over_the_fleet_template(run, instance, 
     fleet template does; a skeleton missing those keys is a first run that looks
     complete and is not."""
     repo = instance("str")
-    (repo / ".env.example").write_text("HOSTEX_TOKEN=\nSEAM_API_KEY=\nPLOW_CHAT_TOKEN=\n")
+    (repo / ".env.example").write_text("HOSTEX_TOKEN=\nSEAM_API_KEY=\nPLOW_AGENT_TOKEN=\n")
     run("register", "str", str(repo))
     run("restore", "str")
     env = (tmp_path / "home" / ".hermes-str" / ".env").read_text()
@@ -140,7 +234,7 @@ def test_the_fleet_template_is_used_when_an_instance_ships_none(run, instance, t
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_CHAT_TOKEN" in env and "DOMO_MCP_TOKEN" in env
+    assert "PLOW_AGENT_TOKEN" in env and "DOMO_MCP_TOKEN" in env
 
 
 def test_restore_is_the_whole_deploy_including_the_instances_own_step(run, instance, tmp_path):

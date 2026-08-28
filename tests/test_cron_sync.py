@@ -74,19 +74,22 @@ def test_a_script_can_feed_the_agents_prompt():
     assert cron_sync.load_spec(text, env={})[0]["script"] == "poll.py"
 
 
-def test_load_spec_expands_deliver_from_env():
-    text = json.dumps([row(deliver="plow_chat:${CHAT_UID}")])
-    rows = cron_sync.load_spec(text, env={"CHAT_UID": "cht_abc"})
+@pytest.mark.parametrize("var", ["CHAT_UID", "PLOW_HOME_CHANNEL"])
+def test_load_spec_expands_deliver_from_env(var):
+    text = json.dumps([row(deliver="plow_chat:${%s}" % var)])
+    rows = cron_sync.load_spec(text, env={var: "cht_abc"})
     assert rows[0]["deliver"] == "plow_chat:cht_abc"
 
 
 @pytest.mark.parametrize("deliver,env,why", [
     # The env source holds credentials beside delivery ids, and an expanded
     # deliver lands in hermes argv and persists verbatim in jobs.json -- so
-    # only names ending _UID may be referenced, even when the var is set.
+    # only names ending _UID/_CHANNEL may be referenced, even when the var is
+    # set. Both token generations, so the rename cannot re-admit either.
     ("plow_chat:${PLOW_CHAT_TOKEN}", {"PLOW_CHAT_TOKEN": "tok"}, "PLOW_CHAT_TOKEN"),
-    # activate writes PLOW_CHAT_CHAT_UID= empty until it runs; "plow_chat:" is
-    # the silent-drop target this field exists to close.
+    ("plow_chat:${PLOW_AGENT_TOKEN}", {"PLOW_AGENT_TOKEN": "tok"}, "PLOW_AGENT_TOKEN"),
+    # restore writes PLOW_HOME_CHANNEL= empty until activate runs; "plow_chat:"
+    # is the silent-drop target this field exists to close.
     ("plow_chat:${CHAT_UID}", {"CHAT_UID": ""}, "empty"),
     ("plow_chat:${CHAT_UID}", {"CHAT_UID": "  "}, "empty"),
 ])
@@ -237,7 +240,7 @@ def test_main_exit_codes(monkeypatch, tmp_path, capsys):
 
 def test_main_expands_deliver_from_the_gateways_env(monkeypatch, tmp_path):
     """The env source is the gateway's own loader (hermes_cli.load_env) -- an
-    exec session's env never carries the per-instance PLOW_CHAT_* values,
+    exec session's env never carries the per-instance PLOW_* values,
     which is exactly the expansion this feature exists for."""
     calls = _wire(monkeypatch, tmp_path, env={"CHAT_UID": "cht_abc"})
     rc = cron_sync.main(["--spec-json",
