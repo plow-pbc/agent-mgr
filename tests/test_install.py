@@ -394,6 +394,23 @@ def _external(instance, run, tmp_path):
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
+def _run_tty(argv, reply, registry, tmp_path, env_path, timeout=None):
+    """agent-mgr on a real pty: [ -t 0 ] is the branch these tests exercise."""
+    import pty
+    import subprocess
+    env = dict(os.environ)
+    env.update({"AGENT_MGR_REGISTRY": str(registry), "HOME": str(tmp_path / "home"),
+                **env_path})
+    master, slave = pty.openpty()
+    try:
+        os.write(master, f"{reply}\n".encode())
+        return subprocess.run([str(ROOT / "agent-mgr"), *argv], stdin=slave,
+                              capture_output=True, text=True, env=env, timeout=timeout)
+    finally:
+        os.close(master)
+        os.close(slave)
+
+
 def test_a_confirm_transitions_agent_refuses_a_non_interactive_transition(run, instance, tmp_path):
     """The gateway messages its person at every restart, so a transition on a
     confirm-transitions agent needs a deliberate operator. Without a terminal
@@ -415,21 +432,8 @@ def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, insta
     The yes is exported, so the child never asks again -- with only ONE answer
     on the pty, a re-prompt would block on the empty terminal and fail this
     test by timeout, and a refusal would fail it by exit code."""
-    import pty
-    import subprocess
-    env_path = _external(instance, run, tmp_path)
-    env = dict(os.environ)
-    env.update({"AGENT_MGR_REGISTRY": str(registry), "HOME": str(tmp_path / "home"),
-                **env_path})
-    master, slave = pty.openpty()
-    try:
-        os.write(master, b"y\n")
-        r = subprocess.run([str(ROOT / "agent-mgr"), "restore", "rowan"],
-                           stdin=slave, capture_output=True, text=True, env=env,
-                           timeout=120)
-    finally:
-        os.close(master)
-        os.close(slave)
+    r = _run_tty(["restore", "rowan"], "y", registry, tmp_path,
+                 _external(instance, run, tmp_path), timeout=120)
     assert r.returncode == 0, r.stderr
     # And the reload actually ran -- exit 0 with the reload silently skipped
     # would leave this test covering nothing.
@@ -457,20 +461,8 @@ def test_the_interactive_prompt_defaults_to_no(run, registry, instance, tmp_path
     """A real pty, because [ -t 0 ] is the branch under test. Only an explicit
     yes proceeds; empty and garbage refuse -- the default answer to "message a
     real person?" is No."""
-    import pty
-    import subprocess
-    env_path = _external(instance, run, tmp_path)
-    env = dict(os.environ)
-    env.update({"AGENT_MGR_REGISTRY": str(registry), "HOME": str(tmp_path / "home"),
-                **env_path})
-    master, slave = pty.openpty()
-    try:
-        os.write(master, (reply + "\n").encode())
-        r = subprocess.run([str(ROOT / "agent-mgr"), "up", "rowan"],
-                           stdin=slave, capture_output=True, text=True, env=env)
-    finally:
-        os.close(master)
-        os.close(slave)
+    r = _run_tty(["up", "rowan"], reply, registry, tmp_path,
+                 _external(instance, run, tmp_path))
     assert (r.returncode == 0) == ok, (reply, r.stderr)
 
 
