@@ -6,12 +6,12 @@ running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
 agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
 mirrors the cloud Hermes infrastructure in
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
-the same runtime image, the same plugin at the same pin, the same protocol to
-the same API — so an agent you bring up here behaves like one provisioned
-there, and a fix on either side reaches the other. What differs is the
-product around it: there, one VM per tenant behind an HTTP endpoint; here, one
-host, many agents, Docker, a person at a terminal. Standing up a new agent is
-a command rather than a copy-paste of the last one.
+the same upstream runtime, the same plugin at the same pin, the same protocol
+to the same API — so a fix on either side reaches the other (the one tracked
+gap is the runtime image's pin, [`#2`](https://github.com/plow-pbc/agent-mgr/issues/2)).
+What differs is the product around it: there, one VM per tenant behind an
+HTTP endpoint; here, one host, many agents, Docker, a person at a terminal.
+Standing up a new agent is a command rather than a copy-paste of the last one.
 
 Install is a clone and a symlink — there is no release and no package:
 
@@ -302,16 +302,12 @@ it. So the posture is:
 
 **Converge on the artifacts.** The plugin, the upstream image and the
 integration reference are the *same facts* on both sides, and a fix to one
-should reach the other. Where they have already forked, it is tracked rather
-than tolerated:
+should reach the other. The plugin already is one fact: plow's blessed image
+stages it from `runtime/plow-chat-plugin.ref` at build time. Where the two
+still fork, it is tracked rather than tolerated:
 
-- [`plow-pbc/plow#1394`](https://github.com/plow-pbc/plow/issues/1394) —
-  `cloud-agents/hermes` carries its own copy of the plugin, under the same id
 - [`#2`](https://github.com/plow-pbc/agent-mgr/issues/2) — the upstream image
   pin here drifts from plow's blessed base
-- [`plow-pbc/hermes-plow-chat#2`](https://github.com/plow-pbc/hermes-plow-chat/issues/2) —
-  the plugin this repo pins loses inbound turns across a socket gap, which
-  plow's copy already fixed
 
 **Keep the managers separate.** Provisioning here is a bash CLI over Compose;
 there it is a `Provider` protocol behind an HTTP endpoint. Activation here is a
