@@ -410,6 +410,29 @@ def test_a_confirm_transitions_agent_refuses_a_non_interactive_transition(run, i
     assert "AGENT_TRANSITION_ACK" not in r.stderr, "logs is a read, not a transition"
 
 
+def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, instance, tmp_path):
+    """restore asks at its preflight and ends with a reload in a child process.
+    The yes is exported, so the child never asks again -- with only ONE answer
+    on the pty, a re-prompt would block on the empty terminal and fail this
+    test by timeout, and a refusal would fail it by exit code."""
+    import pty
+    import subprocess
+    env_path = _external(instance, run, tmp_path)
+    env = dict(os.environ)
+    env.update({"AGENT_MGR_REGISTRY": str(registry), "HOME": str(tmp_path / "home"),
+                **env_path})
+    master, slave = pty.openpty()
+    try:
+        os.write(master, b"y\n")
+        r = subprocess.run([str(ROOT / "agent-mgr"), "restore", "rowan"],
+                           stdin=slave, capture_output=True, text=True, env=env,
+                           timeout=120)
+    finally:
+        os.close(master)
+        os.close(slave)
+    assert r.returncode == 0, r.stderr
+
+
 def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_path):
     """restore's preflight rule: a command that installs everything before
     refusing has already done the thing the refusal exists to prevent. The
