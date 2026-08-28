@@ -796,7 +796,7 @@ require_running() {
 # The value the gateway would load for KEY.
 #
 # ONE spelling, deliberately: `KEY=value` at column 0. This tool writes every
-# DOMO_* and Plow line in an agent's dotenv -- set-latch here, activate
+# DOMO_* and PLOW_* line in an agent's dotenv -- set-latch here, activate
 # through the pinned script, restore from the skeleton -- so the canonical form
 # is the only one that gets produced, and owning it is what lets this be four
 # lines instead of a second implementation of Hermes's dotenv grammar.
