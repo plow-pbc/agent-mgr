@@ -93,6 +93,8 @@ case "$cmd" in
         # rather than depending on the installer staying idempotent.
         install_plow_plugin "The dotenv skeleton IS written; config.yaml and skills are NOT."
 
+        install_fleet_skill "The dotenv skeleton and plugin ARE installed; config.yaml and instance skills are NOT."
+
         install -m 600 "$AGENT_CONFIG" "$AGENT_HOME/config.yaml"
         echo "restored config.yaml to $AGENT_HOME"
 
@@ -137,6 +139,14 @@ case "$cmd" in
         [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
         install_plow_plugin "Nothing else changed -- this agent's config and skills are untouched."
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the plugin just installed"
+        ;;
+    install-skill)
+        load_agent "${1:-}"
+        # Before the write, as in restore.
+        "$AGENT_MGR_ROOT/lib/resolve-guard" "$AGENT_NAME"
+        [ -d "$AGENT_HOME" ] || die "no $AGENT_HOME -- run 'agent-mgr restore $AGENT_NAME' first"
+        install_fleet_skill "Nothing else changed -- this agent's config and instance skills are untouched."
+        "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the fleet skill just installed"
         ;;
     agent)
         load_agent "${1:-}"; shift

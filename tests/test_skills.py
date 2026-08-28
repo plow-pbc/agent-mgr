@@ -232,6 +232,28 @@ def test_two_skills_from_one_monorepo_keep_both_pins(run, instance, tmp_path):
     assert any("\tfirst\t" in r for r in rows) and any("\tsecond\t" in r for r in rows)
 
 
+def test_restore_installs_the_fleet_google_workspace_skill(run, instance, tmp_path):
+    """Every agent gets the redirect skill: the image-bundled copy of the same
+    name teaches a local-OAuth path no instance has, so restore replaces it."""
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restore", "rowan")
+    assert r.returncode == 0, r.stderr
+    installed = (tmp_path / "home" / ".hermes-rowan" / "skills"
+                 / "productivity" / "google-workspace" / "SKILL.md")
+    assert installed.exists()
+    assert "name: google-workspace" in installed.read_text()
+
+
+def test_install_skill_refuses_a_ref_that_is_not_a_sha(run, instance):
+    """A branch would silently re-point every agent's Google path on the next
+    upstream push -- the same rule the plugin pin lives under."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    r = run("install-skill", "rowan", env={"AGENT_MGR_SKILL_REF": "main"})
+    assert r.returncode != 0
+    assert "40-char SHA" in r.stderr
+
+
 def test_a_dotted_destination_does_not_accept_a_different_skill(run, instance, tmp_path):
     """`foo.bar` reached an ERE, so `name: fooXbar` satisfied the check that
     exists to prove the fetched tree is the skill this agent pinned."""

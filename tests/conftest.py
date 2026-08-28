@@ -339,28 +339,46 @@ PLUGIN_TARBALL = {
         "def register(ctx):\n    pass\n",
 }
 
+# The fleet google-workspace skill every agent gets, at the path the canonical
+# copy keeps in plow-pbc/plow. Restore fetches it unconditionally, so the
+# default `gh` serves it the way it serves the plugin -- otherwise every plain
+# `run("restore", ...)` in the suite would fail on a fetch it never asked about.
+FLEET_SKILL_SRC = "cloud-agents/hermes/image/seed/skills/productivity/google-workspace"
+FLEET_SKILL_TARBALL = {
+    f"plow-pbc-plow-abc1234/{FLEET_SKILL_SRC}/SKILL.md":
+        "---\nname: google-workspace\n---\n# google-workspace\n",
+}
 
-def install_gh_dispatching(b, *, plugin_tgz, skill_tgz=None):
+
+def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
     """A `gh` that answers by repo, because one invocation can need either.
 
-    A skill test restores first -- which installs the plugin -- and then adds a
-    skill, so a `gh` that served one tarball to both would fail whichever came
-    second on fetch-tree's manifest name check. Dispatching on the argv is what
-    the real `gh api repos/<repo>/tarball/<ref>` does anyway.
+    A skill test restores first -- which installs the plugin and the fleet
+    skill -- and then adds a skill, so a `gh` that served one tarball to all
+    would fail whichever came second on fetch-tree's manifest name check.
+    Dispatching on the argv is what the real `gh api repos/<repo>/tarball/<ref>`
+    does anyway.
     """
     other = f'cat {skill_tgz}' if skill_tgz else 'echo "no fake for: $*" >&2; exit 1'
     (b / "gh").write_text(
         "#!/usr/bin/env bash\n"
         "case \"$*\" in\n"
         f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
+        f"  *repos/plow-pbc/plow/tarball*) cat {fleet_tgz} ;;\n"
         f"  *) {other} ;;\n"
         "esac\n"
     )
     (b / "gh").chmod(0o755)
 
 
+def _write_fleet_tgz(tmp_path):
+    tgz = tmp_path / "fleet-skill.tgz"
+    write_tarball(tgz, FLEET_SKILL_TARBALL)
+    return tgz
+
+
 def install_fake_gh(tmp_path, b):
-    """The default: a `gh` that can serve the plugin and nothing else.
+    """The default: a `gh` that serves what every restore fetches and nothing else.
 
     Never overwrites one already there. This runs inside `run()`, so it fires on
     every invocation -- including the ones a skill test set up with a richer,
@@ -371,7 +389,7 @@ def install_fake_gh(tmp_path, b):
         return b
     tgz = tmp_path / "plugin.tgz"
     write_tarball(tgz, PLUGIN_TARBALL)
-    install_gh_dispatching(b, plugin_tgz=tgz)
+    install_gh_dispatching(b, plugin_tgz=tgz, fleet_tgz=_write_fleet_tgz(tmp_path))
     return b
 
 
@@ -393,7 +411,8 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
     write_tarball(skill_tgz, members)
     plugin_tgz = tmp_path / "plugin.tgz"
     write_tarball(plugin_tgz, PLUGIN_TARBALL)
-    # Both, because a skill test restores before it adds, and restore installs
-    # the plugin through this same installer.
-    install_gh_dispatching(b, plugin_tgz=plugin_tgz, skill_tgz=skill_tgz)
+    # All three, because a skill test restores before it adds, and restore
+    # installs the plugin and the fleet skill through this same installer.
+    install_gh_dispatching(b, plugin_tgz=plugin_tgz,
+                           fleet_tgz=_write_fleet_tgz(tmp_path), skill_tgz=skill_tgz)
     return b

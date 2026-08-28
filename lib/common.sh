@@ -122,6 +122,7 @@ usage: agent-mgr <command> [args]
 
   restore <name>              install config.yaml + .env skeleton into its home
   install-plugin <name>       Plow Chat plugin, from the fleet-wide pinned SHA
+  install-skill <name>        fleet google-workspace skill, from its pinned SHA
   add-skill <name> <repo> [--ref SHA] [--dest PATH] [--src PATH]
   cron-sync <name>            converge the repo's cron spec onto the scheduler
   activate <name>             mint the Plow Chat credential pair
@@ -908,6 +909,27 @@ install_plow_plugin() {
     "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" plugins plugin.yaml \
         plow-pbc/hermes-plow-chat "$ref" plow-chat-platform plow-chat-platform \
         || die "could not install the Plow Chat plugin from plow-pbc/hermes-plow-chat at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? $landed"
+}
+
+# The pinned fleet google-workspace skill, into this agent's home. It replaces
+# the image-bundled copy of the same name, which teaches a local-OAuth path no
+# instance has; hermes's skills_sync keeps a diverged user copy, so this
+# override is durable. Sequenced by restore before the skills.tsv replay so an
+# instance row can still deliberately override it (last-writer-wins).
+#
+# Same shape as install_plow_plugin above, deliberately: one caller contract,
+# one pin-file idiom, one env override for tests. Reloads nothing -- callers do.
+install_fleet_skill() {
+    local landed="${1:?install_fleet_skill: the caller must say what landed}"
+    local ref
+    ref="${AGENT_MGR_SKILL_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/google-workspace-skill.ref")}"
+    # A SHA, never a branch: a branch would silently re-point every agent's
+    # Google path on the next upstream push.
+    [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the fleet-skill ref must be a 40-char SHA, got: $ref"
+    "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" skills SKILL.md \
+        plow-pbc/plow "$ref" productivity/google-workspace \
+        cloud-agents/hermes/image/seed/skills/productivity/google-workspace \
+        || die "could not install the google-workspace fleet skill from plow-pbc/plow at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? $landed"
 }
 
 # Refuse to write into a home that is not this agent's.
