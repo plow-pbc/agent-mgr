@@ -63,6 +63,36 @@ def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance,
     assert "wrote" not in r.stdout
 
 
+def test_install_plugin_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
+    """The public install path migrates, not just the manual rollout order: a
+    legacy-only agent reloading onto the unified plugin must come back with the
+    names it reads, or it silently loses its phone line."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\n")
+
+    r = run("install-plugin", "rowan")
+    assert r.returncode == 0, r.stderr
+    lines = env.read_text().splitlines()
+    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
+    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
+
+
+def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp_path):
+    """Last declaration wins -- dotenv_read and the compose env_file loader
+    both resolve a duplicated key to its last line, so the migrated value must
+    be the one the gateway actually ran with."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env.write_text("PLOW_CHAT_TOKEN=tok_stale\nPLOW_CHAT_TOKEN=tok_live\n")
+
+    r = run("migrate-plugin-env", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "PLOW_AGENT_TOKEN=tok_live" in env.read_text().splitlines()
+
+
 @pytest.mark.parametrize("preexisting", [
     pytest.param("", id="fresh_dotenv"),
     # The stale row is the bug that shipped: activate's copy skipped set keys,
@@ -394,6 +424,9 @@ def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
     # add-skill fetches a tarball. A RUNNING gateway for all three -- the reload
     # exits before the guard when there is none.
     (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
+    # install-plugin migrates the dotenv before the ref install; a real home
+    # always has one (restore writes the skeleton first).
+    (home / ".env").write_text("")
     b = fake_skill_gh(tmp_path)
     fake_docker(tmp_path, home=home, name="rowan")
     r = run(*args, env={"PATH": f"{b}:{os.environ['PATH']}"})

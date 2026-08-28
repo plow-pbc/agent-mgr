@@ -885,31 +885,18 @@ plow_chats_json() {
 migrate_plow_env() {
     local sync=""
     case "${1:-}" in
-        --sync) sync=1 ;;
+        --sync) sync="--sync" ;;
         "") ;;
         *) die "migrate_plow_env: unknown mode '${1}' -- the only mode is --sync" ;;
     esac
-    local env_file="$AGENT_HOME/.env" pair old new val
+    local env_file="$AGENT_HOME/.env"
     [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
-    for pair in PLOW_CHAT_TOKEN:PLOW_AGENT_TOKEN \
-                PLOW_CHAT_CHAT_UID:PLOW_HOME_CHANNEL \
-                PLOW_CHAT_BASE_URL:PLOW_API_BASE; do
-        old="${pair%%:*}" new="${pair##*:}"
-        if [ -z "$sync" ] && [ -n "$(dotenv_read "$new" "$env_file")" ]; then
-            echo "$new already set -- left as is"
-            continue
-        fi
-        val="$(dotenv_read "$old" "$env_file")"
-        if [ -z "$val" ]; then
-            echo "$old is empty -- nothing to write to $new"
-            continue
-        fi
-        # The value rides stdin, never argv -- the set-latch contract: argv on
-        # a shared host puts a live credential in the process table.
-        printf '%s\n' "$val" | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" "$new" \
-            || die "refusing to write ${AGENT_NAME}'s dotenv -- see above."
-        echo "wrote $new from $old"
-    done
+    # The values never transit the shell: upsert-env derives them from the same
+    # no-follow-opened bytes it atomically replaces. A path-based read here
+    # would be a symlink-swap window while the gateway runs -- install-plugin
+    # and restore reach this with the container up.
+    "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" --migrate-legacy ${sync:+--sync} \
+        || die "refusing to write ${AGENT_NAME}'s dotenv -- see above."
 }
 
 # The pinned Plow Chat plugin, into this agent's home. A function rather than
@@ -925,6 +912,12 @@ install_plow_plugin() {
     # BEFORE die ran, replacing the gh-auth diagnosis with "1: the caller must
     # say what landed". A caller contract belongs at entry.
     local landed="${1:?install_plow_plugin: the caller must say what landed}"
+    # Every install path migrates before the unified plugin can boot-read the
+    # dotenv: a legacy-only agent otherwise comes back up with no
+    # PLOW_AGENT_TOKEN and silently loses its phone line. Idempotent mode --
+    # values already on the new names are left alone. restore writes the
+    # skeleton before calling here, so a missing dotenv fails loudly.
+    migrate_plow_env
     local ref
     ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
     # A SHA, never a branch: a branch would silently re-point a running agent on

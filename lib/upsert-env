@@ -32,6 +32,17 @@ import os
 import stat
 import sys
 
+# The legacy Plow Chat dotenv names and the current names the unified plugin
+# reads. --migrate-legacy derives the values from the same no-follow-opened
+# bytes it atomically replaces: the values never transit a shell, and there is
+# no path-based read for a compromised gateway to symlink-swap between a
+# check and the publish.
+LEGACY_PAIRS = (
+    (b"PLOW_CHAT_TOKEN", b"PLOW_AGENT_TOKEN"),
+    (b"PLOW_CHAT_CHAT_UID", b"PLOW_HOME_CHANNEL"),
+    (b"PLOW_CHAT_BASE_URL", b"PLOW_API_BASE"),
+)
+
 
 def die(message):
     sys.stderr.write("upsert-env: %s\n" % message)
@@ -72,27 +83,68 @@ def upsert(data, keys, values):
     return b"\n".join(out) + b"\n"
 
 
+def parse(data):
+    """Last declaration wins -- the precedence dotenv_read and the compose
+    env_file loader give a duplicated key, so the value migrated is the value
+    the gateway actually runs with. (upsert's REWRITE keeps the first
+    declaration's position; that is about where the line lands, not which
+    value a read resolves.)"""
+    vals = {}
+    for line in data.split(b"\n"):
+        if b"=" in line:
+            key, val = line.split(b"=", 1)
+            vals[key] = val.strip()
+    return vals
+
+
+def migrate_values(current, sync):
+    """(keys, values, ledger) for the legacy->current copy, from bytes already
+    read under the directory FD. Ledger lines name keys only, never values."""
+    keys, values, ledger = [], {}, []
+    vals = parse(current)
+    for old, new in LEGACY_PAIRS:
+        if not sync and vals.get(new):
+            ledger.append("%s already set -- left as is" % new.decode("ascii"))
+            continue
+        val = vals.get(old) or b""
+        if not val:
+            ledger.append("%s is empty -- nothing to write to %s"
+                          % (old.decode("ascii"), new.decode("ascii")))
+            continue
+        keys.append(new)
+        values[new] = val
+        ledger.append("wrote %s from %s" % (new.decode("ascii"), old.decode("ascii")))
+    return keys, values, ledger
+
+
 def main(argv):
     if len(argv) < 2:
         die("usage: upsert-env <home> KEY [KEY...]  (one value per key on stdin)")
     home = argv[0]
-    # Keys arrive as literals from the agent-mgr call sites (set-latch,
-    # set-home, migrate_plow_env) -- no validation beyond that; an operator
-    # does not reach this helper directly.
-    keys = tuple(k.encode("ascii") for k in argv[1:])
+    migrate = argv[1] == "--migrate-legacy"
+    if migrate:
+        sync = argv[2:] == ["--sync"]
+        if not sync and argv[2:]:
+            die("unknown arguments after --migrate-legacy: %s" % " ".join(argv[2:]))
+        keys, values = (), {}
+    else:
+        # Keys arrive as literals from the agent-mgr call sites (set-latch,
+        # set-home) -- no validation beyond that; an operator does not reach
+        # this helper directly.
+        keys = tuple(k.encode("ascii") for k in argv[1:])
 
-    fields = sys.stdin.buffer.read().split(b"\n")
-    if len(fields) < len(keys):
-        die("expected %d value(s) on stdin, one per line, for: %s"
-            % (len(keys), b", ".join(keys).decode("ascii")))
-    # Stripped, so what lands in the file is what the gateway loads -- it strips
-    # the value too, and a pasted credential routinely arrives with a trailing
-    # space. Empty is then the parser's empty, not the shell's.
-    values = {key: fields[i].strip() for i, key in enumerate(keys)}
-    for key in keys:
-        if not values[key]:
-            die("%s was empty -- refusing to write an empty value"
-                % key.decode("ascii"))
+        fields = sys.stdin.buffer.read().split(b"\n")
+        if len(fields) < len(keys):
+            die("expected %d value(s) on stdin, one per line, for: %s"
+                % (len(keys), b", ".join(keys).decode("ascii")))
+        # Stripped, so what lands in the file is what the gateway loads -- it
+        # strips the value too, and a pasted credential routinely arrives with
+        # a trailing space. Empty is then the parser's empty, not the shell's.
+        values = {key: fields[i].strip() for i, key in enumerate(keys)}
+        for key in keys:
+            if not values[key]:
+                die("%s was empty -- refusing to write an empty value"
+                    % key.decode("ascii"))
 
     try:
         dir_fd = os.open(home, os.O_RDONLY | os.O_DIRECTORY)
@@ -113,6 +165,13 @@ def main(argv):
                 die("refusing to read %s/.env: not a regular file" % home)
             current = handle.read()
 
+        ledger = []
+        if migrate:
+            keys, values, ledger = migrate_values(current, sync)
+            if not keys:
+                for line in ledger:
+                    print(line)
+                return
         updated = upsert(current, keys, values)
 
         # Staged OUTSIDE the mount, which is the only place a name is safe.
@@ -165,6 +224,9 @@ def main(argv):
                 pass
             die("cannot publish %s/.env: %s. %s/.env is unchanged."
                 % (home, exc, home))
+        # After the rename, so a failed publish never claims a write.
+        for line in ledger:
+            print(line)
         return
     finally:
         os.close(dir_fd)
