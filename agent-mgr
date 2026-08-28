@@ -489,7 +489,7 @@ if os.environ["CHAT_UID"] not in uids:
         # least informative way to say "the skill is not installed".
         compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes \
             test -f /opt/data/skills/plow-connectors/plow_connector.py 2>/dev/null \
-            || die "the plow-connectors skill is not installed in $AGENT_NAME -- run: agent-mgr add-skill $AGENT_NAME plow-pbc/hermes-plow-chat --dest plow-connectors --src ref/hermes-skill/plow-connectors"
+            || die "the plow-connectors skill is not installed in $AGENT_NAME -- run: agent-mgr add-skill $AGENT_NAME plow-pbc/plow --dest plow-connectors --src api/hermes-skill/plow-connectors"
         rc=0
         for c in gmail slack; do
             # `connected:false` is a real answer, not a failure -- it means the

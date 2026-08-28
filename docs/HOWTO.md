@@ -396,8 +396,8 @@ update and `git rev-parse HEAD` the version;
 is a worked example.
 
 ```sh
-agent-mgr add-skill errands plow-pbc/hermes-plow-chat --dest plow-connectors \
-    --src ref/hermes-skill/plow-connectors
+agent-mgr add-skill errands plow-pbc/plow --dest plow-connectors \
+    --src api/hermes-skill/plow-connectors
 ```
 
 The pin is recorded in the agent repo's `skills.tsv`, so what an agent runs is
