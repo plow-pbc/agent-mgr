@@ -79,6 +79,20 @@ def test_install_plugin_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
     assert "PLOW_HOME_CHANNEL=cht_dm" in lines
 
 
+def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp_path):
+    """Last declaration wins -- dotenv_read and the compose env_file loader
+    both resolve a duplicated key to its last line, so the migrated value must
+    be the one the gateway actually ran with."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env.write_text("PLOW_CHAT_TOKEN=tok_stale\nPLOW_CHAT_TOKEN=tok_live\n")
+
+    r = run("migrate-plugin-env", "rowan")
+    assert r.returncode == 0, r.stderr
+    assert "PLOW_AGENT_TOKEN=tok_live" in env.read_text().splitlines()
+
+
 @pytest.mark.parametrize("preexisting", [
     pytest.param("", id="fresh_dotenv"),
     # The stale row is the bug that shipped: activate's copy skipped set keys,
