@@ -302,6 +302,33 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |
 | a shared skill behaves oddly | compare the SHA in `skills.tsv` against what upstream has since fixed |
+| `configured group(s) not on this agent's line` after a re-activation | § Recovering a line after re-activation |
+
+## Recovering a line after re-activation
+
+A Plow token is **user-scoped**; the agent's *line* identity is client-side —
+it is whichever line the home chat (`PLOW_CHAT_CHAT_UID`) is on. `activate`
+mints a fresh token but also provisions a fresh DM on a **randomly assigned**
+pool line and writes that DM as the home, which strands every group chat on
+the line the agent used to hold: the plugin logs `configured group(s) not on
+this agent's line` once a minute and the groups go quiet.
+
+Nothing was lost. The old line's chats still exist server-side and the new
+token can see all of them, because authorization is by owner, not by line:
+
+```sh
+agent-mgr chats str        # every chat, with its line and number; home marked *
+agent-mgr set-home str cht_TheOldLinesDm   # keep the new token, take back the old line
+```
+
+`set-home` refuses a uid the token cannot see, writes the dotenv under the
+same containment as `set-latch`, and reloads a running gateway. The DM
+`activate` provisioned on the new line is simply abandoned — harmless.
+
+There is deliberately no way to *request* a line at activation (the server
+assigns one at random), so `set-home` back to the old line's DM is the whole
+recovery. First proved live on `str`, 2026-08-27, after a dead token forced a
+re-activation onto a fresh line.
 
 ## Bumping the plugin pin
 

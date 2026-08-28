@@ -129,6 +129,8 @@ usage: agent-mgr <command> [args]
 
   up|down|restart|logs <name> lifecycle
   agent <name> "<prompt>"     run one turn in the running container
+  chats <name>                the account's chats and lines; home chat marked
+  set-home <name> <cht_...>   re-point the home chat -- line recovery after activate
   check-latch <name>          prove the Latch relay credential
   check-connectors <name>     report Gmail/Slack linkage
 USAGE
@@ -830,6 +832,31 @@ dotenv_read() {
 # awk lives here rather than being written twice with one of the copies drifting.
 config_declares_latch() {
     awk '/^mcp_servers:/{m=1;next} /^[^[:space:]]/{m=0} m && $1=="latch:"{found=1} END{exit !found}' "$1"
+}
+
+# GET /v1/chats as this agent, printed as the raw JSON body. Two callers --
+# `chats` renders it, `set-home` refuses a uid that is not in it.
+#
+# Asked from INSIDE the container for check-latch's reason: egress, DNS and CA
+# config all differ between this shell and that network namespace, and a
+# host-side answer is exactly the evidence entering the namespace was meant to
+# stop accepting. The token goes in on stdin as a curl config, never argv,
+# where `ps` on a shared host reads it from any account.
+#
+# Caller must have run load_agent and require_running.
+plow_chats_json() {
+    local env_file="$AGENT_HOME/.env" tok base out code
+    [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
+    tok="$(dotenv_read PLOW_CHAT_TOKEN "$env_file")"
+    [ -n "$tok" ] || die "PLOW_CHAT_TOKEN is empty in $env_file -- run 'agent-mgr activate $AGENT_NAME' first"
+    base="$(dotenv_read PLOW_CHAT_BASE_URL "$env_file")"
+    out="$(printf 'header = "Authorization: Bearer %s"\n' "$tok" \
+        | compose exec -T hermes curl -sS --max-time 30 --config - \
+          -w '\n%{http_code}' "${base:-https://api.plow.co}/v1/chats")" \
+        || die "could not reach ${base:-https://api.plow.co} from inside the container"
+    code="${out##*$'\n'}"
+    [ "$code" = 200 ] || die "GET /v1/chats answered $code -- the token in $env_file may be dead (...${tok: -3}); if so, re-run 'agent-mgr activate $AGENT_NAME'"
+    printf '%s' "${out%$'\n'*}"
 }
 
 # The pinned Plow Chat plugin, into this agent's home. A function rather than
