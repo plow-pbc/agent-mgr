@@ -222,12 +222,12 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     import re
     root = pathlib.Path(__file__).resolve().parent.parent
     # The resolver's own list, not a name heuristic: it is what decides which
-    # keys are agent-supplied executables rather than derived values, and the
-    # path loop walks it, so a hook cannot reach the resolver without passing
-    # through here.
-    loop = re.search(r'^AGENT_HOOKS="([A-Z_ ]+)"$',
+    # keys are agent-supplied repo-relative paths rather than derived values,
+    # and the path loop walks it, so a path key cannot reach the resolver
+    # without passing through here.
+    loop = re.search(r'^AGENT_REPO_PATHS="([A-Z_ ]+)"$',
                      (root / "lib" / "common.sh").read_text(), re.M)
-    assert loop, "AGENT_HOOKS moved -- this probe reads it to know what to check"
+    assert loop, "AGENT_REPO_PATHS moved -- this probe reads it to know what to check"
     # The TABLE, not the file: a hook mentioned only in prose or an example block
     # would satisfy a whole-README grep while the row the contract lives in stays
     # missing -- which is the way a third hook would realistically land.
@@ -236,12 +236,12 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     rows = "\n".join(l for l in section[1].splitlines() if l.startswith("|"))
     assert rows, "the agent-repo section no longer has a table"
     descriptor = (root / "templates" / "agent.env").read_text()
-    # No AGENT_KEYS membership check: AGENT_KEYS interpolates $AGENT_HOOKS, so a
-    # hook is carried by construction and the drift this used to police cannot
-    # be written.
+    # No AGENT_KEYS membership check: AGENT_KEYS interpolates $AGENT_REPO_PATHS,
+    # so a path key is carried by construction and the drift this used to police
+    # cannot be written.
     for hook in loop.group(1).split():
         assert f"`{hook}`" in rows, (
-            f"{hook} is a declared hook but the agent-repo table does not name it")
+            f"{hook} is a declared repo path but the agent-repo table does not name it")
         # The descriptor is where an author actually meets the hook: AGENT_PRE_TRANSITION
         # reached the resolver while this template still documented one hook, so a
         # scaffolded repo could not discover the veto it is entitled to.

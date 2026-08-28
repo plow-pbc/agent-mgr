@@ -26,6 +26,7 @@ agent-mgr new errands ~/services/errands-hermes-agent
 agent-mgr restore errands
 agent-mgr activate errands    # prints a code -- text it from THAT agent's phone
 agent-mgr up errands
+agent-mgr cron-sync errands   # only if its agent.env names a cron spec
 agent-mgr sign-in errands     # device-code OAuth; hand the URL to whoever owns it
 ```
 

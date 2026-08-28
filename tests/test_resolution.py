@@ -500,7 +500,7 @@ def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
 ):
     """The refusal is scoped to keys where empty is a silent substitution.
 
-    Both hooks default to empty -- load_agent defines them from AGENT_HOOKS, the
+    Both hooks default to empty -- load_agent defines them from AGENT_REPO_PATHS, the
     path loop has an explicit '' arm, and pre_transition short-circuits on
     `[ -n "$X" ] || return 0` -- so `AGENT_RESTORE_HOOK=`
     is the natural way to write "this agent has no restore step", and nothing is

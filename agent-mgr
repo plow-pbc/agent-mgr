@@ -160,7 +160,14 @@ case "$cmd" in
         # --user for the same reason `agent` spells out: exec skips the
         # entrypoint that remaps the in-image user, and the creates below write
         # hermes's own cron state under /opt/data.
-        compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes python3 - --spec-json "$(cat "$AGENT_CRON_SPEC")" \
+        #
+        # The venv python by absolute path -- the image's own hermes shim pins
+        # /opt/hermes/.venv, and hermes_cli (whose load_env the converger uses
+        # to read the gateway's dotenv) only imports from there; a bare python3
+        # resolves to a different interpreter on derived images. HOME is what
+        # hermes_cli resolves the home -- and so the dotenv -- from.
+        compose exec -T --user "$HERMES_UID:$HERMES_GID" --env HOME=/opt/data \
+            hermes /opt/hermes/.venv/bin/python3 - --spec-json "$(cat "$AGENT_CRON_SPEC")" \
             < "$AGENT_MGR_ROOT/lib/cron-sync.py"
         ;;
     activate)
@@ -414,6 +421,7 @@ bring it up:
                                    # agent's own restore hook if it declares one
   agent-mgr activate $name         # prints a code; text it from the agent's phone
   agent-mgr up $name
+  agent-mgr cron-sync $name        # only if its agent.env names a cron spec
   agent-mgr sign-in $name          # model OAuth, in a browser
 
 then, if it drives a Mac through Latch, mint the pair on that Mac and:
