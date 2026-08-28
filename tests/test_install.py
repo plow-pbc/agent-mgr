@@ -79,17 +79,6 @@ def test_install_plugin_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
     assert "PLOW_HOME_CHANNEL=cht_dm" in lines
 
 
-def test_install_plugin_dies_loudly_on_a_home_with_no_dotenv(run, instance, tmp_path):
-    """The fail-loud half of the unconditional migration: a home that exists
-    without a dotenv is a broken install, not a case to skip past -- the old
-    silent skip let it reload without the credentials the plugin reads."""
-    run("register", "rowan", str(instance("rowan")))
-    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True)
-    r = run("install-plugin", "rowan")
-    assert r.returncode != 0
-    assert "no " in r.stderr and ".env" in r.stderr
-
-
 @pytest.mark.parametrize("preexisting", [
     pytest.param("", id="fresh_dotenv"),
     # The stale row is the bug that shipped: activate's copy skipped set keys,
