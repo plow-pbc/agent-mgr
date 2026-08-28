@@ -54,6 +54,8 @@ def match_of(r):
     ([row(prompt=None, script="x.sh", no_agent=True, extra="?")], "unknown"),
     ([row(deliver="plow_chat:${NO_SUCH_UID}")], "NO_SUCH_UID"),  # unset var refuses, never empty-expands
     ([row(deliver="plow_chat:$")], "deliver"),         # malformed placeholder refuses, not a traceback
+    ([row(deliver="plow_chat:")], "blank"),            # literal blank destination -- no ${} for the allowlist to catch
+    ([row(deliver="plow_chat: ")], "blank"),
     ([row(), row()], "twice"),                         # duplicate spec name
     (["oops"], "object"),                              # a row must be an object
     ([["nested"]], "object"),
@@ -120,23 +122,22 @@ def test_registered_malformed_raises(tmp_path, content):
         cron_sync.registered(str(p))
 
 
-def test_a_spec_named_duplicate_fails_the_run(monkeypatch, tmp_path, capsys):
-    """hermes happily persists two jobs under one name; last-wins would print
-    `ok` while the OTHER copy still fires -- duplicate work, silently."""
-    _wire(monkeypatch, tmp_path,
-          jobs=[match_of(row(name="held")), match_of(row(name="held"))])
-    rc = cron_sync.main(["--spec-json", json.dumps([row(name="held")])])
-    assert rc == 1 and "duplicate" in capsys.readouterr().out
-
-
-def test_an_agent_authored_duplicate_stays_invisible(monkeypatch, tmp_path):
-    """A duplicate among the agent's OWN crons is the agent's business -- the
-    spec never names it, and failing the sync on it would block convergence
-    of unrelated rows."""
+@pytest.mark.parametrize("spec_name,stored_name,want_rc,want_calls,want_msg", [
+    # Spec-named duplicate fails the run: hermes happily persists two jobs
+    # under one name, and last-wins would print `ok` while the OTHER copy
+    # still fires -- duplicate work, silently.
+    ("held", "held", 1, 0, "duplicate"),
+    # A duplicate among the agent's OWN crons is the agent's business -- the
+    # spec never names it, and failing on it would block unrelated rows.
+    ("fresh", "remind-me", 0, 1, None),
+])
+def test_duplicate_stored_names(monkeypatch, tmp_path, capsys,
+                                spec_name, stored_name, want_rc, want_calls, want_msg):
     calls = _wire(monkeypatch, tmp_path,
-                  jobs=[match_of(row(name="remind-me")), match_of(row(name="remind-me"))])
-    rc = cron_sync.main(["--spec-json", json.dumps([row(name="fresh")])])
-    assert rc == 0 and len(calls) == 1
+                  jobs=[match_of(row(name=stored_name)), match_of(row(name=stored_name))])
+    rc = cron_sync.main(["--spec-json", json.dumps([row(name=spec_name)])])
+    assert (rc, len(calls)) == (want_rc, want_calls)
+    assert want_msg is None or want_msg in capsys.readouterr().out
 
 
 def test_absent_is_created_present_is_not():

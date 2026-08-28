@@ -89,6 +89,11 @@ def load_spec(text, env):
                 raise SystemExit(f"row {r['name']!r}: deliver names {n}, "
                                  "which is unset or empty in this container")
         r["deliver"] = tmpl.substitute(env)
+        # A literal "plow_chat:" carries no ${...} to check, so catch the
+        # blank destination itself, post-substitution.
+        if ":" in r["deliver"] and not r["deliver"].split(":", 1)[1].strip():
+            raise SystemExit(f"row {r['name']!r}: deliver {r['deliver']!r} has a "
+                             "blank destination -- the silent-drop target")
     return rows
 
 
