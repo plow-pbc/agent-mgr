@@ -364,6 +364,9 @@ def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
         "#!/usr/bin/env bash\n"
         "case \"$*\" in\n"
         f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
+        # Matches the repo alone, so a test adding a DIFFERENT skill sourced
+        # from plow-pbc/plow would be served this tarball and fail fetch-tree's
+        # name check confusingly -- give such a test its own dispatching gh.
         f"  *repos/plow-pbc/plow/tarball*) cat {fleet_tgz} ;;\n"
         f"  *) {other} ;;\n"
         "esac\n"
