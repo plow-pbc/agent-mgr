@@ -29,6 +29,7 @@ import sys
 
 HERMES = "/opt/hermes/bin/hermes"
 JOBS_FILE = "/opt/data/cron/jobs.json"
+DOTENV = "/opt/data/.env"
 
 ROW_KEYS = {"name", "schedule", "prompt", "script", "no_agent", "skills",
             "deliver", "blocked"}
@@ -94,6 +95,30 @@ def registered(jobs_path=JOBS_FILE):
         # and the wrong ones if it ever did.
         job["enabled"], job["paused_at"]
         out[job["name"]] = job
+    return out
+
+
+def dotenv_env(path=DOTENV):
+    """The gateway's own env source, for ${VAR} expansion in deliver.
+
+    A `docker exec` session sees the container's CONFIG env -- image ENV plus
+    compose `environment:` -- never the gateway's runtime env: the per-instance
+    values deliver expansion exists for (PLOW_CHAT_* and friends) live in
+    /opt/data/.env, which the gateway loads itself at boot. So read the same
+    file the same way it does: canonical KEY=value lines, last-wins
+    (hermes_cli/config.py assigns into a dict). Absent means a fresh instance
+    and an empty source -- a ${VAR} row still refuses loudly, naming the var.
+    """
+    try:
+        text = pathlib.Path(path).read_text()
+    except FileNotFoundError:
+        return {}
+    out = {}
+    for line in text.splitlines():
+        if line.startswith("#") or "=" not in line:
+            continue
+        k, _, v = line.partition("=")
+        out[k.strip()] = v.strip()
     return out
 
 
@@ -166,9 +191,12 @@ def main(argv=None, runner=subprocess.run):
     ap.add_argument("--spec-json", required=True)
     ap.add_argument("--jobs-file", default=JOBS_FILE)
     ap.add_argument("--hermes", default=HERMES)
+    ap.add_argument("--dotenv", default=DOTENV)
     args = ap.parse_args(argv)
     HERMES = args.hermes
-    rows = load_spec(args.spec_json, env=os.environ)
+    # The dotenv over the session env: the gateway's own values win, and the
+    # session env still answers for anything compose set (TZ and friends).
+    rows = load_spec(args.spec_json, env={**os.environ, **dotenv_env(args.dotenv)})
     failed = False
     for action, r in classify(rows, registered(args.jobs_file)):
         if action == "create":

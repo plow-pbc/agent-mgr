@@ -179,3 +179,20 @@ def test_main_exit_codes(tmp_path, capsys):
     jf.write_text(json.dumps(held))
     rc = cron_sync.main(["--spec-json", spec, "--jobs-file", str(jf)], runner=runner)
     assert rc == 1 and "paused" in capsys.readouterr().out
+
+
+def test_main_expands_deliver_from_the_gateways_dotenv(tmp_path):
+    """The env source is /opt/data/.env, the file the GATEWAY loads -- an exec
+    session's own env never carries the per-instance PLOW_CHAT_* values, which
+    is exactly the expansion this feature exists for."""
+    dotenv = tmp_path / ".env"
+    dotenv.write_text("# creds\nCHAT=cht_stale\nCHAT=cht_abc\n")
+    calls = []
+    def runner(argv, **kw):
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0)
+    spec = json.dumps([row(deliver="plow_chat:${CHAT}")])
+    rc = cron_sync.main(["--spec-json", spec, "--jobs-file", str(tmp_path / "nope.json"),
+                         "--dotenv", str(dotenv)], runner=runner)
+    assert rc == 0
+    assert "plow_chat:cht_abc" in calls[0]  # last-wins, like the gateway
