@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+# Snapshot every agent home on this host.
+#
+# The repo is the image and the home is the volume. `agent-mgr restore` rebuilds
+# the image half from git whenever you like. Nothing rebuilds the volume half:
+# auth.json, the dotenv, the sessions, the memories and the kanban exist in
+# exactly one place.
+#
+#   agent-mgr backup-homes /somewhere/not/this/disk
+#
+# A glob rather than the registry: it needs no row to be current, so it catches
+# a home mid-migration or not registered yet -- two, measured on this host.
+#
+# What an archive is and is not worth -- live-copy consistency, retention, a
+# home declared outside the glob -- is docs/HOWTO.md § "What an archive is
+# worth". Here: only what a maintainer needs before editing the tar call.
+set -euo pipefail
+dest="${1:?usage: agent-mgr backup-homes <dest>}"
+
+# These archives hold .env and auth.json, so who else can write $dest is the
+# whole question -- and it is a PRECONDITION rather than something the run can
+# defend against, because write access to a directory is permission to rename
+# and unlink its entries and no syscall sequence inside the run beats that.
+# Three in-run guards were tried and each was defeated one step later;
+# plow-pbc/agent-mgr#34 has them.
+#
+# One expression: exists, is a directory, is ours, neither write bit. Both bits
+# the way ssh treats a private key, since a default umask of 002 makes `mkdir`
+# produce 0775. `-H` resolves the starting point, so a destination symlinked
+# onto a bigger disk is checked at its target. $dest itself and no further --
+# an ancestor someone else can write is outside what this could hold onto.
+#
+# Two messages, because a missing destination and a loose one want opposite
+# remedies, and the missing one carries both of its branches: creating it is
+# right on a first run and wrong under an unmounted mount point.
+[ -e "$dest" ] \
+    || { echo "backup-homes: $dest does not exist. To create it: mkdir -p $dest && chmod 700 $dest -- but if it is a mount point, or a link to one, mount it instead; mkdir would put the archives on the local disk" >&2; exit 1; }
+[ -n "$(find -H "$dest" -maxdepth 0 -type d -user "$(id -un)" ! -perm -g+w ! -perm -o+w 2>/dev/null)" ] \
+    || { echo "backup-homes: $dest must be a directory you own that nobody else can write -- try: chmod 700 $dest" >&2; exit 1; }
+
+# These archives hold .env and auth.json, so nothing here may be readable by
+# another account -- the run directory, its parent, and the archives inside.
+umask 077
+
+# One private child of the destination, and every run inside it. That is what
+# lets `prune-backups` be `-type d` with no name grammar at all: the operator's
+# own files live beside this directory, never in it. Three rewrites of that
+# grammar came from not having this.
+#
+# The run name still carries the pid because the stamp is only second
+# resolution, and two runs that did collide fail loudly at `mkdir` rather than
+# writing over each other.
+runs="$dest/backup-homes"
+marker="$runs/.written-by-backup-homes"
+# "Everything in here is ours" was an assumption, and `mkdir -p` made it one
+# this could not check: a destination that already held an ordinary
+# `backup-homes/` of the operator's was adopted, re-moded, and then had its aged
+# children pruned. So provenance is written down, once, when this creates the
+# directory -- and anything already there without the marker is refused rather
+# than adopted. A symlink is refused with it: `mkdir -p` and `chmod` both
+# succeed quietly through one.
+if [ ! -e "$runs" ] && [ ! -L "$runs" ]; then
+    # Built complete under a private name and moved into place, so `$runs` never
+    # exists without its marker. A plain `mkdir` here would be worse than the
+    # `mkdir -p` it replaced: two first runs both take this branch, the loser
+    # dies on "File exists", and one that looked between the winner's mkdir and
+    # its marker would refuse -- telling the operator to move aside a directory
+    # this command had just made.
+    #
+    # Both outcomes of the `mv` are cleaned up explicitly, because it is NOT a
+    # bare rename: when the target already exists as a directory, `mv` moves the
+    # source INSIDE it and exits 0 -- measured -- so the loser would otherwise
+    # plant `$runs/.backup-homes.<pid>/` in the one namespace whose whole
+    # contract is that everything in it is a run. `mv -T` says what is meant
+    # here, and is GNU-only; this repo supports macOS.
+    staged="$dest/.backup-homes.$$"
+    mkdir "$staged"   # 0700 from the umask above; nothing else may own this
+    : > "$staged/.written-by-backup-homes"
+    mv "$staged" "$runs" 2>/dev/null || true
+    rm -rf "$staged" "$runs/.backup-homes.$$"   # refused, or moved inside theirs
+fi
+# "Carries no marker", not "was not created by this command" -- for a child an
+# EARLIER version of this command wrote, the second is false and points the
+# operator at destroying their own run set. The remedies differ by shape, too: a
+# marker cannot rescue a symlink, since that is refused first and the `touch`
+# would only drop a dotfile in whatever it points at.
+if [ -L "$runs" ]; then
+    echo "backup-homes: $runs is a symlink -- replace it with a real directory; no marker will make it usable. To put runs on another disk, point $dest there instead." >&2
+    exit 1
+fi
+if [ ! -f "$marker" ]; then
+    echo "backup-homes: $runs carries no marker, so this will not write into it. If an earlier version of this command made it: touch $marker. Otherwise move it aside -- runs must live in a directory nothing else does." >&2
+    exit 1
+fi
+run="$runs/$(date -u +%Y%m%dT%H%M%SZ)-$$"
+mkdir "$run"
+
+# The only tar diagnostics that do not mean the archive is missing something.
+# Measured on both tars this repo supports rather than taken from a manual: GNU
+# 1.35 emits the first on a grow and the second on a truncate -- a rotated log
+# or a WAL checkpoint, so an ordinary night. Case-insensitively, because GNU
+# mixes the case of these within a single run.
+#
+# bsdtar 3.5.3 needs no entry at all: measured on macOS 14 it exits 0 and emits
+# NOTHING for every race shape -- in-place rewrite, truncate, grow, a file
+# removed mid-read, a whole directory removed mid-read -- and reserves status 1
+# for real errors. The removal shapes matter as much as the rewrites: this
+# branch deletes the archive, so a benign shape landing in it would cost a home
+# its night. Anything not listed here fails loudly and gets measured and added,
+# which is the direction that cannot lose a credential quietly.
+benign='file changed as we read it|file shrank by'
+# A REMOVAL is different, and only benign for a path meant to come and go. The
+# gateway's SQLite sidecars are checkpointed away mid-run on an ordinary night
+# -- `-journal` as much as `-wal`, since rollback-journal mode is SQLite's
+# default and deletes its journal on every commit;
+# `auth.json` is not, and an atomic rewrite (write-temp-then-rename) makes even
+# that one momentarily absent. Tolerating removals path-agnostically would
+# publish an archive missing exactly the credential this command exists to keep.
+volatile='(-wal|-shm|-journal|\.tmp|\.lock|~): file removed before we read it'
+err="$(mktemp)"
+trap 'rm -f "$err"' EXIT
+
+n=0
+failed=0
+for home in "$HOME"/.hermes "$HOME"/.hermes-*; do
+    [ -d "$home" ] || continue
+    n=$((n + 1))
+    name="$(basename "$home")"
+    # `-C "$home" .`, not `-C <parent> <basename>`: a home symlinked onto a
+    # bigger disk is supported, and from the parent tar stores that symlink AS a
+    # symlink -- exit 0, one entry, no credentials in the archive at all.
+    #
+    # tar exits 1 for "file changed as we read it", which a running gateway
+    # provokes nightly, and refusing that would fail the nightly EVERY night.
+    # But the NUMBER cannot carry that decision across the two tars this repo
+    # supports. bsdtar exits 0 for every race shape -- the measured list is the
+    # `benign` comment above, and this deliberately does not restate it -- and
+    # uses 1 for a member it could not open, which it then OMITS. So the old
+    # `|| [ $? -eq 1 ]` published an archive missing exactly the auth.json this
+    # command exists to preserve, exited 0, and let retention prune the good
+    # copies behind it. The message can tell them apart; the status cannot.
+    #
+    # The excludes are most of the bytes and none of the value -- 1.5 GB of
+    # homes becomes 439 MB; ${name#.} so a plain `ls` shows the archives.
+    #
+    # Straight to the final name: the run directory is private already, so there
+    # is nothing left for a stage to protect. Staging was tried and introduced
+    # more failure modes than it prevented -- plow-pbc/agent-mgr#34 has the
+    # rejected shapes.
+    status=0
+    tar --exclude=./logs --exclude=./cache --exclude=./lazy-packages \
+        -C "$home" -czf "$run/${name#.}.tar.gz" . 2>"$err" || status=$?
+    cat "$err" >&2
+    if [ "$status" != 0 ] \
+        && { [ "$status" != 1 ] || [ ! -s "$err" ] || grep -Eqvi "$benign|$volatile" "$err"; }; then
+        # What tar leaves behind on the case this exists for is worse than a
+        # truncated archive: complete, valid, `gzip -t`-clean, and missing one
+        # file. A restore reaches for it as the newest. Remove it, so what is
+        # left is an absence -- which the operator can see.
+        rm -f "$run/${name#.}.tar.gz"
+        echo "backup-homes: tar failed on $home (status $status) -- no archive kept" >&2
+        # Not `exit`: one home with a permission problem must not cost the other
+        # four their night. The run still fails at the end, so the cron's `&&`
+        # still holds the prune back.
+        failed=1
+    fi
+done
+
+# A run that matches nothing must not report success: under the nightly cron the
+# cause is likely a crontab installed under a different account, so $HOME is not
+# the operator's -- every run then reports success having written nothing.
+[ "$n" -gt 0 ] || { echo "backup-homes: no homes matched $HOME/.hermes*" >&2; exit 1; }
+[ "$failed" = 0 ] || { echo "backup-homes: one or more homes were not archived" >&2; exit 1; }

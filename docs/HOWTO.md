@@ -6,9 +6,11 @@ those agents have in common; each agent owns only what makes it itself.
 
 ## Install
 
+Clone and symlink: [the README's install block](../README.md#agent-mgr) — one
+clone, one symlink. Kept there rather than copied here, because this block and
+the README's had already drifted apart on `mkdir -p` and `ln -sf`. Then:
+
 ```sh
-git clone git@github.com:plow-pbc/agent-mgr.git ~/services/agent-mgr
-ln -s ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
 agent-mgr ls
 ```
 
@@ -177,12 +179,194 @@ agent-mgr up errands / down errands / restart errands / logs errands
 agent-mgr agent errands "what's on today?"
 agent-mgr check-latch errands
 agent-mgr check-connectors errands
+agent-mgr backup-homes ~/agent-backups
 ```
 
 Both `check-` commands ask **from inside the container**, because the container
 is what has to reach `api.plow.co`. Egress, DNS and CA config all differ between
 your shell and that network namespace, and every one of those failures is
 invisible to a host-side probe. There is deliberately no host fallback.
+
+## Backing up the homes
+
+The repo is the image and the home is the volume. `restore` rebuilds the image
+half from git any time; nothing rebuilds the volume half — `auth.json`, the
+dotenv, the sessions, the memories, the kanban.
+
+```sh
+agent-mgr backup-homes /somewhere/not/this/disk
+```
+
+It globs `~/.hermes*` rather than reading the registry, so it does not depend on
+a row being current and it catches a home whose agent is mid-migration. A home
+declared *outside* `~/.hermes*` would not be archived, silently, while the run
+still reported success on the others — nothing does that today. It skips
+`logs/`, `cache/` and `lazy-packages/` — 1.5 GB of homes becomes ~440 MB.
+
+Each run gets its own directory under `backup-homes/`, named for the UTC second and the pid:
+
+```
+~/agent-backups/backup-homes/20260827T040112Z-4171/hermes-errands.tar.gz
+```
+
+That directory, its `backup-homes/` parent and the archives inside are all
+closed to other accounts, because they hold `auth.json` and the dotenv.
+
+**The destination must be a directory you own that nobody else can write**, and
+the command refuses one that is not. It may be a symlink onto a bigger disk;
+the check follows it to the target.
+
+```sh
+mkdir -p ~/agent-backups && chmod 700 ~/agent-backups
+```
+
+The `chmod` is the load-bearing half: `mkdir -m 700` sets a mode only on
+directories it *creates*, so on an existing `~/agent-backups` it exits 0 and
+changes nothing — and a default umask of 002 makes a plain `mkdir` produce 0775.
+
+Nightly, with 14 days kept:
+
+```sh
+0 4 * * * { ~/.local/bin/agent-mgr backup-homes ~/agent-backups && ~/.local/bin/agent-mgr prune-backups ~/agent-backups 14 ; } >> ~/backup-homes.log 2>&1
+```
+
+Runs live in a `backup-homes/` child of your destination, and that is what keeps
+retention away from your own files: `prune-backups` deletes directories *inside*
+that child and nothing outside it, so what protects a `photos/` you keep beside
+the backups is the layout rather than a pattern that has to be right. A run
+written before the child existed sits directly in the destination and is never
+pruned — let the first run create `backup-homes/`, then move any you have into
+it, or delete them. Creating that directory yourself is refused: it carries a
+marker written when this command makes it, so a `backup-homes/` that happens to
+be *yours* is never adopted and never pruned.
+
+A `backup-homes/` written by an **earlier version** of this command has no
+marker either, and both halves refuse it rather than guess. Do not move that one
+aside — its runs would land in the destination where nothing prunes them.
+Adopt it:
+
+```sh
+touch ~/agent-backups/backup-homes/.written-by-backup-homes
+```
+
+`prune-backups` is its own command rather than a `find` written out here: it is
+an `rm -rf`, it shipped over-broad three times while it lived in this file, and
+the only way to test it here was to parse the snippet back out and re-run it.
+Its reasoning is at `lib/prune-backups`. The day count must be a whole number of
+**at least 1**, and is checked, because it lands inside `find`'s own expression:
+`-1` becomes `-mtime +-1`, which matches *fresh* directories, and `0` would
+delete the run written seconds earlier in the same line.
+
+The `&&` comes first in importance: retention runs only if the backup it is
+pruning *for* succeeded. Split that into two crontab lines, or use `;`, and a
+run of failed nights — a full disk, a destination whose mode changed, `no homes
+matched` under the wrong account — prunes the destination empty while writing
+nothing.
+
+The braces and the redirect are what make any of it observable: cron has no
+`MAILTO` here, and on a host with no working MTA — the macOS default — its
+output is discarded, so a failing night leaves no trace at all. `{ …; }` groups
+both halves, so the log catches the backup's diagnostics and not only the
+prune's. The log lives **outside** the destination on purpose: the night the
+destination is missing — an unmounted disk, the case worth hearing about — a log
+inside it could not be opened either, and the entry would fail silently.
+
+### What an archive is worth
+
+It is a **live copy**. `tar` reports *"file changed as we read it"* for any file
+rewritten while it is being read — measured on a plain file, not only on a
+database — and that is tolerated and the archive published, so such a file can
+restore partially. Most of a home is quiescent between turns; the gateway's
+SQLite session database is the one written continuously. Refusing it would fail
+the nightly every night, so it is a trade: for a consistent copy,
+`agent-mgr down <name>` first.
+
+What is **not** tolerated is a file tar could not read at all — an unreadable
+`auth.json`, a path it could not stat. `tar` exits 1 for that too, so the
+decision is made on its message rather than its status: everything on a measured
+list of race warnings passes, anything else fails that home loudly, and the
+archive tar had begun is **deleted** rather than kept. A complete, valid,
+`gzip -t`-clean archive missing exactly one credential file is worse than no
+archive, because a restore reaches for it as the newest thing there.
+
+The status alone could not carry that. GNU tar exits 1 for the race; bsdtar on
+macOS exits 0 for it and uses 1 for the unreadable member — both measured.
+
+One home failing does not stop the others: the run archives what it can and then
+exits non-zero, so the cron's `&&` still holds retention back.
+
+**That gate is not free, and it is the thing to watch.** A home that fails
+*every* night — a permission problem nobody fixes, a diagnostic not yet on the
+benign list — makes every run exit non-zero, so the prune never runs and the
+documented 14-day retention stops being true. The
+destination then grows by a full sweep a night until the disk fills, at which
+point every home starts failing. From the outside it looks healthy the whole
+time: a new run directory each night with current archives in it.
+
+Two lines say so, both in `~/backup-homes.log`: `tar failed on <home>` names which home,
+and `one or more homes were not archived` appears once per run however many did
+— that second one is what to grep for.
+
+One further way the archive *container* can go wrong: a killed run leaves a
+truncated archive. Nothing repairs or replaces it — every run writes into a new
+directory, so the truncated one stays the newest until retention prunes it at 14
+days. Running the command twice in a day is safe and simply produces two runs.
+
+`gzip -t <archive>` tests the container and nothing else: a mid-rewrite archive
+passes it cleanly. So check before restoring, and fall back to the previous
+night's.
+### Restoring one
+
+Two blocks, because **you** move the old home aside between them. Naming that
+copy is a decision, and three attempts at automating it each produced a worse
+hazard than the last.
+
+Step 1 — verify the archive, stop the agent, resolve the home:
+
+```sh
+a=~/agent-backups/backup-homes/20260826T040112Z-4171/hermes-errands.tar.gz \
+  && gzip -t "$a" \
+  && agent-mgr down errands \
+  && home=$(readlink -f "$(agent-mgr resolve errands | sed -n 's/^AGENT_HOME=//p')") \
+  && echo "move $home aside now — same disk, not /tmp, and a path that neither matches nor sits under ~/.hermes*. Keep it until the restored agent is verified running. Then run step 2."
+```
+
+Move `$home` aside now: **same disk, not `/tmp`, and a path that neither matches
+nor sits under `~/.hermes*`** — a sibling like `.hermes-errands.old` matches it,
+and the nightly would then archive a dead home as a live one. That copy holds
+everything written since the archive, including this morning's turns and the
+`-wal` and `-shm` sidecars, so keep it until you have watched the restored agent
+run.
+
+Step 2, **in the same shell** — `$home` and `$a` come from step 1:
+
+```sh
+mkdir "$home" \
+  && tar -C "$home" -xzf "$a" \
+  && agent-mgr restore errands \
+  && agent-mgr up errands
+```
+
+Why the blocks are shaped that way:
+
+- **`gzip -t` first, inside the chain.** A bad archive has to stop the restore
+  before `down` runs.
+- **`&&`, not `set -e`.** This is pasted into your shell, and `errexit` there
+  closes the session on the first failure — over SSH, taking the error with it.
+- **`down` can legitimately refuse.** It runs the agent's
+  `AGENT_PRE_TRANSITION` hook, and the rentals agent declines to stop
+  mid-ingest by design.
+- **`a=` binds the archive once.** Edit only the `tar` line and `gzip -t`
+  validates a different file, which stops nothing.
+- **`readlink -f`** resolves a symlinked home to its target, so you move and
+  recreate the target and the link keeps pointing at it.
+- **`mkdir`, not `mkdir -p`.** It fails with `File exists` if the home is still
+  there, which is the emptiness check for free — and `tar -xzf` overlays rather
+  than replaces, so unpacking over a live home would leave behind every file the
+  archive does not contain.
+- **`-C`, because the archive is contents-rooted** (`./` entries) and would
+  otherwise splat into `$HOME`. `logs/`, `cache/` and `lazy-packages/` are
+  excluded from it and are not recreated: expected, not a truncated archive.
 
 ## Two layers: where does my code go?
 

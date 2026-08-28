@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# Drop backup runs older than N days.
+#
+#   agent-mgr prune-backups <dest> [days]
+#
+# A command rather than a `find` in the docs: the predicate is an `rm -rf`, it
+# shipped over-broad three times while it lived in Markdown, and the only way to
+# test it there was to parse the snippet back out and re-run it.
+set -euo pipefail
+dest="${1:?usage: agent-mgr prune-backups <dest> [days]}"
+days="${2:-14}"
+
+# `days` lands inside find's expression, so it is validated rather than trusted.
+# `-1` becomes `-mtime +-1`, which GNU findutils 4.9 happily matches against a
+# FRESH directory -- measured -- so one typo'd argument sends the whole backup
+# set to `rm -rf`.
+# Zero is rejected with the rest: `! -mtime -0` is true of EVERY directory, so
+# `prune-backups <dest> 0` deletes the run `backup-homes` wrote seconds earlier
+# in the same `&&` and exits 0, which the cron reads as a completed night.
+case "$days" in
+    ''|*[!0-9]*) echo "prune-backups: days must be a whole number, not '$days'" >&2; exit 1 ;;
+esac
+[ "$days" -ge 1 ] || { echo "prune-backups: days must be at least 1, not '$days'" >&2; exit 1; }
+
+# Everything under here is ours: `backup-homes` creates this directory and
+# writes nothing else into it. That is the whole guard, and it replaces a
+# basename grammar that was rewritten three times -- each rewrite correct, each
+# one still deleting something of the operator's, because the runs shared a
+# directory with their own files. A namespace removes the question instead of
+# answering it again.
+runs="$dest/backup-homes"
+[ -d "$runs" ] || { echo "prune-backups: no runs at $runs -- if $dest is a mount point, it is not mounted" >&2; exit 1; }
+# And it must be the directory `backup-homes` made, proved by the marker it
+# wrote there, not merely a directory with the right name. Without that this
+# deletes the aged children of any `backup-homes/` the operator happened to
+# have -- the class the child exists to close, reached by name collision. A
+# symlink is refused with it, for the same reason the other half refuses one.
+if [ -L "$runs" ]; then
+    echo "prune-backups: $runs is a symlink -- replace it with a real directory; no marker will make it usable" >&2
+    exit 1
+fi
+if [ ! -f "$runs/.written-by-backup-homes" ]; then
+    echo "prune-backups: $runs carries no marker -- refusing to delete anything in it. If an earlier version of backup-homes made it: touch $runs/.written-by-backup-homes" >&2
+    exit 1
+fi
+
+# `! -mtime -N` rather than `-mtime +N`: `+N` means STRICTLY more than N full
+# days, so it keeps a fifteenth daily run under a documented fourteen --
+# measured on a 14-day-old entry, which `+14` spares and this takes.
+#
+# `-type d` so a stray file in here is left for a human to look at rather than
+# deleted. `-maxdepth 1` is a bound rather than load-bearing -- a run holds only
+# archives, so nothing below one can match `-type d` anyway -- but this is an
+# `rm -rf` and it costs nothing to say how deep it may reach.
+#
+# No `-H`, because the check above now enforces what an earlier version of this
+# comment merely asserted: the starting point is a real directory. A symlinked
+# DESTINATION still works -- the link is then an interior component, and `find`
+# follows those regardless.
+find "$runs" -mindepth 1 -maxdepth 1 -type d ! -mtime "-$days" -exec rm -rf {} +
