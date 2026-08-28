@@ -397,7 +397,7 @@ is a worked example.
 
 ```sh
 agent-mgr add-skill errands plow-pbc/plow --dest plow-connectors \
-    --src api/hermes-skill/plow-connectors
+    --src cloud-agents/hermes/image/seed/skills/productivity/plow-connectors
 ```
 
 The pin is recorded in the agent repo's `skills.tsv`, so what an agent runs is
