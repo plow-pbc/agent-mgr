@@ -86,9 +86,10 @@ second consumer exists.
 
 ## The fleet — what agent-mgr deploys
 
-Three agent repos on one Linux host (`wakeup`). All are private: they hold live
-credentials, and one holds an operations wiki compiled from real guest
-conversations.
+Three agent repos on one Linux host (`wakeup`). The repos are code only: live
+credentials sit in each instance's home on the host, and the STR agent's
+operations wiki — compiled from real guest conversations — lives in its own
+private vault repo, never in the agent's.
 
 | repo | what the agent is | what makes it different |
 |---|---|---|
