@@ -123,6 +123,7 @@ usage: agent-mgr <command> [args]
   restore <name>              install config.yaml + .env skeleton into its home
   install-plugin <name>       Plow Chat plugin, from the fleet-wide pinned SHA
   add-skill <name> <repo> [--ref SHA] [--dest PATH] [--src PATH]
+  cron-sync <name>            converge the repo's cron spec onto the scheduler
   activate <name>             mint the Plow Chat credential pair
   sign-in <name>              model OAuth for this agent
   set-latch <name>            read the Latch pair on stdin into its dotenv
@@ -139,23 +140,25 @@ usage: agent-mgr <command> [args]
 USAGE
 }
 
-# The agent-supplied executables: the keys whose value is a path resolved against
-# the agent's repo, and whose default is empty. Those two properties travel
+# The agent-supplied repo-relative paths: the keys whose value is a path
+# resolved against the agent's repo, and whose default is empty. Those two properties travel
 # together, and three consumers key off them -- load_agent defines them from this
 # list, the path loop below resolves them, and the parser exempts them from the
 # empty-value refusal. Empty and unset mean the same thing here, so nothing fills
 # in behind the operator and `AGENT_RESTORE_HOOK=` is the natural way to write
 # "this agent has no restore step"; every other consumed key defaults to a real
 # value, which is what makes an empty one a silent substitution. A key with an
-# empty default that is NOT a repo-relative path does not belong here.
-AGENT_HOOKS="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION"
+# empty default that is NOT a repo-relative path does not belong here. Not all
+# of them are executables -- AGENT_CRON_SPEC names a data file, and each use
+# site owns its own existence/executability check.
+AGENT_REPO_PATHS="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION AGENT_CRON_SPEC"
 
 # Descriptor keys this tool owns. Every one is unset from the inherited
 # environment before the descriptor is read, because Compose resolves shell
 # variables ahead of --env-file: a stale AGENT_HOME exported in the caller's
 # shell would otherwise silently mount a different agent's home, which is the
 # same failure class that once rewrote a live home to uid 501:20.
-AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG $AGENT_HOOKS"
+AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG $AGENT_REPO_PATHS"
 
 
 # Compose's own environment variables, unset for the same reason and with a
@@ -363,7 +366,7 @@ parse_env_file() {
             # refused it as undeclared.
             [ "$key" = AGENT_HOME ] && AGENT_HOME_DECLARED=1
             # A key this tool CONSUMES must carry a value, unless empty IS its
-            # value (AGENT_HOOKS). Assigning empty to the rest is
+            # value (AGENT_REPO_PATHS). Assigning empty to the rest is
             # indistinguishable from never declaring it, because they all reach
             # `${X:=default}` downstream: `AGENT_TZ=` in an instance's dotenv
             # overwrote the repo's zone with nothing, the convention default
@@ -371,7 +374,7 @@ parse_env_file() {
             # named. Unowned keys are not this tool's business and go to the
             # hooks empty or not. The key is a validated identifier by here, so
             # the padded glob is an exact membership test.
-            case " $AGENT_HOOKS " in
+            case " $AGENT_REPO_PATHS " in
                 *" $key "*) ;;
                 *) [ -n "$value" ] || die "$file: line $_lineno: empty value for $key" ;;
             esac
@@ -474,11 +477,11 @@ load_agent() {
     # ordering falls to whoever reads the README, which is not an owner.
     # Always defined, empty when the instance declares none: every key in
     # AGENT_KEYS is printed by `resolve`, and an unset one is fatal under `set -u`.
-    for _hook in $AGENT_HOOKS; do
-        printf -v "$_hook" '%s' "${!_hook-}"
-        case "${!_hook}" in
+    for _path in $AGENT_REPO_PATHS; do
+        printf -v "$_path" '%s' "${!_path-}"
+        case "${!_path}" in
             ''|/*) ;;
-            *) printf -v "$_hook" '%s' "$dir/${!_hook}" ;;
+            *) printf -v "$_path" '%s' "$dir/${!_path}" ;;
         esac
     done
     AGENT_DESCRIPTOR="$descriptor"

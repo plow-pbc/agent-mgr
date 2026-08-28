@@ -29,6 +29,7 @@ agent-mgr new errands ~/services/errands-hermes-agent
 agent-mgr restore errands    # the whole deploy: config, plugin, restore hook
 agent-mgr activate errands   # prints a code; text it from the agent's phone
 agent-mgr up errands
+agent-mgr cron-sync errands  # only if its agent.env names a cron spec
 agent-mgr sign-in errands
 agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
 agent-mgr check-latch errands
@@ -119,13 +120,15 @@ shape: a second copy of something `agent-mgr` already owns.
 | `.env.example` | if it has extra keys | the dotenv contract, with no values |
 | `tests/` | if it has siblings | what this agent must **not** reach, asserted |
 | `skills.tsv` | if it installs a **shared** skill | written by `add-skill`; one pinned SHA per skill |
+| a cron spec | if it ships scheduled jobs | named by `AGENT_CRON_SPEC`; declarative rows `cron-sync` converges onto the scheduler, reading hermes's own `jobs.json` — never `cron list` output. `deliver` is explicit on every row — a card-only job declares `local`, hermes's own no-chat-delivery target — and a `${VAR}` in it may only name a delivery identifier ending `_UID` — the env it expands from holds credentials one line away, and the expansion lands in argv and persists in `jobs.json`. A row's `blocked` reason keeps it versioned but unregistered. Agent-authored crons are invisible to it |
 | `SKILL.md`, `scripts/`, `references/` | if the agent does something | its own skill: the instructions the container reads, and whatever runs for them |
 | `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` (or `build`) beside it unless the `image:` is a digest — [HOWTO](docs/HOWTO.md#what-an-agents-repo-contains) has the shape and what `resolve-guard` refuses without it |
-| a restore hook | if it has its own deploy step | named by `AGENT_RESTORE_HOOK`; `restore` sequences it, so one command is the whole deploy |
+| a restore hook | if it has its own deploy step | named by `AGENT_RESTORE_HOOK`; `restore` sequences it, so one command is the whole deploy -- except crons, which are `cron-sync`'s and run against a live gateway |
 | a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `restore` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
 
 What must **not** be there is the common half: **no `compose.yml`, no activation
-script, no `model-provider` or `reload-if-running`** — `agent-mgr` owns those,
+script, no `model-provider` or `reload-if-running`, no hand-rolled cron
+registration** — `agent-mgr` owns those,
 and a copy is a fork of the fleet that drifts silently. A `justfile` is the one
 near-miss: keep it for this agent's own recipes and tests, never to restate
 `up`, `restore` or `activate`.

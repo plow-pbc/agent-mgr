@@ -155,6 +155,31 @@ case "$cmd" in
         # (unprivileged, remapped) then cannot rewrite.
         compose exec -T --user "$HERMES_UID:$HERMES_GID" hermes hermes chat -q "$*"
         ;;
+    cron-sync)
+        # Registration is an operator action, run when jobs change -- restore
+        # does not grow a cron step. The converger travels over stdin per
+        # invocation and the spec as an argument: nothing is installed into the
+        # container or the home, so nothing can go stale.
+        load_agent "${1:-}"
+        # Spec preflight before the container guards: "this agent ships no
+        # jobs" and "the spec file is gone" are answers about the REPO, and
+        # neither should require a running gateway to hear.
+        [ -n "$AGENT_CRON_SPEC" ] || die "$AGENT_NAME sets no AGENT_CRON_SPEC in agent.env -- it ships no scheduled jobs, so there is nothing to sync"
+        [ -f "$AGENT_CRON_SPEC" ] || die "AGENT_CRON_SPEC names $AGENT_CRON_SPEC, which does not exist"
+        require_running
+        # --user for the same reason `agent` spells out: exec skips the
+        # entrypoint that remaps the in-image user, and the creates below write
+        # hermes's own cron state under /opt/data.
+        #
+        # The venv python by absolute path -- the image's own hermes shim pins
+        # /opt/hermes/.venv, and hermes_cli (whose load_env the converger uses
+        # to read the gateway's dotenv) only imports from there; a bare python3
+        # resolves to a different interpreter on derived images. HOME is what
+        # hermes_cli resolves the home -- and so the dotenv -- from.
+        compose exec -T --user "$HERMES_UID:$HERMES_GID" --env HOME=/opt/data \
+            hermes /opt/hermes/.venv/bin/python3 - --spec-json "$(cat "$AGENT_CRON_SPEC")" \
+            < "$AGENT_MGR_ROOT/lib/cron-sync.py"
+        ;;
     activate)
         load_agent "${1:-}"
         # activate rewrites PLOW_CHAT_CHAT_UID and PLOW_CHAT_TOKEN in place.
@@ -468,6 +493,7 @@ bring it up:
                                    # agent's own restore hook if it declares one
   agent-mgr activate $name         # prints a code; text it from the agent's phone
   agent-mgr up $name
+  agent-mgr cron-sync $name        # only if its agent.env names a cron spec
   agent-mgr sign-in $name          # model OAuth, in a browser
 
 then, if it drives a Mac through Latch, mint the pair on that Mac and:
