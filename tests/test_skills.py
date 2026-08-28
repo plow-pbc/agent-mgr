@@ -244,6 +244,25 @@ def test_restore_installs_the_fleet_google_workspace_skill(run, instance, tmp_pa
     assert "name: google-workspace" in installed.read_text()
 
 
+def test_restore_skips_the_fleet_skill_when_the_instance_pins_it(run, instance, tmp_path):
+    """Installing the fleet copy first would leave it deployed over a working
+    instance copy whenever the later replay's fetch fails mid-restore, so
+    restore does not install the fleet copy at all for an instance-owned dest."""
+    repo = instance("property")
+    (repo / "skills.tsv").write_text(
+        f"plow-pbc/property-hunt\t{'a' * 40}\tproductivity/google-workspace\t\n"
+    )
+    run("register", "property", str(repo))
+    r = run("restore", "property",
+            env=_fake_bin(tmp_path, skill_name="google-workspace",
+                          files=(("INSTANCE.md", "instance copy"),)))
+    assert r.returncode == 0, r.stderr
+    assert "skipped" in r.stdout
+    installed = (tmp_path / "home" / ".hermes-property" / "skills"
+                 / "productivity" / "google-workspace")
+    assert (installed / "INSTANCE.md").exists()
+
+
 def test_install_skill_refuses_an_instance_pinned_google_workspace(run, instance):
     """restore deliberately installs an instance's own skills.tsv copy last;
     a standalone fleet install over it would contradict the reviewed pin

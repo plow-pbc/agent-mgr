@@ -932,6 +932,16 @@ install_fleet_skill() {
         || die "could not install the google-workspace fleet skill from plow-pbc/plow at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? $landed"
 }
 
+# Does this agent's own skills.tsv pin productivity/google-workspace? That
+# instance pin is authoritative over the fleet copy: restore skips the fleet
+# install and install-skill refuses, so no window -- not even a failed
+# replay's -- leaves the fleet copy sitting where the reviewed instance pin
+# should be.
+instance_owns_google_workspace() {
+    [ -s "$AGENT_DIR/skills.tsv" ] && \
+        awk -F'\t' '$3 == "productivity/google-workspace" {found=1} END {exit !found}' "$AGENT_DIR/skills.tsv"
+}
+
 # Refuse to write into a home that is not this agent's.
 #
 # The conventional home always carries the agent's own name, so it is always
