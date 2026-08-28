@@ -111,6 +111,16 @@ def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path
     assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
 
 
+def test_migrate_plugin_env_rejects_an_unknown_mode(run, instance, tmp_path):
+    """Fail-fast on a typo'd flag: silently running in the OTHER mode is the
+    stale-token bug this pair of modes exists to prevent."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    r = run("migrate-plugin-env", "rowan", "--bogus")
+    assert r.returncode != 0
+    assert "unknown mode" in r.stderr and "--sync" in r.stderr
+
+
 def test_migrate_plugin_env_without_a_dotenv_points_at_restore(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("migrate-plugin-env", "rowan")
