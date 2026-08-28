@@ -379,11 +379,17 @@ if home and home not in {r[1] for r in rows}:
         # Captured for the same reason as in `chats`: a fetch failure must die
         # with its own message, not fall through to the not-among-chats one.
         chats_json="$(plow_chats_json)"
-        printf '%s' "$chats_json" | CHAT_UID="$chat_uid" python3 -I -c '
+        # The membership refusal prints from inside the Python, so a non-zero
+        # exit here can only mean that refusal -- a schema break (KeyError on
+        # "data") surfaces as its own traceback instead of borrowing the uid
+        # diagnosis through a shell `|| die`.
+        printf '%s' "$chats_json" | CHAT_UID="$chat_uid" AGENT="$AGENT_NAME" python3 -I -c '
 import json, os, sys
 uids = {c["uid"] for c in json.load(sys.stdin)["data"]}
-sys.exit(0 if os.environ["CHAT_UID"] in uids else 1)
-' || die "$chat_uid is not among this token's chats -- run 'agent-mgr chats $AGENT_NAME' and pick a uid from that listing"
+if os.environ["CHAT_UID"] not in uids:
+    sys.exit("agent-mgr: %s is not among this token\x27s chats -- run \x27agent-mgr chats %s\x27 and pick a uid from that listing"
+             % (os.environ["CHAT_UID"], os.environ["AGENT"]))
+'
         printf '%s\n' "$chat_uid" \
             | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" PLOW_CHAT_CHAT_UID \
             || die "refusing to write ${AGENT_NAME}'s dotenv -- see above. Nothing was written."

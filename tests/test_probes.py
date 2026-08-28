@@ -410,3 +410,15 @@ def test_a_dead_token_dies_with_its_own_message_not_a_traceback(run, instance, t
     assert "may be dead" in r.stderr
     assert "Traceback" not in r.stderr
     assert "not among this token's chats" not in r.stderr
+
+
+def test_a_schema_break_is_not_reported_as_a_uid_typo(run, instance, tmp_path):
+    """A 200 body without `data` is an upstream schema break. Routed through a
+    shell `|| die` it borrowed the not-among-chats diagnosis, sending the
+    operator to re-check a uid that was never the problem."""
+    from conftest import shlex_quote
+    _with_plow(run, instance, tmp_path)
+    r = run("set-home", "property", "cht_old_dm", env=_bin(
+        tmp_path, "property", exec_output=shlex_quote('{"chats":[]}\n200')))
+    assert r.returncode != 0
+    assert "not among this token's chats" not in r.stderr
