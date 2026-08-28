@@ -385,6 +385,58 @@ def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
         assert "refused" in r.stderr
 
 
+def _external(instance, run, tmp_path):
+    """A registered agent whose descriptor says a real person sits behind it."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_EXTERNAL_USER=1\n")))
+    from conftest import fake_docker
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    return {"PATH": f"{b}:{os.environ['PATH']}"}
+
+
+def test_an_external_users_agent_refuses_a_non_interactive_transition(run, instance, tmp_path):
+    """The gateway messages its person at every restart, so a transition on an
+    external user's agent needs a deliberate operator. Without a terminal and
+    without the acknowledgement, every transition route refuses -- and the
+    refusal names the acknowledgement, because a deploy script hitting this is
+    being told how to say "the restart is the point"."""
+    env = _external(instance, run, tmp_path)
+    for cmd in (["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
+                ["compose", "rowan", "up", "-d", "--force-recreate"]):
+        r = run(*cmd, env=env)
+        assert r.returncode != 0, f"{cmd} transitioned an external user's agent silently"
+        assert "AGENT_TRANSITION_ACK" in r.stderr
+    r = run("logs", "rowan", env=env)
+    assert "AGENT_TRANSITION_ACK" not in r.stderr, "logs is a read, not a transition"
+
+
+def test_the_acknowledgement_lets_automation_transition(run, instance, tmp_path):
+    env = _external(instance, run, tmp_path)
+    r = run("up", "rowan", env={**env, "AGENT_TRANSITION_ACK": "1"})
+    assert r.returncode == 0, r.stderr
+
+
+@pytest.mark.parametrize("reply,ok", [("y", True), ("yes", True), ("n", False), ("", False)])
+def test_the_interactive_prompt_defaults_to_no(run, registry, instance, tmp_path, reply, ok):
+    """A real pty, because [ -t 0 ] is the branch under test. Only an explicit
+    yes proceeds; empty and garbage refuse -- the default answer to "message a
+    real person?" is No."""
+    import pty
+    import subprocess
+    env_path = _external(instance, run, tmp_path)
+    env = dict(os.environ)
+    env.update({"AGENT_MGR_REGISTRY": str(registry), "HOME": str(tmp_path / "home"),
+                **env_path})
+    master, slave = pty.openpty()
+    try:
+        os.write(master, (reply + "\n").encode())
+        r = subprocess.run([str(ROOT / "agent-mgr"), "up", "rowan"],
+                           stdin=slave, capture_output=True, text=True, env=env)
+    finally:
+        os.close(master)
+        os.close(slave)
+    assert (r.returncode == 0) == ok, (reply, r.stderr)
+
+
 def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instance, tmp_path):
     """The one command a refusal must not fail. By the reload the one-time
     activation is already spent and the token written, so a red exit reads as
