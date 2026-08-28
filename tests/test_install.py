@@ -67,10 +67,19 @@ def test_the_image_pin_is_a_digest_not_a_tag():
     assert ref.startswith("sha256:") and len(ref) == 71
 
 
-def test_install_plugin_refuses_a_ref_that_is_not_a_sha(run, instance):
+@pytest.mark.parametrize(
+    ("command", "env_key"),
+    [
+        ("install-plugin", "AGENT_MGR_PLUGIN_REF"),
+        ("install-skill", "AGENT_MGR_SKILL_REF"),
+    ],
+)
+def test_install_refuses_a_ref_that_is_not_a_sha(run, instance, command, env_key):
+    """A branch would silently re-point every agent on the next upstream push --
+    the same rule for the plugin pin and the fleet skill pin."""
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
-    r = run("install-plugin", "rowan", env={"AGENT_MGR_PLUGIN_REF": "main"})
+    r = run(command, "rowan", env={env_key: "main"})
     assert r.returncode != 0
     assert "40-char SHA" in r.stderr
 

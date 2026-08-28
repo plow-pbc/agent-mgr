@@ -244,14 +244,18 @@ def test_restore_installs_the_fleet_google_workspace_skill(run, instance, tmp_pa
     assert "name: google-workspace" in installed.read_text()
 
 
-def test_install_skill_refuses_a_ref_that_is_not_a_sha(run, instance):
-    """A branch would silently re-point every agent's Google path on the next
-    upstream push -- the same rule the plugin pin lives under."""
-    run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
-    r = run("install-skill", "rowan", env={"AGENT_MGR_SKILL_REF": "main"})
+def test_install_skill_refuses_an_instance_pinned_google_workspace(run, instance):
+    """restore deliberately installs an instance's own skills.tsv copy last;
+    a standalone fleet install over it would contradict the reviewed pin
+    until the next restore silently flipped it back."""
+    repo = instance("rowan")
+    (repo / "skills.tsv").write_text(
+        f"plow-pbc/x\t{'a' * 40}\tproductivity/google-workspace\t\n"
+    )
+    run("register", "rowan", str(repo))
+    r = run("install-skill", "rowan")
     assert r.returncode != 0
-    assert "40-char SHA" in r.stderr
+    assert "authoritative" in r.stderr
 
 
 def test_a_dotted_destination_does_not_accept_a_different_skill(run, instance, tmp_path):

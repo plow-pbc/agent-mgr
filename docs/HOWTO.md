@@ -530,3 +530,10 @@ After bumping `runtime/plow-chat-plugin.ref` alone,
 `agent-mgr install-plugin <name>` does just that step — useful when an agent's
 restore hook is expensive (the rentals agent re-seeds a vault and rebuilds its
 property hubs) and nothing else changed.
+
+`agent-mgr install-skill <name>` is the same shape for
+`runtime/google-workspace-skill.ref`, the fleet `google-workspace` skill —
+also the first thing to run on an agent still reporting `NOT_AUTHENTICATED`
+from the image-bundled local-OAuth copy. It refuses an agent whose own
+`skills.tsv` pins `productivity/google-workspace`: the instance pin is
+authoritative there, so bump that row and re-run `restore` instead.
