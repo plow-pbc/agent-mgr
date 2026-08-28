@@ -350,7 +350,7 @@ case "$cmd" in
 import json, os, sys
 home = os.environ.get("HOME_UID", "")
 rows = []
-for chat in json.load(sys.stdin).get("data", []):
+for chat in json.load(sys.stdin)["data"]:
     line = next((p["line"] for p in chat.get("participants", []) if p.get("type") == "agent"), {})
     members = [p.get("display_name") or p.get("provider_key", "?")
                for p in chat.get("participants", []) if p.get("type") == "member"]
@@ -381,7 +381,7 @@ if home and home not in {r[1] for r in rows}:
         chats_json="$(plow_chats_json)"
         printf '%s' "$chats_json" | CHAT_UID="$chat_uid" python3 -I -c '
 import json, os, sys
-uids = {c["uid"] for c in json.load(sys.stdin).get("data", [])}
+uids = {c["uid"] for c in json.load(sys.stdin)["data"]}
 sys.exit(0 if os.environ["CHAT_UID"] in uids else 1)
 ' || die "$chat_uid is not among this token's chats -- run 'agent-mgr chats $AGENT_NAME' and pick a uid from that listing"
         printf '%s\n' "$chat_uid" \

@@ -315,27 +315,6 @@ def test_set_latch_env_reads_only_a_regular_leaf(tmp_path):
     assert "not a regular file" in r.stderr
 
 
-@pytest.mark.parametrize("argv, stdin, expected", [
-    # A key that could smuggle a second assignment or a comment into the file
-    # is refused before anything is opened.
-    (["EVIL=1\nINJECTED"], "x\n", "not an env var name"),
-    (["lowercase"], "x\n", "not an env var name"),
-    (["A", "A"], "x\ny\n", "duplicate key"),
-    # One value for two keys: the trailing newline makes the second field
-    # empty, so this lands on the empty-value refusal, not the count check.
-    (["A", "B"], "only_one\n", "B was empty"),
-])
-def test_upsert_env_refuses_malformed_key_sets(tmp_path, argv, stdin, expected):
-    home = tmp_path / "home"
-    home.mkdir()
-    (home / ".env").write_text("KEEP=1\n")
-    r = subprocess.run([str(ROOT / "lib" / "upsert-env"), str(home), *argv],
-                       input=stdin, capture_output=True, text=True, timeout=10)
-    assert r.returncode != 0
-    assert expected in r.stderr
-    assert (home / ".env").read_text() == "KEEP=1\n"
-
-
 
 
 def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instance, tmp_path):

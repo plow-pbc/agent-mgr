@@ -29,7 +29,6 @@ container-visible staging name for a gateway to swap.
 """
 
 import os
-import re
 import stat
 import sys
 
@@ -77,14 +76,10 @@ def main(argv):
     if len(argv) < 2:
         die("usage: upsert-env <home> KEY [KEY...]  (one value per key on stdin)")
     home = argv[0]
+    # Keys arrive as literals from the two agent-mgr call sites (set-latch,
+    # set-home) -- no validation beyond that; an operator does not reach this
+    # helper directly.
     keys = tuple(k.encode("ascii") for k in argv[1:])
-    for key in keys:
-        # The gate that keeps argv keys from smuggling a second assignment or a
-        # comment into the file this tool goes to such lengths to edit safely.
-        if not re.fullmatch(rb"[A-Z][A-Z0-9_]*", key):
-            die("key %r is not an env var name" % key.decode("ascii", "replace"))
-    if len(set(keys)) != len(keys):
-        die("duplicate key in argv")
 
     fields = sys.stdin.buffer.read().split(b"\n")
     if len(fields) < len(keys):

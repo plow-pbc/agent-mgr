@@ -337,15 +337,18 @@ def _chats_response(*uids_and_names):
     return shlex_quote(json.dumps({"data": data}) + "\n200")
 
 
-def _with_plow(tmp_path, name, home_uid="cht_old_dm"):
-    (tmp_path / "home" / f".hermes-{name}" / ".env").write_text(
+def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
+    """Register + restore `property` and give it a Plow credential pair."""
+    run("register", "property", str(instance("property")))
+    run("restore", "property")
+    env_file = tmp_path / "home" / ".hermes-property" / ".env"
+    env_file.write_text(
         f"HOSTEX_TOKEN=keepme\nPLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID={home_uid}\n")
+    return env_file
 
 
 def test_chats_marks_the_home_and_keeps_the_token_off_argv(run, instance, tmp_path):
-    run("register", "property", str(instance("property")))
-    run("restore", "property")
-    _with_plow(tmp_path, "property")
+    _with_plow(run, instance, tmp_path)
     log = tmp_path / "docker.log"
     r = run("chats", "property", env=_bin(
         tmp_path, "property", log=log,
@@ -360,9 +363,7 @@ def test_chats_marks_the_home_and_keeps_the_token_off_argv(run, instance, tmp_pa
 
 
 def test_set_home_refuses_a_malformed_uid_before_touching_docker(run, instance, tmp_path):
-    run("register", "property", str(instance("property")))
-    run("restore", "property")
-    _with_plow(tmp_path, "property")
+    _with_plow(run, instance, tmp_path)
     r = run("set-home", "property", "banana", env=_bin(tmp_path, "property"))
     assert r.returncode != 0
     assert "cht_" in r.stderr
@@ -371,9 +372,7 @@ def test_set_home_refuses_a_malformed_uid_before_touching_docker(run, instance, 
 def test_set_home_refuses_a_uid_the_token_cannot_see(run, instance, tmp_path):
     """A foreign or mistyped uid written to the dotenv takes the agent off its
     chat entirely; the membership gate is what stands between a typo and that."""
-    run("register", "property", str(instance("property")))
-    run("restore", "property")
-    _with_plow(tmp_path, "property")
+    _with_plow(run, instance, tmp_path)
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
     before = env_file.read_text()
     r = run("set-home", "property", "cht_not_mine", env=_bin(
@@ -386,9 +385,7 @@ def test_set_home_refuses_a_uid_the_token_cannot_see(run, instance, tmp_path):
 def test_set_home_writes_the_home_and_carries_every_other_key_through(run, instance, tmp_path):
     """The single-key upsert-env invocation, through the production path -- every
     other success-path caller drives the two-key DOMO pair."""
-    run("register", "property", str(instance("property")))
-    run("restore", "property")
-    _with_plow(tmp_path, "property", home_uid="cht_new_dm")
+    _with_plow(run, instance, tmp_path, home_uid="cht_new_dm")
     r = run("set-home", "property", "cht_old_dm", env=_bin(
         tmp_path, "property",
         exec_output=_chats_response(("cht_old_dm", None), ("cht_new_dm", None))))
@@ -406,9 +403,7 @@ def test_a_dead_token_dies_with_its_own_message_not_a_traceback(run, instance, t
     for set-home, the not-among-chats diagnosis blames a uid typo for a dead
     token. That piped form reads as equivalent, which is how it shipped once."""
     from conftest import shlex_quote
-    run("register", "property", str(instance("property")))
-    run("restore", "property")
-    _with_plow(tmp_path, "property")
+    _with_plow(run, instance, tmp_path)
     r = run(command, "property", *extra, env=_bin(
         tmp_path, "property", exec_output=shlex_quote('{"detail":"bad token"}\n401')))
     assert r.returncode != 0
