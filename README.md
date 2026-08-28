@@ -6,9 +6,10 @@ running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
 agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
 mirrors the cloud Hermes infrastructure in
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
-the same upstream runtime, the same plugin at the same pin, the same protocol
-to the same API — so a fix on either side reaches the other (the one tracked
-gap is the runtime image's pin, [`#2`](https://github.com/plow-pbc/agent-mgr/issues/2)).
+the same plugin at the same pin, the same protocol to the same API, and an
+upstream runtime converging on the same image (the one tracked gap:
+[`#2`](https://github.com/plow-pbc/agent-mgr/issues/2)) — so a fix on either
+side reaches the other.
 What differs is the product around it: there, one VM per tenant behind an
 HTTP endpoint; here, one host, many agents, Docker, a person at a terminal.
 Standing up a new agent is a command rather than a copy-paste of the last one.
