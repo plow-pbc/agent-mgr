@@ -415,6 +415,22 @@ def test_the_acknowledgement_lets_automation_transition(run, instance, tmp_path)
     assert r.returncode == 0, r.stderr
 
 
+def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_path):
+    """restore's preflight rule: a command that installs everything before
+    refusing has already done the thing the refusal exists to prevent. The
+    ack check sits in the preflight beside the veto, so the home stays
+    untouched -- and the same restore proceeds once acknowledged."""
+    env = _external(instance, run, tmp_path)
+    r = run("restore", "rowan", env=env)
+    assert r.returncode != 0
+    assert "AGENT_TRANSITION_ACK" in r.stderr
+    assert not (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists(), (
+        "restore wrote into the home before refusing")
+    r = run("restore", "rowan", env={**env, "AGENT_TRANSITION_ACK": "1"})
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").is_file()
+
+
 @pytest.mark.parametrize("reply,ok", [("y", True), ("yes", True), ("n", False), ("", False)])
 def test_the_interactive_prompt_defaults_to_no(run, registry, instance, tmp_path, reply, ok):
     """A real pty, because [ -t 0 ] is the branch under test. Only an explicit
