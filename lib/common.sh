@@ -160,7 +160,7 @@ AGENT_REPO_PATHS="AGENT_RESTORE_HOOK AGENT_PRE_TRANSITION AGENT_CRON_SPEC"
 # variables ahead of --env-file: a stale AGENT_HOME exported in the caller's
 # shell would otherwise silently mount a different agent's home, which is the
 # same failure class that once rewrote a live home to uid 501:20.
-AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_EXTERNAL_USER $AGENT_REPO_PATHS"
+AGENT_KEYS="AGENT_NAME AGENT_DIR AGENT_HOME AGENT_CONTAINER AGENT_PROJECT AGENT_TZ AGENT_IMAGE AGENT_CONFIG AGENT_CONFIRM_TRANSITIONS $AGENT_REPO_PATHS"
 
 
 # Compose's own environment variables, unset for the same reason and with a
@@ -469,10 +469,11 @@ load_agent() {
     # agent does, beside the vault seed and SOUL it ships with) says so in one
     # line instead of keeping a second installer that hardcodes the path.
     : "${AGENT_CONFIG:=config.yaml}"
-    # Whether a real external person sits behind this agent. The gateway
-    # messages its person at every restart, so a transition on an external
-    # user's agent is user-visible -- require_external_user_ack asks first.
-    : "${AGENT_EXTERNAL_USER:=0}"
+    # Whether transitions on this agent need a deliberate operator. The
+    # gateway messages its person at every restart, so an agent whose person
+    # should not be disturbed casually declares 1 -- require_transition_confirmed
+    # asks first.
+    : "${AGENT_CONFIRM_TRANSITIONS:=0}"
     case "$AGENT_CONFIG" in
         /*) ;;
         *) AGENT_CONFIG="$dir/$AGENT_CONFIG" ;;
@@ -729,23 +730,24 @@ require_running_container_is_ours() {
 # Every route to a container transition goes through here, so the instance's
 # veto cannot be bypassed by adding a call site that forgets it.
 compose_transition() {
-    require_external_user_ack
+    require_transition_confirmed
     require_running_container_is_ours
     require_transition_allowed
     compose "$@"
 }
 
-# A transition on an agent that serves a real external person is user-visible:
-# the gateway messages its person at every restart. So when the descriptor
-# declares AGENT_EXTERNAL_USER=1, a transition needs a deliberate operator --
-# a [y/N] answered at a terminal, or AGENT_TRANSITION_ACK=1 from automation
-# that means to restart. First in compose_transition, before any docker call:
-# the refusal costs nothing and the question is the point.
-require_external_user_ack() {
-    [ "${AGENT_EXTERNAL_USER:-0}" = "1" ] || return 0
+# A transition is user-visible on some agents: the gateway messages its person
+# at every restart. An agent whose person should not be disturbed casually --
+# a real external user is the canonical case -- declares
+# AGENT_CONFIRM_TRANSITIONS=1, and a transition then needs a deliberate
+# operator: a [y/N] answered at a terminal, or AGENT_TRANSITION_ACK=1 from
+# automation that means to restart. First in compose_transition, before any
+# docker call: the refusal costs nothing and the question is the point.
+require_transition_confirmed() {
+    [ "${AGENT_CONFIRM_TRANSITIONS:-0}" = "1" ] || return 0
     [ "${AGENT_TRANSITION_ACK:-}" = "1" ] && return 0
     if [ -t 0 ]; then
-        printf '%s serves a REAL external user -- a restart sends them a message.\nContinue? [y/N] ' "$AGENT_NAME" >&2
+        printf 'restarting %s is user-visible -- its person is messaged at every restart.\nContinue? [y/N] ' "$AGENT_NAME" >&2
         local reply
         read -r reply
         case "$reply" in
@@ -753,7 +755,7 @@ require_external_user_ack() {
         esac
         die "refused -- not transitioning $AGENT_NAME"
     fi
-    die "refusing non-interactively: $AGENT_NAME serves a real external user and a restart messages them. Re-run from a terminal to confirm, or set AGENT_TRANSITION_ACK=1 to acknowledge."
+    die "refusing non-interactively: $AGENT_NAME declares AGENT_CONFIRM_TRANSITIONS and a restart messages its person. Re-run from a terminal to confirm, or set AGENT_TRANSITION_ACK=1 to acknowledge."
 }
 
 # Does this compose argv leave the container alone? The subcommand must be the

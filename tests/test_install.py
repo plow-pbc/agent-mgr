@@ -386,24 +386,25 @@ def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
 
 
 def _external(instance, run, tmp_path):
-    """A registered agent whose descriptor says a real person sits behind it."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_EXTERNAL_USER=1\n")))
+    """A registered agent whose descriptor asks for confirmed transitions --
+    the canonical case being a real external person behind it."""
+    run("register", "rowan", str(instance("rowan", descriptor="AGENT_CONFIRM_TRANSITIONS=1\n")))
     from conftest import fake_docker
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
-def test_an_external_users_agent_refuses_a_non_interactive_transition(run, instance, tmp_path):
-    """The gateway messages its person at every restart, so a transition on an
-    external user's agent needs a deliberate operator. Without a terminal and
-    without the acknowledgement, every transition route refuses -- and the
+def test_a_confirm_transitions_agent_refuses_a_non_interactive_transition(run, instance, tmp_path):
+    """The gateway messages its person at every restart, so a transition on a
+    confirm-transitions agent needs a deliberate operator. Without a terminal
+    and without the acknowledgement, every transition route refuses -- and the
     refusal names the acknowledgement, because a deploy script hitting this is
     being told how to say "the restart is the point"."""
     env = _external(instance, run, tmp_path)
     for cmd in (["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
                 ["compose", "rowan", "up", "-d", "--force-recreate"]):
         r = run(*cmd, env=env)
-        assert r.returncode != 0, f"{cmd} transitioned an external user's agent silently"
+        assert r.returncode != 0, f"{cmd} transitioned a confirm-transitions agent silently"
         assert "AGENT_TRANSITION_ACK" in r.stderr
     r = run("logs", "rowan", env=env)
     assert "AGENT_TRANSITION_ACK" not in r.stderr, "logs is a read, not a transition"
