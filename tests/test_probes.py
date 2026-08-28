@@ -397,3 +397,21 @@ def test_set_home_writes_the_home_and_carries_every_other_key_through(run, insta
     assert "PLOW_CHAT_CHAT_UID=cht_old_dm" in lines
     assert "HOSTEX_TOKEN=keepme" in lines
     assert "PLOW_CHAT_TOKEN=tok_plow" in lines
+
+
+@pytest.mark.parametrize("command, extra", [("chats", ()), ("set-home", ("cht_old_dm",))])
+def test_a_dead_token_dies_with_its_own_message_not_a_traceback(run, instance, tmp_path, command, extra):
+    """The fetch's die must survive to the operator. Piped into the Python
+    check it only exits a subshell -- empty stdin then raises a traceback and,
+    for set-home, the not-among-chats diagnosis blames a uid typo for a dead
+    token. That piped form reads as equivalent, which is how it shipped once."""
+    from conftest import shlex_quote
+    run("register", "property", str(instance("property")))
+    run("restore", "property")
+    _with_plow(tmp_path, "property")
+    r = run(command, "property", *extra, env=_bin(
+        tmp_path, "property", exec_output=shlex_quote('{"detail":"bad token"}\n401')))
+    assert r.returncode != 0
+    assert "may be dead" in r.stderr
+    assert "Traceback" not in r.stderr
+    assert "not among this token's chats" not in r.stderr
