@@ -22,7 +22,8 @@ uses to resolve itself through the symlink above before anything else is
 sourced. Everything after that point is portable, and `python3`, `docker` and
 an authenticated `gh` have to be on `PATH` — `restore` installs the Plow Chat
 plugin and the fleet `google-workspace` skill through `gh api` for **every**
-agent, not only one shipping a `skills.tsv`.
+agent, not only one shipping a `skills.tsv` (one whose own `skills.tsv` pins
+`productivity/google-workspace` keeps its instance copy instead).
 
 ```sh
 agent-mgr new errands ~/services/errands-hermes-agent
@@ -69,7 +70,8 @@ The test for where something belongs: **would a second agent want this?**
 - the Plow Chat plugin — yes, every agent → **common**, pinned by SHA
 - the `google-workspace` redirect skill — yes, every agent → **common**, pinned
   in `runtime/google-workspace-skill.ref` (a fleet pin `restore` installs and
-  `install-skill` re-installs; distinct from an instance's own `add-skill` rows)
+  `install-skill` re-installs — except an agent whose own `skills.tsv` pins that
+  destination, where the instance pin is authoritative and both defer to it)
 - a skill two agents share — pinned by SHA from upstream, installed by `add-skill`
 
 One question, two buckets, and the answer for a shared artifact is the same
@@ -252,7 +254,7 @@ is ignored, including one `agent-mgr` owns.
 | [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **`sha256:` digest** |
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, in `runtime/plow-chat-plugin.ref` |
 | the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, in `runtime/plow-chat-activate.ref` |
-| [`plow-pbc/plow`](https://github.com/plow-pbc/plow) | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent | a **40-char SHA**, in `runtime/google-workspace-skill.ref` |
+| [`plow-pbc/plow`](https://github.com/plow-pbc/plow) | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, in `runtime/google-workspace-skill.ref` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
 All four pins are exact on purpose — a `sha256:` digest for the image, a
