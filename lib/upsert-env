@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Upsert the Latch pair into an agent's dotenv, contained to its home.
+"""Upsert named keys into an agent's dotenv, contained to its home.
 
-    printf '%s\n%s\n' "$uid" "$tok" | lib/set-latch-env <home>
+    printf '%s\n%s\n' "$uid" "$tok" | lib/upsert-env <home> KEY [KEY...]
 
 The home is bind-mounted at /opt/data with the gateway running as the
 operator's uid (templates/compose.yml), so `.env` is container-writable. A
@@ -11,16 +11,14 @@ what it points at when the read happens. Issue #25 names the containment-complet
 form -- hold the home as a directory FD and work relative to it with no-follow
 semantics -- and that is what this does.
 
-Purpose-built rather than a general read/write API. A generic leaf helper was
-tried and argued for on the grounds that `lib/fetch-tree` could share it; it
-cannot. That seam does `mkdir -p`, `rm -rf`, `cp -a` of a whole tree and two
-directory renames, none of which a flat-leaf primitive expresses. With no
-second consumer the generality bought nothing and cost surface, so the read,
-the upsert and the publish live here behind one directory FD instead of being
-a three-process shell protocol around a generic one.
+Born as `set-latch-env`, purpose-built for the DOMO pair; the keys moved to
+argv when `set-home` became the second consumer of the same upsert-under-FD
+operation. Key NAMES are not secrets, so argv is fine for them; the flat-leaf
+scope is unchanged, and `lib/fetch-tree` still cannot share this (that seam
+does whole-tree copies and directory renames a leaf primitive cannot express).
 
-Reads the uid and token as the first two lines of stdin -- never argv, which on
-a shared host puts a live relay credential in the process table where `ps`
+Reads one value per key as the first len(keys) lines of stdin -- never argv,
+which on a shared host puts a live credential in the process table where `ps`
 reads it from any account.
 
 What this buys is containment of the whole operation. The leaf is opened
@@ -34,15 +32,13 @@ import os
 import stat
 import sys
 
-KEYS = (b"DOMO_DEVICE_UID", b"DOMO_MCP_TOKEN")
-
 
 def die(message):
-    sys.stderr.write("set-latch-env: %s\n" % message)
+    sys.stderr.write("upsert-env: %s\n" % message)
     raise SystemExit(1)
 
 
-def upsert(data, values):
+def upsert(data, keys, values):
     """Canonical `KEY=value` at column 0 -- the one spelling this tool writes
     and `dotenv_read` is the only reader of. The first declaration of each key
     is rewritten and any later one dropped, so a file that arrived with two
@@ -64,33 +60,38 @@ def upsert(data, values):
     out, seen = [], set()
     for line in lines:
         key = line.split(b"=", 1)[0] if b"=" in line else None
-        if key in KEYS:
+        if key in keys:
             if key not in seen:
                 seen.add(key)
                 out.append(key + b"=" + values[key])
             continue
         out.append(line)
-    for key in KEYS:
+    for key in keys:
         if key not in seen:
             out.append(key + b"=" + values[key])
     return b"\n".join(out) + b"\n"
 
 
 def main(argv):
-    if len(argv) != 1:
-        die("usage: set-latch-env <home>  (uid and token on stdin)")
+    if len(argv) < 2:
+        die("usage: upsert-env <home> KEY [KEY...]  (one value per key on stdin)")
     home = argv[0]
+    # Keys arrive as literals from the two agent-mgr call sites (set-latch,
+    # set-home) -- no validation beyond that; an operator does not reach this
+    # helper directly.
+    keys = tuple(k.encode("ascii") for k in argv[1:])
 
     fields = sys.stdin.buffer.read().split(b"\n")
-    if len(fields) < 2:
-        die("expected DOMO_DEVICE_UID and DOMO_MCP_TOKEN on stdin, one per line")
+    if len(fields) < len(keys):
+        die("expected %d value(s) on stdin, one per line, for: %s"
+            % (len(keys), b", ".join(keys).decode("ascii")))
     # Stripped, so what lands in the file is what the gateway loads -- it strips
     # the value too, and a pasted credential routinely arrives with a trailing
     # space. Empty is then the parser's empty, not the shell's.
-    values = {KEYS[0]: fields[0].strip(), KEYS[1]: fields[1].strip()}
-    for key in KEYS:
+    values = {key: fields[i].strip() for i, key in enumerate(keys)}
+    for key in keys:
         if not values[key]:
-            die("%s was empty -- mint the pair on the Mac running Latch"
+            die("%s was empty -- refusing to write an empty value"
                 % key.decode("ascii"))
 
     try:
@@ -112,7 +113,7 @@ def main(argv):
                 die("refusing to read %s/.env: not a regular file" % home)
             current = handle.read()
 
-        updated = upsert(current, values)
+        updated = upsert(current, keys, values)
 
         # Staged OUTSIDE the mount, which is the only place a name is safe.
         # The home's CONTENTS are bind-mounted at /opt/data, so any name inside
@@ -137,7 +138,7 @@ def main(argv):
         resolved = os.path.realpath(home)
         tmp_path = os.path.join(
             os.path.dirname(resolved),
-            ".%s.set-latch.%s" % (os.path.basename(resolved), os.urandom(8).hex()))
+            ".%s.upsert-env.%s" % (os.path.basename(resolved), os.urandom(8).hex()))
         try:
             fd = os.open(tmp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         except OSError as exc:

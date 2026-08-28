@@ -277,7 +277,7 @@ case "$cmd" in
         uid="${uid#"${uid%%[![:space:]]*}"}"; uid="${uid%"${uid##*[![:space:]]}"}"
         tok="${tok#"${tok%%[![:space:]]*}"}"; tok="${tok%"${tok##*[![:space:]]}"}"
         # One process does the read, the upsert and the publish, all under a
-        # single directory FD on the home -- lib/set-latch-env. It also owns the
+        # single directory FD on the home -- lib/upsert-env. It also owns the
         # value strip and the emptiness check, so there is one definition of
         # what an empty credential is rather than a shell copy drifting from it.
         #
@@ -286,7 +286,7 @@ case "$cmd" in
         # be split into captured stages so a dying transform could not publish
         # truncated content over the file. One process needs neither.
         printf '%s\n%s\n' "$uid" "$tok" \
-            | "$AGENT_MGR_ROOT/lib/set-latch-env" "$AGENT_HOME" \
+            | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" DOMO_DEVICE_UID DOMO_MCP_TOKEN \
             || die "refusing to write ${AGENT_NAME}'s dotenv -- see above. Nothing was written."
         echo "wrote DOMO_DEVICE_UID and DOMO_MCP_TOKEN (...${tok: -3}) to $env_file"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the credential just written"
@@ -343,6 +343,68 @@ case "$cmd" in
             000) die "no answer from api.plow.co -- the credential was NOT tested: $(tr '\n' ' ' < "$err")" ;;
             *)   die "relay returned HTTP ${code:-<none>}: $(tr '\n' ' ' < "$err")" ;;
         esac
+        ;;
+    chats)
+        load_agent "${1:-}"
+        require_running
+        # The account's chats with the line each is on, the current home chat
+        # marked. This is the listing set-home works from: after a re-activation
+        # has moved an agent to a fresh line, the old line's DM is the uid that
+        # brings its group chats back.
+        home_uid="$(dotenv_read PLOW_CHAT_CHAT_UID "$AGENT_HOME/.env")"
+        # Captured, not piped: a die inside the left side of a pipeline only
+        # exits its subshell, and the Python below would then crash on empty
+        # stdin with a traceback burying the real error.
+        chats_json="$(plow_chats_json)"
+        printf '%s' "$chats_json" | HOME_UID="$home_uid" python3 -I -c '
+import json, os, sys
+home = os.environ.get("HOME_UID", "")
+rows = []
+for chat in json.load(sys.stdin)["data"]:
+    line = next((p["line"] for p in chat.get("participants", []) if p.get("type") == "agent"), {})
+    members = [p.get("display_name") or p.get("provider_key", "?")
+               for p in chat.get("participants", []) if p.get("type") == "member"]
+    rows.append(("*" if chat["uid"] == home else " ", chat["uid"], line.get("uid", "?"),
+                 line.get("provider_key", "?"), chat.get("display_name") or ", ".join(members)))
+for row in rows:
+    print("%s %-28s %-6s %-13s %s" % row)
+if home and home not in {r[1] for r in rows}:
+    print("home chat %s is not in this listing -- the token and the home may disagree" % home, file=sys.stderr)
+'
+        ;;
+    set-home)
+        load_agent "${1:-}"
+        # Writes into a home like activate does, so it takes the same guard.
+        require_own_home
+        chat_uid="${2:-}"
+        [[ "$chat_uid" =~ ^cht_[A-Za-z0-9_-]+$ ]] || die "usage: agent-mgr set-home <name> <cht_...>  (find the uid with 'agent-mgr chats $AGENT_NAME')"
+        require_running
+        # Refused unless this token can see the chat. The Plow token is
+        # user-scoped -- the agent's LINE identity comes from whichever line its
+        # home chat is on -- so re-pointing the home at another line's DM is the
+        # supported recovery after `activate` has moved the agent to a fresh
+        # line and stranded the old line's group chats. A uid outside the
+        # listing is a typo or a sibling account's chat; writing it would take
+        # the agent off its chat entirely, so it dies here instead.
+        # Captured for the same reason as in `chats`: a fetch failure must die
+        # with its own message, not fall through to the not-among-chats one.
+        chats_json="$(plow_chats_json)"
+        # The membership refusal prints from inside the Python, so a non-zero
+        # exit here can only mean that refusal -- a schema break (KeyError on
+        # "data") surfaces as its own traceback instead of borrowing the uid
+        # diagnosis through a shell `|| die`.
+        printf '%s' "$chats_json" | CHAT_UID="$chat_uid" AGENT="$AGENT_NAME" python3 -I -c '
+import json, os, sys
+uids = {c["uid"] for c in json.load(sys.stdin)["data"]}
+if os.environ["CHAT_UID"] not in uids:
+    sys.exit("agent-mgr: %s is not among this token\x27s chats -- run \x27agent-mgr chats %s\x27 and pick a uid from that listing"
+             % (os.environ["CHAT_UID"], os.environ["AGENT"]))
+'
+        printf '%s\n' "$chat_uid" \
+            | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" PLOW_CHAT_CHAT_UID \
+            || die "refusing to write ${AGENT_NAME}'s dotenv -- see above. Nothing was written."
+        echo "wrote PLOW_CHAT_CHAT_UID=$chat_uid to $AGENT_HOME/.env"
+        "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the home chat just re-pointed"
         ;;
     check-connectors)
         load_agent "${1:-}"

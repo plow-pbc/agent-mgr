@@ -316,3 +316,109 @@ def test_no_doc_hardcodes_the_conventional_dotenv_path():
         "these name the conventional dotenv path, which is wrong for a "
         f"declared-home instance -- use $AGENT_HOME/.env: {offenders}"
     )
+
+
+# --- chats / set-home ---------------------------------------------------------
+
+def _chats_response(*uids_and_names):
+    """The /v1/chats body the fake curl serves, with the HTTP code on the line
+    the real probe appends via `-w '\n%{http_code}'`. Quoted, because the fake
+    docker interpolates exec_output into an unquoted `echo`."""
+    import json
+    from conftest import shlex_quote
+    data = [{
+        "uid": uid,
+        "display_name": name,
+        "participants": [
+            {"type": "agent", "line": {"uid": "ln_p2", "provider_key": "+16505550100"}},
+            {"type": "member", "display_name": "Sam"},
+        ],
+    } for uid, name in uids_and_names]
+    return shlex_quote(json.dumps({"data": data}) + "\n200")
+
+
+def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
+    """Register + restore `property` and give it a Plow credential pair."""
+    run("register", "property", str(instance("property")))
+    run("restore", "property")
+    env_file = tmp_path / "home" / ".hermes-property" / ".env"
+    env_file.write_text(
+        f"HOSTEX_TOKEN=keepme\nPLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID={home_uid}\n")
+    return env_file
+
+
+def test_chats_marks_the_home_and_keeps_the_token_off_argv(run, instance, tmp_path):
+    _with_plow(run, instance, tmp_path)
+    log = tmp_path / "docker.log"
+    r = run("chats", "property", env=_bin(
+        tmp_path, "property", log=log,
+        exec_output=_chats_response(("cht_old_dm", None), ("cht_group", "STR Owners"))))
+    assert r.returncode == 0, r.stderr
+    marked = [l for l in r.stdout.splitlines() if l.startswith("*")]
+    assert len(marked) == 1 and "cht_old_dm" in marked[0]
+    assert "STR Owners" in r.stdout and "ln_p2" in r.stdout
+    # Same contract as check-latch: the credential rides stdin, never argv.
+    assert "tok_plow" not in log.read_text()
+    assert 'header = "Authorization: Bearer tok_plow"' in (tmp_path / "docker.log.stdin").read_text()
+
+
+def test_set_home_refuses_a_malformed_uid_before_touching_docker(run, instance, tmp_path):
+    _with_plow(run, instance, tmp_path)
+    r = run("set-home", "property", "banana", env=_bin(tmp_path, "property"))
+    assert r.returncode != 0
+    assert "cht_" in r.stderr
+
+
+def test_set_home_refuses_a_uid_the_token_cannot_see(run, instance, tmp_path):
+    """A foreign or mistyped uid written to the dotenv takes the agent off its
+    chat entirely; the membership gate is what stands between a typo and that."""
+    _with_plow(run, instance, tmp_path)
+    env_file = tmp_path / "home" / ".hermes-property" / ".env"
+    before = env_file.read_text()
+    r = run("set-home", "property", "cht_not_mine", env=_bin(
+        tmp_path, "property", exec_output=_chats_response(("cht_old_dm", None))))
+    assert r.returncode != 0
+    assert "not among this token's chats" in r.stderr
+    assert env_file.read_text() == before
+
+
+def test_set_home_writes_the_home_and_carries_every_other_key_through(run, instance, tmp_path):
+    """The single-key upsert-env invocation, through the production path -- every
+    other success-path caller drives the two-key DOMO pair."""
+    _with_plow(run, instance, tmp_path, home_uid="cht_new_dm")
+    r = run("set-home", "property", "cht_old_dm", env=_bin(
+        tmp_path, "property",
+        exec_output=_chats_response(("cht_old_dm", None), ("cht_new_dm", None))))
+    assert r.returncode == 0, r.stderr
+    lines = (tmp_path / "home" / ".hermes-property" / ".env").read_text().splitlines()
+    assert "PLOW_CHAT_CHAT_UID=cht_old_dm" in lines
+    assert "HOSTEX_TOKEN=keepme" in lines
+    assert "PLOW_CHAT_TOKEN=tok_plow" in lines
+
+
+@pytest.mark.parametrize("command, extra", [("chats", ()), ("set-home", ("cht_old_dm",))])
+def test_a_dead_token_dies_with_its_own_message_not_a_traceback(run, instance, tmp_path, command, extra):
+    """The fetch's die must survive to the operator. Piped into the Python
+    check it only exits a subshell -- empty stdin then raises a traceback and,
+    for set-home, the not-among-chats diagnosis blames a uid typo for a dead
+    token. That piped form reads as equivalent, which is how it shipped once."""
+    from conftest import shlex_quote
+    _with_plow(run, instance, tmp_path)
+    r = run(command, "property", *extra, env=_bin(
+        tmp_path, "property", exec_output=shlex_quote('{"detail":"bad token"}\n401')))
+    assert r.returncode != 0
+    assert "may be dead" in r.stderr
+    assert "Traceback" not in r.stderr
+    assert "not among this token's chats" not in r.stderr
+
+
+def test_a_schema_break_is_not_reported_as_a_uid_typo(run, instance, tmp_path):
+    """A 200 body without `data` is an upstream schema break. Routed through a
+    shell `|| die` it borrowed the not-among-chats diagnosis, sending the
+    operator to re-check a uid that was never the problem."""
+    from conftest import shlex_quote
+    _with_plow(run, instance, tmp_path)
+    r = run("set-home", "property", "cht_old_dm", env=_bin(
+        tmp_path, "property", exec_output=shlex_quote('{"chats":[]}\n200')))
+    assert r.returncode != 0
+    assert "not among this token's chats" not in r.stderr

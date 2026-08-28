@@ -308,7 +308,8 @@ def test_set_latch_env_reads_only_a_regular_leaf(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     os.mkfifo(home / ".env")
-    r = subprocess.run([str(ROOT / "lib" / "set-latch-env"), str(home)],
+    r = subprocess.run([str(ROOT / "lib" / "upsert-env"), str(home),
+                        "DOMO_DEVICE_UID", "DOMO_MCP_TOKEN"],
                        input="dev_abc\ntok_xyz\n", capture_output=True, text=True, timeout=10)
     assert r.returncode != 0
     assert "not a regular file" in r.stderr
