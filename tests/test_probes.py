@@ -392,6 +392,10 @@ def test_set_home_writes_the_home_and_carries_every_other_key_through(run, insta
     assert r.returncode == 0, r.stderr
     lines = (tmp_path / "home" / ".hermes-property" / ".env").read_text().splitlines()
     assert "PLOW_HOME_CHANNEL=cht_old_dm" in lines
+    # Both names during the compatibility window: a still-pinned pre-rename
+    # plugin reads only the legacy key, so writing the new one alone reports
+    # success and leaves the home un-moved.
+    assert "PLOW_CHAT_CHAT_UID=cht_old_dm" in lines
     assert "HOSTEX_TOKEN=keepme" in lines
     assert "PLOW_AGENT_TOKEN=tok_plow" in lines
 

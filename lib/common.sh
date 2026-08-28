@@ -873,19 +873,23 @@ plow_chats_json() {
 # plugin still reads them mid-migration; a later cleanup removes them once
 # nothing does.
 #
-# Two callers: the `migrate-plugin-env` subcommand (the fleet migration step)
-# and `activate` (whose pinned script predates the rename). Idempotent: a new
-# name already carrying a value is left as is, so a second run writes nothing.
+# Two callers, two modes -- and the difference is load-bearing:
+# `migrate-plugin-env` (no arg) is the one-time fleet migration and is
+# idempotent, leaving an already-set new name alone. `activate` passes --sync
+# because its pinned script just wrote FRESH legacy values; skipping there
+# would leave the new names carrying the PREVIOUS credential -- `chats` and
+# `set-home` keep presenting a dead token while activate reports success.
 #
 # Caller must have run load_agent.
 migrate_plow_env() {
+    local sync=""; [ "${1:-}" = "--sync" ] && sync=1
     local env_file="$AGENT_HOME/.env" pair old new val
     [ -f "$env_file" ] || die "no $env_file -- run 'agent-mgr restore $AGENT_NAME' first"
     for pair in PLOW_CHAT_TOKEN:PLOW_AGENT_TOKEN \
                 PLOW_CHAT_CHAT_UID:PLOW_HOME_CHANNEL \
                 PLOW_CHAT_BASE_URL:PLOW_API_BASE; do
         old="${pair%%:*}" new="${pair##*:}"
-        if [ -n "$(dotenv_read "$new" "$env_file")" ]; then
+        if [ -z "$sync" ] && [ -n "$(dotenv_read "$new" "$env_file")" ]; then
             echo "$new already set -- left as is"
             continue
         fi

@@ -85,6 +85,31 @@ def test_activate_copies_the_pinned_scripts_legacy_names_onto_the_new_ones(run, 
     assert "PLOW_CHAT_TOKEN=tok_live" in lines, "the pinned script's own lines must survive"
 
 
+def test_reactivation_overwrites_stale_current_keys(run, instance, tmp_path):
+    """activate's copy runs in SYNC mode, not migrate mode. The pinned script
+    just minted a FRESH credential under the legacy names; if the copy skipped
+    an already-set current key, every re-activation would leave
+    PLOW_AGENT_TOKEN carrying the PREVIOUS (now dead) token -- `chats` and
+    `set-home` keep presenting it while activate reports success."""
+    from conftest import fake_curl
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    env = tmp_path / "home" / ".hermes-rowan" / ".env"
+    env.write_text("PLOW_AGENT_TOKEN=tok_stale\nPLOW_HOME_CHANNEL=cht_old\n")
+    (tmp_path / "act").mkdir()
+    b = fake_curl(tmp_path / "act", body=(
+        "#!/usr/bin/env bash\n"
+        'd=""\n'
+        'while [ $# -gt 0 ]; do case "$1" in --data-dir) d="$2"; shift 2 ;; *) shift ;; esac; done\n'
+        "printf 'PLOW_CHAT_TOKEN=tok_fresh\\nPLOW_CHAT_CHAT_UID=cht_new\\n' >> \"$d/.env\"\n"))
+    r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+    lines = env.read_text().splitlines()
+    assert "PLOW_AGENT_TOKEN=tok_fresh" in lines, "re-activation must replace the dead token under the new name"
+    assert "PLOW_HOME_CHANNEL=cht_new" in lines
+    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
+
+
 def test_migrate_plugin_env_without_a_dotenv_points_at_restore(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("migrate-plugin-env", "rowan")

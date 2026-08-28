@@ -210,7 +210,7 @@ case "$cmd" in
         # activation is already spent, so a refused dotenv write must not read
         # as "activation failed" and invite a second spend.
         if [ -f "$AGENT_HOME/.env" ]; then
-            (migrate_plow_env) \
+            (migrate_plow_env --sync) \
                 || echo "activation SUCCEEDED under the legacy PLOW_CHAT_* names -- do NOT re-run activate; run 'agent-mgr migrate-plugin-env $AGENT_NAME' to finish the rename." >&2
         fi
         # Non-fatal, and the message matters more than the restart: by this line
@@ -437,7 +437,14 @@ if os.environ["CHAT_UID"] not in uids:
         printf '%s\n' "$chat_uid" \
             | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" PLOW_HOME_CHANNEL \
             || die "refusing to write ${AGENT_NAME}'s dotenv -- see above. Nothing was written."
-        echo "wrote PLOW_HOME_CHANNEL=$chat_uid to $AGENT_HOME/.env"
+        # Both names during the compatibility window: an agent still pinned to
+        # the pre-rename plugin reads only the legacy key, so writing the new
+        # one alone reports success, reloads, and leaves the home un-moved.
+        # Removed with the legacy names once nothing reads them.
+        printf '%s\n' "$chat_uid" \
+            | "$AGENT_MGR_ROOT/lib/upsert-env" "$AGENT_HOME" PLOW_CHAT_CHAT_UID \
+            || die "wrote PLOW_HOME_CHANNEL but NOT the legacy PLOW_CHAT_CHAT_UID -- the dotenv is split; re-run set-home."
+        echo "wrote PLOW_HOME_CHANNEL=$chat_uid (and legacy PLOW_CHAT_CHAT_UID) to $AGENT_HOME/.env"
         "$AGENT_MGR_ROOT/lib/reload-if-running" "$AGENT_NAME" "the home chat just re-pointed"
         ;;
     migrate-plugin-env)
