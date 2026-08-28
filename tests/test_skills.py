@@ -232,6 +232,51 @@ def test_two_skills_from_one_monorepo_keep_both_pins(run, instance, tmp_path):
     assert any("\tfirst\t" in r for r in rows) and any("\tsecond\t" in r for r in rows)
 
 
+def test_restore_installs_the_fleet_google_workspace_skill(run, instance, tmp_path):
+    """Every agent gets the redirect skill: the image-bundled copy of the same
+    name teaches a local-OAuth path no instance has, so restore replaces it."""
+    run("register", "rowan", str(instance("rowan")))
+    r = run("restore", "rowan")
+    assert r.returncode == 0, r.stderr
+    installed = (tmp_path / "home" / ".hermes-rowan" / "skills"
+                 / "productivity" / "google-workspace" / "SKILL.md")
+    assert installed.exists()
+    assert "name: google-workspace" in installed.read_text()
+
+
+def test_restore_skips_the_fleet_skill_when_the_instance_pins_it(run, instance, tmp_path):
+    """Installing the fleet copy first would leave it deployed over a working
+    instance copy whenever the later replay's fetch fails mid-restore, so
+    restore does not install the fleet copy at all for an instance-owned dest."""
+    repo = instance("property")
+    (repo / "skills.tsv").write_text(
+        f"plow-pbc/property-hunt\t{'a' * 40}\tproductivity/google-workspace\t\n"
+    )
+    run("register", "property", str(repo))
+    r = run("restore", "property",
+            env=_fake_bin(tmp_path, skill_name="google-workspace",
+                          files=(("INSTANCE.md", "instance copy"),)))
+    assert r.returncode == 0, r.stderr
+    assert "skipped" in r.stdout
+    installed = (tmp_path / "home" / ".hermes-property" / "skills"
+                 / "productivity" / "google-workspace")
+    assert (installed / "INSTANCE.md").exists()
+
+
+def test_install_skill_refuses_an_instance_pinned_google_workspace(run, instance):
+    """restore deliberately installs an instance's own skills.tsv copy last;
+    a standalone fleet install over it would contradict the reviewed pin
+    until the next restore silently flipped it back."""
+    repo = instance("rowan")
+    (repo / "skills.tsv").write_text(
+        f"plow-pbc/x\t{'a' * 40}\tproductivity/google-workspace\t\n"
+    )
+    run("register", "rowan", str(repo))
+    r = run("install-skill", "rowan")
+    assert r.returncode != 0
+    assert "authoritative" in r.stderr
+
+
 def test_a_dotted_destination_does_not_accept_a_different_skill(run, instance, tmp_path):
     """`foo.bar` reached an ERE, so `name: fooXbar` satisfied the check that
     exists to prove the fetched tree is the skill this agent pinned."""

@@ -21,8 +21,9 @@ It runs on the Linux host the fleet lives on and on a Mac, where the floor is
 uses to resolve itself through the symlink above before anything else is
 sourced. Everything after that point is portable, and `python3`, `docker` and
 an authenticated `gh` have to be on `PATH` — `restore` installs the Plow Chat
-plugin through `gh api` for **every** agent, not only one shipping a
-`skills.tsv`.
+plugin and the fleet `google-workspace` skill through `gh api` for **every**
+agent, not only one shipping a `skills.tsv` (one whose own `skills.tsv` pins
+`productivity/google-workspace` keeps its instance copy instead).
 
 ```sh
 agent-mgr new errands ~/services/errands-hermes-agent
@@ -67,6 +68,10 @@ The test for where something belongs: **would a second agent want this?**
 - `agent.env` — no, it *is* this agent's identity → **its repo**
 - a recipe that publishes a property map — no, one agent runs it → **its repo**
 - the Plow Chat plugin — yes, every agent → **common**, pinned by SHA
+- the `google-workspace` redirect skill — yes, every agent → **common**, pinned
+  in `runtime/google-workspace-skill.ref` (a fleet pin `restore` installs and
+  `install-skill` re-installs — except an agent whose own `skills.tsv` pins that
+  destination, where the instance pin is authoritative and both defer to it)
 - a skill two agents share — pinned by SHA from upstream, installed by `add-skill`
 
 One question, two buckets, and the answer for a shared artifact is the same
@@ -249,10 +254,12 @@ is ignored, including one `agent-mgr` owns.
 | [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **`sha256:` digest** |
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, in `runtime/plow-chat-plugin.ref` |
 | the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, in `runtime/plow-chat-activate.ref` |
+| [`plow-pbc/plow`](https://github.com/plow-pbc/plow) | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, in `runtime/google-workspace-skill.ref` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
-All three pins are exact on purpose — a `sha256:` digest for the image, a
-40-char SHA for each of the two things taken from `hermes-plow-chat`. A tag or a
+All four pins are exact on purpose — a `sha256:` digest for the image, a
+40-char SHA for each of the two things taken from `hermes-plow-chat` and for
+the fleet skill taken from `plow-pbc/plow`. A tag or a
 branch re-resolves on the next pull, which silently changes a large unreviewed
 surface under a running agent that holds live credentials — and for the plugin,
 one that holds the chat token.
@@ -264,7 +271,9 @@ exists only before it. A single shared ref would send the plugin's post-strip
 SHA at the activate URL and 404 — on `activate`, the one command that is a
 one-time irreversible spend. `tests/test_install.py` pins the pairing.
 
-**Only `runtime/plow-chat-plugin.ref` may be bumped.**
+**Of the `hermes-plow-chat` pair, only `runtime/plow-chat-plugin.ref` may be
+bumped** (`runtime/google-workspace-skill.ref` moves freely — it names a
+different repo and nothing pairs with it).
 `runtime/plow-chat-activate.ref` is frozen at a pre-strip commit and must not be
 bumped forward at all — not to `HEAD`, not to any later SHA. That is the
 realistic slip rather than the collapse above: someone reaching for "latest in
