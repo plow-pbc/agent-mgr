@@ -108,6 +108,11 @@ def dotenv_env(path=DOTENV):
     file the same way it does: canonical KEY=value lines, last-wins
     (hermes_cli/config.py assigns into a dict). Absent means a fresh instance
     and an empty source -- a ${VAR} row still refuses loudly, naming the var.
+
+    ONE spelling, the same one lib/common.sh's dotenv_read pins: KEY=value at
+    column 0, key untouched. A hand edit in some other spelling reads as
+    absent -- the loud failure this repo prefers -- and this parser agreeing
+    with dotenv_read about that is what keeps the fleet at one grammar.
     """
     try:
         text = pathlib.Path(path).read_text()
@@ -118,7 +123,7 @@ def dotenv_env(path=DOTENV):
         if line.startswith("#") or "=" not in line:
             continue
         k, _, v = line.partition("=")
-        out[k.strip()] = v.strip()
+        out[k] = v.strip()
     return out
 
 

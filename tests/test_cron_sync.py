@@ -186,7 +186,10 @@ def test_main_expands_deliver_from_the_gateways_dotenv(tmp_path):
     session's own env never carries the per-instance PLOW_CHAT_* values, which
     is exactly the expansion this feature exists for."""
     dotenv = tmp_path / ".env"
-    dotenv.write_text("# creds\nCHAT=cht_stale\nCHAT=cht_abc\n")
+    # An indented line reads as ABSENT, exactly as common.sh's dotenv_read
+    # reads it: one grammar, KEY=value at column 0, and the two tools must
+    # not disagree about the same file.
+    dotenv.write_text("# creds\nCHAT=cht_stale\nCHAT=cht_abc\n  CHAT=cht_indented\n")
     calls = []
     def runner(argv, **kw):
         calls.append(argv)
