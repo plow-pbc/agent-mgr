@@ -924,6 +924,12 @@ install_plow_plugin() {
     # BEFORE die ran, replacing the gh-auth diagnosis with "1: the caller must
     # say what landed". A caller contract belongs at entry.
     local landed="${1:?install_plow_plugin: the caller must say what landed}"
+    # Every install path migrates before the unified plugin can boot-read the
+    # dotenv: a legacy-only agent otherwise comes back up with no
+    # PLOW_AGENT_TOKEN and silently loses its phone line. Idempotent mode --
+    # values already on the new names are left alone. A home with no dotenv yet
+    # (mid-restore) has nothing to migrate.
+    if [ -f "$AGENT_HOME/.env" ]; then migrate_plow_env; fi
     local ref
     ref="${AGENT_MGR_PLUGIN_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/plow-chat-plugin.ref")}"
     # A SHA, never a branch: a branch would silently re-point a running agent on
