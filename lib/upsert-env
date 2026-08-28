@@ -84,12 +84,16 @@ def upsert(data, keys, values):
 
 
 def parse(data):
-    """First declaration wins, matching upsert's rewrite rule."""
+    """Last declaration wins -- the precedence dotenv_read and the compose
+    env_file loader give a duplicated key, so the value migrated is the value
+    the gateway actually runs with. (upsert's REWRITE keeps the first
+    declaration's position; that is about where the line lands, not which
+    value a read resolves.)"""
     vals = {}
     for line in data.split(b"\n"):
         if b"=" in line:
             key, val = line.split(b"=", 1)
-            vals.setdefault(key, val.strip())
+            vals[key] = val.strip()
     return vals
 
 
