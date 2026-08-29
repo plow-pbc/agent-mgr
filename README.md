@@ -40,7 +40,7 @@ destination instead).
 ```sh
 agent-mgr new errands ~/services/errands-hermes-agent
 agent-mgr restore errands    # the whole deploy: config, plugin, restore hook
-agent-mgr activate errands   # prints a code; text it from the agent's phone
+agent-mgr activate errands   # phone bind, then a line-scoped agent credential
 agent-mgr up errands
 agent-mgr cron-sync errands  # only if its agent.env names a cron spec
 agent-mgr sign-in errands

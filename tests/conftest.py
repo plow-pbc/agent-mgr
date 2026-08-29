@@ -1,9 +1,13 @@
 import contextlib
+import json
 import os
 import pathlib
 import shutil
 import subprocess
 import sys
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -313,6 +317,54 @@ def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
     (b / "curl").write_text(script)
     (b / "curl").chmod(0o755)
     return b
+
+
+class CredentialAPI:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str, object | None, str | None]] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _handle(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length)) if length else None
+                owner.requests.append(
+                    (self.command, self.path, body, self.headers.get("Authorization"))
+                )
+                payload: object = (
+                    {"participants": [{"type": "agent", "line": {"uid": "ln_elm"}}]}
+                    if self.command == "GET"
+                    else {"chat_uids": ["line:ln_elm"]}
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode())
+
+            do_GET = _handle
+            do_PUT = _handle
+
+            def log_message(self, format: str, *args: object) -> None:
+                return None
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever)
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.server.server_port}"
+
+
+@pytest.fixture
+def credential_api() -> Iterator[CredentialAPI]:
+    server = CredentialAPI()
+    server.thread.start()
+    try:
+        yield server
+    finally:
+        server.server.shutdown()
+        server.server.server_close()
+        server.thread.join()
 
 
 
