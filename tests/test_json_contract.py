@@ -106,13 +106,7 @@ def test_every_operation_has_one_json_document_on_stdout(run, instance, tmp_path
     assert result.stderr == ""
 
 
-@pytest.mark.parametrize(
-    "arguments",
-    [
-        ("logs", "rowan"),
-        ("compose", "rowan", "logs", "-f"),
-    ],
-)
+@pytest.mark.parametrize("arguments", [("logs", "rowan"), ("compose", "rowan", "logs", "-f")])
 def test_json_rejects_unbounded_streaming_operations(run, arguments):
     result = run("--json", *arguments)
 

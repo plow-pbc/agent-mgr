@@ -184,11 +184,13 @@ def test_two_agents_may_not_share_a_home(run, instance, tmp_path):
     name-shape test -- self-consistent and wrong. The registry sees it."""
     legacy = tmp_path / "home" / ".hermes"
     legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / ".env").write_text("PLOW_CHAT_TOKEN=do-not-move\n")
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
     run("register", "copycat", str(instance("copycat", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    r = run("restore", "copycat")
+    r = run("migrate-plugin-env", "copycat")
     assert r.returncode != 0
     assert "str is already registered there" in r.stderr
+    assert (legacy / ".env").read_text() == "PLOW_CHAT_TOKEN=do-not-move\n"
 
 
 def test_the_agent_that_declared_it_first_still_works(run, instance, tmp_path):
