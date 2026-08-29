@@ -284,6 +284,41 @@ def test_cloud_reports_missing_environment(run) -> None:
     assert body["error"]["code"] == "configuration_error"
 
 
+@pytest.mark.parametrize(
+    ("key", "value", "secret_marker"),
+    [
+        ("PLOW_API_TOKEN", "private-token-\N{SNOWMAN}", "private-token"),
+        (
+            "PLOW_API_TOKEN",
+            "private-control-token\n",
+            "private-control-token",
+        ),
+        (
+            "PLOW_API_BASE",
+            "https://private-origin-\N{SNOWMAN}.invalid",
+            "private-origin",
+        ),
+    ],
+)
+def test_cloud_reports_unencodable_configuration_as_sanitized_json(
+    run, key: str, value: str, secret_marker: str
+) -> None:
+    environ = {
+        "PLOW_API_BASE": "https://api.example",
+        "PLOW_API_TOKEN": TOKEN,
+    }
+    environ[key] = value
+
+    result = run("--json", "cloud-get", "invalid/id", env=environ)
+
+    assert result.returncode == 1
+    assert result.stderr == ""
+    assert secret_marker not in result.stdout
+    assert secret_marker not in result.stderr
+    body = _json_document(result, "cloud-get")
+    assert body["error"]["code"] == "configuration_error"
+
+
 def test_cloud_reports_remote_detail_without_exposing_the_token(run, cloud_server) -> None:
     cloud_server.respond({"detail": f"credential {TOKEN} is unauthorized"}, status=401)
 
@@ -295,24 +330,67 @@ def test_cloud_reports_remote_detail_without_exposing_the_token(run, cloud_serve
     assert "[redacted]" in body["error"]["message"]
 
 
-def test_cloud_reports_connection_refusal(run) -> None:
-    probe = socket.socket()
-    probe.bind(("127.0.0.1", 0))
-    port = probe.getsockname()[1]
-    probe.close()
+def test_cloud_does_not_reflect_an_unknown_response_field_name(run, cloud_server) -> None:
+    resource = _contract_resources()[0]
+    resource[TOKEN] = True
+    cloud_server.respond(resource)
 
-    result = run(
-        "--json",
-        "cloud-list",
-        env={
-            "PLOW_API_BASE": f"http://127.0.0.1:{port}",
-            "PLOW_API_TOKEN": TOKEN,
-        },
-    )
+    result = run("--json", "cloud-get", resource["agent_id"], env=cloud_server.environment)
+
+    assert result.returncode == 1
+    assert TOKEN not in result.stdout
+    assert TOKEN not in result.stderr
+    body = _json_document(result, "cloud-get")
+    assert body["error"]["code"] == "invalid_response"
+
+
+def test_cloud_reports_connection_refusal(run) -> None:
+    with socket.socket() as refusal_socket:
+        refusal_socket.bind(("127.0.0.1", 0))
+        port = refusal_socket.getsockname()[1]
+        assert refusal_socket.fileno() >= 0
+
+        result = run(
+            "--json",
+            "cloud-list",
+            env={
+                "PLOW_API_BASE": f"http://127.0.0.1:{port}",
+                "PLOW_API_TOKEN": TOKEN,
+            },
+        )
 
     assert result.returncode == 1
     body = _json_document(result, "cloud-list")
     assert body["error"]["code"] == "remote_unreachable"
+
+
+@pytest.mark.parametrize("input_source", ["file", "stdin"])
+def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
+    run, tmp_path, cloud_server, input_source: str
+) -> None:
+    payload = r'{"chat_uids":["\ud800"]}'
+    cloud_server.respond(_contract_resources()[1])
+    source = "-"
+    standard_input = payload
+    if input_source == "file":
+        request = tmp_path / "request.json"
+        request.write_text(payload, encoding="utf-8")
+        source = str(request)
+        standard_input = None
+
+    result = run(
+        "--json",
+        "cloud-create",
+        source,
+        env=cloud_server.environment,
+        input=standard_input,
+    )
+
+    assert result.returncode == 1
+    body = _json_document(result, "cloud-create")
+    assert body["error"]["code"] == "invalid_argument"
+    assert body["error"]["message"] == "chat_uids must contain valid Unicode"
+    assert cloud_server.requests == []
 
 
 def test_cloud_reports_malformed_success_json(run, cloud_server) -> None:

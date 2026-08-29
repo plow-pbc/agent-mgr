@@ -17,13 +17,9 @@ from agent_mgr.models import JsonValue
 @dataclass
 class FakeTransport:
     response: object
-    calls: list[tuple[str, str, dict[str, JsonValue] | None]] = field(
-        default_factory=list
-    )
+    calls: list[tuple[str, str, dict[str, JsonValue] | None]] = field(default_factory=list)
 
-    def request(
-        self, method: str, path: str, body: dict[str, JsonValue] | None = None
-    ) -> object:
+    def request(self, method: str, path: str, body: dict[str, JsonValue] | None = None) -> object:
         self.calls.append((method, path, body))
         return self.response
 
@@ -49,9 +45,7 @@ def test_create_maps_request_and_decodes_resource() -> None:
     result = client.create(request)
 
     assert isinstance(result, CloudAgentResource)
-    assert transport.calls == [
-        ("POST", "/v1/agents/cloud", request.to_json())
-    ]
+    assert transport.calls == [("POST", "/v1/agents/cloud", request.to_json())]
 
 
 def test_list_maps_path_and_decodes_resources() -> None:
@@ -102,19 +96,52 @@ def test_update_chats_maps_request_and_decodes_resource() -> None:
 
     assert isinstance(result, CloudAgentResource)
     assert result == resource()
-    assert transport.calls == [
-        ("PUT", "/v1/agents/cloud/agent-id/chats", request.to_json())
-    ]
+    assert transport.calls == [("PUT", "/v1/agents/cloud/agent-id/chats", request.to_json())]
 
 
-def test_delete_maps_agent_path_and_decodes_resource() -> None:
-    transport = FakeTransport(resource().to_json())
+def test_delete_maps_agent_path_and_decodes_deleted_resource() -> None:
+    deleted = resource().to_json()
+    deleted["status"] = None
+    transport = FakeTransport(deleted)
 
     result = CloudClient(transport).delete("agent-id")
 
     assert isinstance(result, CloudAgentResource)
-    assert result == resource()
+    assert result.status is None
     assert transport.calls == [("DELETE", "/v1/agents/cloud/agent-id", None)]
+
+
+@pytest.mark.parametrize(
+    ("operation", "response_status"),
+    [
+        ("create", None),
+        ("list", None),
+        ("get", None),
+        ("update_chats", None),
+        ("delete", "running"),
+    ],
+)
+def test_resource_status_null_is_scoped_to_delete(
+    operation: str, response_status: str | None
+) -> None:
+    response = resource().to_json()
+    response["status"] = response_status
+    transport = FakeTransport([response] if operation == "list" else response)
+    client = CloudClient(transport)
+
+    with pytest.raises(AgentMgrError) as raised:
+        if operation == "create":
+            client.create(CreateCloudAgentRequest(("chat-a",)))
+        elif operation == "list":
+            client.list()
+        elif operation == "get":
+            client.get("agent-id")
+        elif operation == "update_chats":
+            client.update_chats("agent-id", UpdateCloudAgentChatsRequest(("chat-a",)))
+        else:
+            client.delete("agent-id")
+
+    assert raised.value.code is ErrorCode.INVALID_RESPONSE
 
 
 @pytest.mark.parametrize("agent_id", ["", "agent/id", "../agent", "agent?x=y"])

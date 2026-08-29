@@ -47,4 +47,4 @@ class CloudClient:
 
     def delete(self, agent_id: str) -> CloudAgentResource:
         value = self.transport.request("DELETE", f"{CLOUD_PATH}/{_agent_id(agent_id)}")
-        return CloudAgentResource.from_json(value)
+        return CloudAgentResource.from_delete_json(value)

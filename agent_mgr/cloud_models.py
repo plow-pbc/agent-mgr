@@ -32,6 +32,8 @@ def _object(
     unknown = value.keys() - allowed
     missing = required - value.keys()
     if unknown:
+        if code is ErrorCode.INVALID_RESPONSE:
+            _error(code, "cloud agent response contains unknown fields")
         _error(code, f"unknown fields: {', '.join(sorted(map(str, unknown)))}")
     if missing:
         _error(code, f"missing required fields: {', '.join(sorted(missing))}")
@@ -45,14 +47,23 @@ def _nonempty_string(
 ) -> str:
     if isinstance(value, bool) or not isinstance(value, str) or not value:
         _error(code, f"{field} must be a non-empty string")
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        _error(code, f"{field} must contain valid Unicode")
     return value
 
 
-def _chat_uids(value: object, code: ErrorCode = ErrorCode.INVALID_ARGUMENT) -> tuple[str, ...]:
+def _chat_uids(
+    value: object,
+    code: ErrorCode = ErrorCode.INVALID_ARGUMENT,
+    *,
+    deduplicate: bool = True,
+) -> tuple[str, ...]:
     if not isinstance(value, list):
         _error(code, "chat_uids must be an array")
     validated = [_nonempty_string(item, "chat_uids", code) for item in value]
-    chat_uids = tuple(dict.fromkeys(validated))
+    chat_uids = tuple(dict.fromkeys(validated)) if deduplicate else tuple(validated)
     if not chat_uids:
         _error(code, "chat_uids must not be empty")
     return chat_uids
@@ -104,6 +115,14 @@ class CloudAgentResource:
 
     @classmethod
     def from_json(cls, value: object) -> CloudAgentResource:
+        return cls._from_json(value, expect_deleted=False)
+
+    @classmethod
+    def from_delete_json(cls, value: object) -> CloudAgentResource:
+        return cls._from_json(value, expect_deleted=True)
+
+    @classmethod
+    def _from_json(cls, value: object, *, expect_deleted: bool) -> CloudAgentResource:
         payload = _object(
             value,
             {"agent_id", "chat_uids", "url", "provider", "status", "failure_code"},
@@ -130,6 +149,10 @@ class CloudAgentResource:
 
         status = cast(CloudStatus | None, status_value)
         failure_code = cast(FailureCode | None, failure_code_value)
+        if expect_deleted and status is not None:
+            _error(ErrorCode.INVALID_RESPONSE, "cloud delete response status must be null")
+        if not expect_deleted and status is None:
+            _error(ErrorCode.INVALID_RESPONSE, "cloud resource status must not be null")
         if status == "failed" and failure_code is None:
             _error(ErrorCode.INVALID_RESPONSE, "failed resources require a failure_code")
         if status != "failed" and failure_code is not None:
@@ -137,7 +160,11 @@ class CloudAgentResource:
 
         return cls(
             agent_id=_nonempty_string(payload["agent_id"], "agent_id", ErrorCode.INVALID_RESPONSE),
-            chat_uids=_chat_uids(payload["chat_uids"], ErrorCode.INVALID_RESPONSE),
+            chat_uids=_chat_uids(
+                payload["chat_uids"],
+                ErrorCode.INVALID_RESPONSE,
+                deduplicate=False,
+            ),
             url=_nonempty_string(payload["url"], "url", ErrorCode.INVALID_RESPONSE),
             provider=_nonempty_string(payload["provider"], "provider", ErrorCode.INVALID_RESPONSE),
             status=status,

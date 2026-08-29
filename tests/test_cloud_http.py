@@ -119,7 +119,13 @@ def test_environment_requires_both_cloud_values(missing: str) -> None:
 
 @pytest.mark.parametrize(
     "token",
-    ["secret-token\rX-Injected: yes", "secret-token\nX-Injected: yes"],
+    [
+        "secret-token\rX-Injected: yes",
+        "secret-token\nX-Injected: yes",
+        "secret-token\r",
+        "secret-token\n",
+        "secret-token\t",
+    ],
 )
 def test_environment_rejects_header_control_characters_without_exposing_token(
     token: str,
@@ -129,7 +135,37 @@ def test_environment_rejects_header_control_characters_without_exposing_token(
             {"PLOW_API_BASE": "https://api.example", "PLOW_API_TOKEN": token}
         )
     assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
+    assert str(raised.value) == "PLOW_API_TOKEN contains invalid characters"
     assert "secret-token" not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "secret_marker"),
+    [
+        ("PLOW_API_TOKEN", "private-token-\N{SNOWMAN}", "private-token"),
+        (
+            "PLOW_API_BASE",
+            "https://private-origin-\N{SNOWMAN}.invalid",
+            "private-origin",
+        ),
+    ],
+)
+def test_environment_rejects_non_ascii_configuration_without_disclosure(
+    key: str, value: str, secret_marker: str
+) -> None:
+    environ = {
+        "PLOW_API_BASE": "https://api.example",
+        "PLOW_API_TOKEN": "secret-token",
+    }
+    environ[key] = value
+
+    with pytest.raises(AgentMgrError) as raised:
+        HttpCloudTransport.from_environment(environ)
+
+    assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
+    assert secret_marker not in str(raised.value)
+    assert secret_marker not in repr(raised.value)
     assert raised.value.__cause__ is None
 
 
@@ -216,6 +252,20 @@ def test_transport_sends_authenticated_compact_utf8_json(
     assert headers["authorization"] == "Bearer secret-token"
     assert sum(name.lower() == "authorization" for name, _ in sent.header_items()) == 1
     assert sent.data == b'{"name":"caf\xc3\xa9"}'
+
+
+def test_transport_rejects_a_lone_surrogate_request_body(
+    recording_opener: _RecordingOpener,
+) -> None:
+    with pytest.raises(AgentMgrError) as raised:
+        configured_transport(recording_opener).request(
+            "POST", "/v1/agents/cloud", {"chat_uids": ["\ud800"]}
+        )
+
+    assert raised.value.code is ErrorCode.INVALID_ARGUMENT
+    assert str(raised.value) == "cloud request body is not valid UTF-8 JSON"
+    assert raised.value.__cause__ is None
+    assert recording_opener.requests == []
 
 
 @pytest.mark.parametrize("method", ["GET", "DELETE"])
@@ -363,6 +413,60 @@ def test_transport_does_not_contact_a_real_redirect_target() -> None:
     assert raised.value.code is ErrorCode.REMOTE_REJECTED
     assert source_authorizations == ["Bearer secret-token"]
     assert target_requests == []
+
+
+def test_loopback_transport_bypasses_an_ambient_http_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_authorizations: list[str | None] = []
+    proxy_requests: list[tuple[str, str | None]] = []
+
+    class TargetHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            target_authorizations.append(self.headers.get("Authorization"))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"null")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+    class ProxyHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            proxy_requests.append((self.path, self.headers.get("Authorization")))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"null")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+    with _running_server(TargetHandler) as target, _running_server(ProxyHandler) as proxy:
+        for variable in (
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ):
+            monkeypatch.delenv(variable, raising=False)
+        monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_port}")
+        transport = HttpCloudTransport.from_environment(
+            {
+                "PLOW_API_BASE": f"http://127.0.0.1:{target.server_port}",
+                "PLOW_API_TOKEN": "secret-token",
+            }
+        )
+
+        assert transport.request("GET", "/v1/agents/cloud") is None
+
+    assert target_authorizations == ["Bearer secret-token"]
+    assert proxy_requests == []
 
 
 @pytest.mark.parametrize(

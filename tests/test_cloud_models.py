@@ -27,11 +27,22 @@ def test_create_request_round_trips_the_api_shape() -> None:
 
 
 def test_update_request_deduplicates_chats_in_first_seen_order() -> None:
-    request = UpdateCloudAgentChatsRequest.from_json(
-        {"chat_uids": ["cht_b", "cht_a", "cht_b"]}
-    )
+    request = UpdateCloudAgentChatsRequest.from_json({"chat_uids": ["cht_b", "cht_a", "cht_b"]})
 
     assert request.to_json() == {"chat_uids": ["cht_b", "cht_a"]}
+
+
+def test_resource_preserves_chat_order_and_multiplicity() -> None:
+    raw = {
+        "agent_id": "a" * 32,
+        "chat_uids": ["cht_a", "cht_b", "cht_a"],
+        "url": "https://agent.example",
+        "provider": "exe:hermes",
+        "status": "running",
+        "failure_code": None,
+    }
+
+    assert CloudAgentResource.from_json(raw).to_json() == raw
 
 
 @pytest.mark.parametrize(
@@ -52,21 +63,29 @@ def test_update_request_rejects_every_non_contract_shape(value: object) -> None:
     assert raised.value.code is ErrorCode.INVALID_ARGUMENT
 
 
+def test_request_unknown_field_diagnostic_keeps_the_local_field_name() -> None:
+    with pytest.raises(AgentMgrError) as raised:
+        UpdateCloudAgentChatsRequest.from_json({"chat_uids": ["cht_a"], "surprise": True})
+
+    assert raised.value.code is ErrorCode.INVALID_ARGUMENT
+    assert str(raised.value) == "unknown fields: surprise"
+
+
 @pytest.mark.parametrize(
-    ("status", "failure_code"),
+    ("status", "failure_code", "deleted"),
     [
-        ("running", None),
-        ("provisioning", None),
-        ("teardown", None),
-        (None, None),
-        ("failed", "provider_unreachable"),
-        ("failed", "image_pull_timeout"),
-        ("failed", "setup_failed"),
-        ("failed", "validation_failed"),
-        ("failed", "unknown"),
+        ("running", None, False),
+        ("provisioning", None, False),
+        ("teardown", None, False),
+        (None, None, True),
+        ("failed", "provider_unreachable", False),
+        ("failed", "image_pull_timeout", False),
+        ("failed", "setup_failed", False),
+        ("failed", "validation_failed", False),
+        ("failed", "unknown", False),
     ],
 )
-def test_resource_accepts_every_public_terminal_shape(status, failure_code) -> None:
+def test_resource_accepts_every_public_terminal_shape(status, failure_code, deleted: bool) -> None:
     raw = {
         "agent_id": "a" * 32,
         "chat_uids": ["cht_a"],
@@ -76,7 +95,10 @@ def test_resource_accepts_every_public_terminal_shape(status, failure_code) -> N
         "failure_code": failure_code,
     }
 
-    assert CloudAgentResource.from_json(raw).to_json() == raw
+    resource = (
+        CloudAgentResource.from_delete_json(raw) if deleted else CloudAgentResource.from_json(raw)
+    )
+    assert resource.to_json() == raw
 
 
 @pytest.mark.parametrize(
@@ -114,7 +136,15 @@ def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
     resources = json.loads(fixture.read_text())
 
     assert isinstance(resources, list)
-    assert [CloudAgentResource.from_json(resource).to_json() for resource in resources] == resources
+    decoded = [
+        (
+            CloudAgentResource.from_delete_json(resource)
+            if resource["status"] is None
+            else CloudAgentResource.from_json(resource)
+        ).to_json()
+        for resource in resources
+    ]
+    assert decoded == resources
     assert {resource["status"] for resource in resources} == {
         None,
         "running",

@@ -58,23 +58,31 @@ class HttpCloudTransport:
     @classmethod
     def from_environment(cls, environ: Mapping[str, str]) -> HttpCloudTransport:
         base_url = environ.get("PLOW_API_BASE", "")
-        token = environ.get("PLOW_API_TOKEN", "").strip()
+        raw_token = environ.get("PLOW_API_TOKEN", "")
         if not base_url:
             raise AgentMgrError(
                 ErrorCode.CONFIGURATION_ERROR,
                 "missing required environment variable: PLOW_API_BASE",
             )
+        if not raw_token:
+            raise AgentMgrError(
+                ErrorCode.CONFIGURATION_ERROR,
+                "missing required environment variable: PLOW_API_TOKEN",
+            )
+        if not raw_token.isascii() or any(
+            ord(character) < 0x20 or ord(character) == 0x7F for character in raw_token
+        ):
+            raise AgentMgrError(
+                ErrorCode.CONFIGURATION_ERROR,
+                "PLOW_API_TOKEN contains invalid characters",
+            )
+        token = raw_token.strip()
         if not token:
             raise AgentMgrError(
                 ErrorCode.CONFIGURATION_ERROR,
                 "missing required environment variable: PLOW_API_TOKEN",
             )
-        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in token):
-            raise AgentMgrError(
-                ErrorCode.CONFIGURATION_ERROR,
-                "PLOW_API_TOKEN contains invalid characters",
-            )
-        if _has_unsafe_origin_characters(base_url):
+        if not base_url.isascii() or _has_unsafe_origin_characters(base_url):
             raise _invalid_origin() from None
 
         try:
@@ -107,9 +115,15 @@ class HttpCloudTransport:
 
         encoded_body = None
         if body is not None and method not in {"GET", "DELETE"}:
-            encoded_body = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode(
-                "utf-8"
-            )
+            try:
+                encoded_body = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode(
+                    "utf-8"
+                )
+            except UnicodeEncodeError:
+                raise AgentMgrError(
+                    ErrorCode.INVALID_ARGUMENT,
+                    "cloud request body is not valid UTF-8 JSON",
+                ) from None
         sent = request.Request(
             f"{self.base_url}{path}",
             data=encoded_body,
@@ -120,7 +134,10 @@ class HttpCloudTransport:
             },
             method=method,
         )
-        opener = request.build_opener(_NoRedirect())
+        if urlsplit(self.base_url).scheme == "http":
+            opener = request.build_opener(request.ProxyHandler({}), _NoRedirect())
+        else:
+            opener = request.build_opener(_NoRedirect())
         try:
             with opener.open(sent, timeout=self.timeout_seconds) as response:
                 payload = response.read()
