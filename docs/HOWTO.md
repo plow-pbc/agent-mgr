@@ -124,7 +124,7 @@ because two of them block:
 | 5 | **them** | Plow Latch → Connect a client → mint an agent credential for this agent |
 | 6 | you | put the pair in that same dotenv — the one `agent-mgr resolve bob` names — then `check-latch bob` and `restart bob` |
 | 7 | you | `agent-mgr cron-sync bob` — only if the repo's `agent.env` names a cron spec; the gateway it needs is already up |
-| 8 | **them** | reply to the agent's 👋 from that handset — it runs setup, mints the kiosk and brings the Pi up through Latch over their LAN (no Mac → texts them the two Pi lines) (`life-assistant-hermes-agent` README § Bring-up) |
+| 8 | **them** | reply to the agent's 👋 from that handset — it runs setup, brings the Pi up through Latch on their Mac (same LAN) and writes the wall's token to it (no Mac → texts them the lines to type) (`life-assistant-hermes-agent` README § Bring-up) |
 
 **Neither code can be sent ahead.** `activate` does not return when it prints
 the code; it polls `/v1/auth/activate/redeem` until the text arrives, and the
