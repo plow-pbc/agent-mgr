@@ -24,10 +24,10 @@ name: ${AGENT_PROJECT:?set by agent-mgr from the instance descriptor}
 
 services:
   hermes:
-    # Pinned by digest fleet-wide in runtime/image.ref. A tag would re-resolve
+    # Pinned by digest fleet-wide in runtime/stack.json. A tag would re-resolve
     # on every pull, silently changing a large unreviewed surface under a
     # running agent that holds live credentials.
-    image: ${AGENT_IMAGE:?set by agent-mgr from runtime/image.ref}
+    image: ${AGENT_IMAGE:?set by agent-mgr from runtime/stack.json}
     # Set rather than derived. Without it the project is named after whatever
     # directory the command ran in, so a second checkout is a DIFFERENT project
     # bound to this same home: `down` from the other directory reports success

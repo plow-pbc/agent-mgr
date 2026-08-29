@@ -14,7 +14,7 @@ What differs is the product around it: there, one VM per tenant behind an
 HTTP endpoint; here, one host, many agents, Docker, a person at a terminal.
 Standing up a new agent is a command rather than a copy-paste of the last one.
 
-Install is a clone and a symlink — there is no release and no package:
+Install from a clone and symlink when developing or tracking `main`:
 
 ```sh
 git clone git@github.com:plow-pbc/agent-mgr.git ~/services/agent-mgr
@@ -25,10 +25,12 @@ ln -sf ~/services/agent-mgr/agent-mgr ~/.local/bin/agent-mgr
 `~/.local/bin` must be on your `PATH`. If the clone has no `agent-mgr` script at
 its root, the CLI has not landed on `main` yet.
 
-It runs on the Linux host the fleet lives on and on a Mac, where the floor is
-**macOS 12.3** — the release whose `readlink` grew `-f`, which the entrypoint
-uses to resolve itself through the symlink above before anything else is
-sourced. Everything after that point is portable, and `python3`, `docker` and
+Tagged releases also publish a self-contained `agent-mgr.pyz` and SHA-256
+checksum. Put the downloaded zipapp on `PATH`, make it executable, and verify
+the checksum before running it.
+
+It runs on the Linux host the fleet lives on and on macOS with Python 3.11+.
+`python3`, `docker` and
 an authenticated `gh` have to be on `PATH` — `restore` installs the Plow Chat
 plugin and the pinned fleet skills (`google-workspace`, `plow-invite`) through
 `gh api` for **every** agent, not only one shipping a `skills.tsv` (one whose
@@ -45,6 +47,15 @@ agent-mgr sign-in errands
 agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
 agent-mgr check-latch errands
 ```
+
+Every command accepts `--json`. Reads return typed domain objects; operational
+commands return a versioned envelope with exit status and captured output.
+Errors use stable codes, so automation never has to parse terminal prose:
+
+Machine consumers should always request JSON explicitly. Operational JSON
+detaches terminal stdin: pipe input (for example, `credential-helper | agent-mgr
+--json set-latch errands`), and set `AGENT_TRANSITION_ACK=1` for an intentional
+live transition. `logs` and `compose` reject JSON because they can stream forever.
 
 ## Why it exists
 
@@ -79,7 +90,7 @@ The test for where something belongs: **would a second agent want this?**
 - a recipe that publishes a property map — no, one agent runs it → **its repo**
 - the Plow Chat plugin — yes, every agent → **common**, pinned by SHA
 - a fleet skill — yes, every agent → **common**, one pin per tree in
-  `runtime/*-skill.ref` (the `FLEET_SKILLS` table: the `google-workspace`
+  `runtime/stack.json` (the `google_workspace_skill`
   redirect and the `plow-invite` referral, both sourced from plow-pbc/plow's
   hosted-agent seed; `restore` installs and `install-skill` re-installs each —
   except an agent whose own `skills.tsv` pins that destination, where the
@@ -250,26 +261,13 @@ is ignored, including one `agent-mgr` owns.
 
 ## What this builds on
 
-```
-  plow-pbc/hermes-plow-chat      the plow-chat-platform plugin: the phone line
-            │                    implementing the Plow Chat API (api.plow.co/openapi.json)
-            │                    — and, at an earlier SHA, the activation script
-            │ pinned TWICE, each by 40-char SHA:
-            │   runtime/plow-chat-plugin.ref     the plugin directory
-            │   runtime/plow-chat-activate.ref   create_plow_chat_curl.sh
-            ▼
-        agent-mgr ───── pinned by image digest ─────▶ nousresearch/hermes-agent
-            │                                          (the runtime; third party)
-            └───── the agent's config.yaml ─────▶ Plow Latch, over the relay at api.plow.co
-```
-
 | dependency | what it is | pinned as |
 |---|---|---|
 | [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **`sha256:` digest** |
-| [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, in `runtime/plow-chat-plugin.ref` |
-| the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, in `runtime/plow-chat-activate.ref` |
-| [`plow-pbc/plow`](https://github.com/plow-pbc/plow) | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, in `runtime/google-workspace-skill.ref` |
-| the same repo | the fleet `plow-invite` skill — the delight-triggered referral, one source shared with the hosted-agent image (its seed carries the matching twin pointer) | a **40-char SHA**, in `runtime/plow-invite-skill.ref` |
+| [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, at `artifacts.plow_chat_plugin` in `runtime/stack.json` |
+| the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, at `artifacts.plow_chat_activation` |
+| [`plow-pbc/plow`](https://github.com/plow-pbc/plow) | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, at `artifacts.google_workspace_skill` |
+| the same repo | the fleet `plow-invite` skill — the delight-triggered referral, one source shared with the hosted-agent image (its seed carries the matching twin pointer) | a **40-char SHA**, at `artifacts.plow_invite_skill` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
 All five pins are exact on purpose — a `sha256:` digest for the image, a
@@ -286,10 +284,10 @@ exists only before it. A single shared ref would send the plugin's post-strip
 SHA at the activate URL and 404 — on `activate`, the one command that is a
 one-time irreversible spend. `tests/test_install.py` pins the pairing.
 
-**Of the `hermes-plow-chat` pair, only `runtime/plow-chat-plugin.ref` may be
-bumped** (`runtime/google-workspace-skill.ref` moves freely — it names a
+**Of the `hermes-plow-chat` pair, only `artifacts.plow_chat_plugin` may be
+bumped** (`artifacts.google_workspace_skill` moves freely — it names a
 different repo and nothing pairs with it).
-`runtime/plow-chat-activate.ref` is frozen at a pre-strip commit and must not be
+`artifacts.plow_chat_activation` is frozen at a pre-strip commit and must not be
 bumped forward at all — not to `HEAD`, not to any later SHA. That is the
 realistic slip rather than the collapse above: someone reaching for "latest in
 `hermes-plow-chat`" lands on `HEAD`, where the path this ref names no longer
@@ -308,13 +306,13 @@ it. So the posture is:
 **Converge on the artifacts.** The plugin, the upstream image and the
 integration reference are the *same facts* on both sides, and a fix to one
 should reach the other. The plugin already is one fact: plow's blessed image
-stages it from `runtime/plow-chat-plugin.ref` at build time. Where the two
+can consume the same `runtime/stack.json` coordinate at build time. Where the two
 still fork, it is tracked rather than tolerated:
 
 - [`#2`](https://github.com/plow-pbc/agent-mgr/issues/2) — the upstream image
   pin here drifts from plow's blessed base
 
-**Keep the managers separate.** Provisioning here is a bash CLI over Compose;
+**Keep the managers separate.** Provisioning here is a typed Python CLI over Compose;
 there it is a `Provider` protocol behind an HTTP endpoint. Activation here is a
 code a person texts from the owning handset; there a token is minted
 machine-side. Latch and per-agent repos have no tenant equivalent at all.

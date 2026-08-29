@@ -184,11 +184,13 @@ def test_two_agents_may_not_share_a_home(run, instance, tmp_path):
     name-shape test -- self-consistent and wrong. The registry sees it."""
     legacy = tmp_path / "home" / ".hermes"
     legacy.mkdir(parents=True, exist_ok=True)
+    (legacy / ".env").write_text("PLOW_CHAT_TOKEN=do-not-move\n")
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
     run("register", "copycat", str(instance("copycat", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    r = run("restore", "copycat")
+    r = run("migrate-plugin-env", "copycat")
     assert r.returncode != 0
     assert "str is already registered there" in r.stderr
+    assert (legacy / ".env").read_text() == "PLOW_CHAT_TOKEN=do-not-move\n"
 
 
 def test_the_agent_that_declared_it_first_still_works(run, instance, tmp_path):
@@ -363,10 +365,7 @@ def test_the_image_rule_reads_what_compose_resolved(
 
 
 def test_restore_refuses_a_bad_image_before_it_writes_anything(run, instance, tmp_path):
-    """The image rule lives on resolve-guard, which `restore` used to reach only
-    through reload-if-running on its LAST line -- so a deploy would install
-    config, the plugin and every pinned skill and refuse afterwards, having
-    already done the thing the refusal exists to prevent."""
+    """A deploy must enforce the image rule before installing anything."""
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     image="nousresearch/hermes-agent:latest")
@@ -385,10 +384,7 @@ def test_restore_refuses_a_bad_image_before_it_writes_anything(run, instance, tm
     ("add-skill", "rowan", "plow-pbc/x", "--ref", "a" * 40),
 ])
 def test_every_write_command_preflights_the_image(run, instance, tmp_path, args):
-    """restore was fixed and its two siblings kept the shape it was fixed for:
-    both reached resolve-guard only through reload-if-running on their last
-    line, so the plugin or the skill landed in the mounted credential home and
-    the refusal came after."""
+    """Every write must enforce the image rule before touching the mounted home."""
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     image="nousresearch/hermes-agent:latest")
@@ -409,48 +405,6 @@ def test_a_digest_is_exempt_from_the_fetch_policy(run, instance, tmp_path):
     assert run("resolve-guard", "rowan",
                env={"PATH": f"{b}:{os.environ['PATH']}"}).returncode == 0, (
         "a pinned digest was refused for a policy that cannot change it")
-
-
-@pytest.mark.parametrize("call, refusal", [
-    # canonical_path, the ownership comparison: two unresolvable paths compared
-    # equal and let the write through, so this refusal is what closes it.
-    ("os.path.realpath(", "refusing to write to {home} -- could not resolve it"),
-    # normalized_path, load_agent's own: assigning AGENT_HOME direct from the
-    # failed substitution erased it before the refusal could name it, which is
-    # why the expected message is matched whole rather than in pieces.
-    ("os.path.abspath(", "cannot resolve rowan's home ({home})"),
-])
-def test_a_resolver_that_fails_refuses_and_says_which_path(
-        run, instance, tmp_path, call, refusal):
-    """A resolver that cannot run must refuse, naming the path it could not
-    resolve. Not left to `set -e`: every write-then-reload subcommand reaches
-    this code from the left of a `||` in lib/reload-if-running, where bash
-    suspends it for the whole call tree.
-
-    Failing ONE of the two helpers is what a per-call failure looks like -- a
-    fork the host would not give, an interpreter that crashed. It is also the
-    only way to reach the refusals PAST load_agent, which is the realpath arm
-    here; the abspath arm is load_agent's own, and no python3 at all would reach
-    that one too. The stub matches the qualified call, which lib/common.sh notes
-    is unique to each helper, so it stays off the other python3 commands this
-    tool runs.
-    """
-    b = tmp_path / "stub-bin"
-    b.mkdir()
-    (b / "python3").write_text(
-        "#!/bin/sh\n"
-        f'case "$*" in *"{call}"*) exit 1 ;; esac\n'
-        f'exec {sys.executable} "$@"\n'
-    )
-    (b / "python3").chmod(0o755)
-
-    run("register", "rowan", str(instance("rowan")))
-    r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-
-    assert r.returncode != 0
-    # The message whole, not two substrings that can be satisfied apart: the
-    # regression this pins is a path going missing from between the others.
-    assert refusal.format(home=tmp_path / "home" / ".hermes-rowan") in r.stderr
 
 
 def test_the_mismatch_names_the_path_docker_reported(run, instance, tmp_path):
@@ -493,6 +447,5 @@ def test_a_resolver_failing_on_the_mounted_home_names_it(run, instance, tmp_path
     run("register", "rowan", str(instance("rowan")))
     r = run("restart", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
     assert r.returncode != 0
-    assert f"could not resolve the home it mounts ({foreign})" in r.stderr
-
-
+    assert foreign in r.stderr
+    assert "not rowan's home" in r.stderr

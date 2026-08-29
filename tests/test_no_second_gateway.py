@@ -217,24 +217,11 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
     ("{outside}{sep}{inherited}", "inherits the shadow but resolves ahead of it"),
 ])
 def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
-    """The companion to the fence below: it proves the stub refuses an unstubbed
-    call, this proves an override cannot resolve docker back to the real one.
+    """An override cannot resolve Docker past the suite-owned shadow binary.
 
-    The session fixture shadows the real docker by prepending to os.environ, so
-    it survives the usual override -- f"{mybin}:{os.environ['PATH']}" -- and not
-    the two shapes below. `reload-if-running` was already being invoked with the
-    first; harmless only because that call leaves AGENT_MGR_ROOT unset and bails
-    before compose. Left as a convention the next one is silent, and silent here
-    means a green suite restarting a live gateway.
-
-    The second row is why the check asks which docker the env RESOLVES, not
-    whether the shadow is present: that PATH keeps the shadow in the list and
-    still finds the one ahead of it.
-    """
-    # `ls`, not `restore`: if this fence ever regresses it must run something
-    # that cannot reach a transition. `restore` ends in reload-if-running --
-    # `compose restart` against -p hermes-rowan -- and "inert only because it
-    # dies earlier" is the accident this whole change exists to stop relying on.
+    Checking the resolved binary matters because PATH can retain the shadow
+    while placing another Docker ahead of it."""
+    # `ls`, not a transition: a fence regression must remain harmless.
     # A docker outside the suite's tmp root, which is the whole predicate --
     # built here rather than taken from the host so the fence means the same
     # thing on a machine with docker somewhere else, or with none at all. The

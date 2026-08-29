@@ -1,0 +1,56 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - if: runner.os == 'macOS'
+        run: |
+          brew install docker docker-compose
+          mkdir -p "$HOME/.docker"
+          jq -n --arg directory "$(brew --prefix)/lib/docker/cli-plugins" \
+            '{cliPluginsExtraDirs: [$directory]}' > "$HOME/.docker/config.json"
+          docker compose version
+      - run: uv run --no-project --python ${{ matrix.python }} --with pytest==8.4.2 --with pyyaml==6.0.2 pytest -q
+
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+      - run: uv run --no-project --python 3.13 --with mypy==1.17.1 mypy agent_mgr scripts/build_zipapp.py __main__.py
+      - run: uv run --no-project --python 3.13 --with mypy==1.17.1 mypy lib/fetch-tree
+      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff check agent_mgr scripts/build_zipapp.py __main__.py lib/fetch-tree
+      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff format --check agent_mgr scripts/build_zipapp.py __main__.py lib/fetch-tree
+      - run: python3 scripts/build_zipapp.py /tmp/agent-mgr.pyz
+      - run: tmp=$(mktemp -d); HOME="$tmp" AGENT_MGR_REGISTRY="$tmp/agents" /tmp/agent-mgr.pyz --json ls
+
+  runtime:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.11", "3.13"]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python scripts/build_zipapp.py /tmp/agent-mgr.pyz
+      - run: tmp=$(mktemp -d); HOME="$tmp" AGENT_MGR_REGISTRY="$tmp/agents" python /tmp/agent-mgr.pyz --json ls

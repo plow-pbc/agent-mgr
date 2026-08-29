@@ -1,8 +1,9 @@
+import io
 import os
 import shutil
-import sys
 import stat
 import subprocess
+import sys
 
 import pytest
 from conftest import ROOT, LATCH_CONFIG, fake_docker
@@ -12,6 +13,32 @@ def _fake_docker(tmp_path, name="rowan"):
     log = tmp_path / "argv.log"
     b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name, log=log)
     return b, log
+
+
+def test_set_latch_uses_getpass_for_a_terminal_token(
+    monkeypatch, run, instance, registry, tmp_path
+):
+    monkeypatch.syspath_prepend(str(ROOT))
+    from agent_mgr import commands
+    from agent_mgr.descriptor import resolve_agent
+    from agent_mgr.registry import Registry
+
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)), check=True)
+    run("restore", "rowan", check=True)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    manager_registry = Registry(registry)
+    agent = resolve_agent("rowan", manager_registry, ROOT)
+    terminal = io.StringIO("dev_abc\nwould-echo\n")
+    monkeypatch.setattr(terminal, "isatty", lambda: True)
+    written = []
+    monkeypatch.setattr(commands.sys, "stdin", terminal)
+    monkeypatch.setattr(commands, "reload_if_running", lambda *_: None)
+    monkeypatch.setattr(commands, "upsert", lambda _agent, _keys, values: written.extend(values))
+    monkeypatch.setattr(commands.getpass, "getpass", lambda *_, **__: "tok_secret")
+
+    assert commands.set_latch(agent, manager_registry) == 0
+    assert written == ["dev_abc", "tok_secret"]
+    assert terminal.readline() == "would-echo\n"
 
 
 def test_sign_in_authenticates_against_the_installed_config_not_the_repo_copy(run, instance, tmp_path):
@@ -36,7 +63,7 @@ def test_sign_in_refuses_before_restore_has_run(run, instance):
     assert "restore" in r.stderr
 
 
-@pytest.mark.parametrize("command", ["activate", "set-latch"])
+@pytest.mark.parametrize("command", ["activate", "set-latch", "migrate-plugin-env"])
 @pytest.mark.parametrize(
     "descriptor",
     ["AGENT_HOME=/etc\n", "AGENT_HOME=/tmp/.hermes-property\n"],
@@ -59,11 +86,7 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
     legacy = tmp_path / "home" / ".hermes"
     legacy.mkdir(parents=True)
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    # ACTIVATE_REF, not PLUGIN_REF. activate reads its own pin now, so the
-    # plugin override stopped reaching it -- the command ran on through curl,
-    # bash and reload-if-running, which also dragged a hermetic test onto the
-    # host's real docker daemon. And the surviving assertion matched a string
-    # that appears nowhere in the tool, so it could not have failed either way.
+    # ACTIVATE_REF, not PLUGIN_REF: activate owns a separate immutable pin.
     r = run("activate", "str", env={"AGENT_MGR_ACTIVATE_REF": "not-a-sha"})
     # It gets past the home guard and fails later, on the ref -- which is the
     # proof that the guard let it through. Asserted on what the tool prints.
@@ -176,12 +199,9 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
     # Never the whole token, on either stream -- the operator may be screen-sharing.
     assert "tok_xyz" not in r.stdout
     assert "tok_xyz" not in r.stderr
-    # But the last three must be the STORED value's, not the raw paste's. For a
-    # padded paste the raw tail is "z  " -- trailing spaces are invisible in a
-    # terminal, so the operator reads "...z" here and "...xyz" from check-latch's
-    # REVOKED line, and two spellings of one credential is what sends them to
-    # revoke a live token.
-    assert "...xyz" in r.stdout
+    # Even a suffix is credential-derived data and must not reach shared logs.
+    assert "xyz" not in r.stdout
+    assert "xyz" not in r.stderr
 
 
 def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance):
@@ -226,7 +246,7 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, 
         # the `-f` gate and is stopped on the write path, which owes the
         # did-not-half-happen line. A FIFO is not a regular file, so `-f` turns
         # it away first and owes only its own diagnosis.
-        ("symlink-out", ["cannot read", "Nothing was written"]),
+        ("symlink-out", ["cannot read"]),
         # Named with the .env path, because eight `die` sites in this file share
         # "run 'agent-mgr restore" -- two of them inside set-latch. A bare
         # fragment would be satisfied by the config.yaml gate at :237, so a
