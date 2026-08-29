@@ -1,6 +1,13 @@
 __pycache__/
 .pytest_cache/
-docs/superpowers/
+.worktrees/
+docs/superpowers/*
+!docs/superpowers/plans/
+!docs/superpowers/specs/
+docs/superpowers/plans/*
+docs/superpowers/specs/*
+!docs/superpowers/plans/2026-08-29-cloud-control-plane-alignment.md
+!docs/superpowers/specs/2026-08-29-cloud-control-plane-alignment-design.md
 
 # knightwatch materializes declared review siblings here during a review.
 .siblings/
