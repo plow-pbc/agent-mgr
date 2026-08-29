@@ -46,6 +46,8 @@ def test_the_template_resolves_one_service_bound_to_the_agents_home(tmp_path):
     svc = cfg["services"]["hermes"]
     assert svc["container_name"] == "hermes-test-rowan"
     assert svc["command"] == ["gateway", "run"]
+    assert svc["environment"]["S6_SERVICES_GRACETIME"] == "30000"
+    assert svc["stop_grace_period"] == "35s"
     homes = [v["source"] for v in svc["volumes"] if v["target"] == "/opt/data"]
     assert homes == [str(tmp_path / ".hermes-test-rowan")]
 

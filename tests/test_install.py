@@ -493,6 +493,29 @@ def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, insta
     assert "restarting rowan's gateway" in r.stdout, r.stdout
 
 
+def test_restart_and_restore_reload_recreate_the_container(run, instance, tmp_path):
+    """A Compose template change reaches existing agents only on recreation."""
+    from conftest import fake_docker
+
+    run("register", "rowan", str(instance("rowan")))
+    log = tmp_path / "docker-argv"
+    b = fake_docker(
+        tmp_path,
+        home=tmp_path / "home" / ".hermes-rowan",
+        name="rowan",
+        log=log,
+    )
+    env = {"PATH": f"{b}:{os.environ['PATH']}"}
+
+    for command in (("restart", "rowan"), ("restore", "rowan")):
+        log.write_text("")
+        r = run(*command, env=env)
+        assert r.returncode == 0, r.stderr
+        assert any(
+            line.endswith("up -d --force-recreate hermes") for line in log.read_text().splitlines()
+        ), f"{command[0]} did not recreate the container:\n{log.read_text()}"
+
+
 def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_path):
     """restore's preflight rule: a command that installs everything before
     refusing has already done the thing the refusal exists to prevent. The

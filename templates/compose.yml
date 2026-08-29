@@ -34,6 +34,13 @@ services:
     # having stopped nothing.
     container_name: ${AGENT_CONTAINER:?set by agent-mgr from the instance descriptor}
     restart: unless-stopped
+    # Hermes interrupts in-flight work on SIGTERM, then checkpoints the session
+    # and releases any compression lease before exiting. s6-overlay otherwise
+    # gives that service only 3s before continuing shutdown; Docker then sees an
+    # unclean exit and the replacement gateway cannot append to that transcript
+    # until the orphaned lease expires. Bound cleanup at 30s, and keep Docker's
+    # outer deadline beyond it so s6 remains the owner of escalation.
+    stop_grace_period: 35s
     command: ["gateway", "run"]
     volumes:
       # This agent's own home, and the only mount the template makes.
@@ -54,6 +61,7 @@ services:
       - HERMES_UID=${HERMES_UID:?run this through agent-mgr, which sets it}
       - HERMES_GID=${HERMES_GID:?run this through agent-mgr, which sets it}
       - TZ=${AGENT_TZ:?set by agent-mgr, defaulting to America/Los_Angeles}
+      - S6_SERVICES_GRACETIME=30000
       # No credentials here, deliberately, and this is the whole contract for
       # them: the gateway reads /opt/data/.env, which is the agent's own home
       # through the mount above. Passing them here would interpolate from the
