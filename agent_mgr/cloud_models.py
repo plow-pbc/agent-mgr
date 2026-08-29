@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, NoReturn, TypeAlias, cast
+from enum import StrEnum
+from typing import NoReturn
 
 from agent_mgr.errors import AgentMgrError, ErrorCode
 from agent_mgr.models import JsonValue
 
-CloudStatus: TypeAlias = Literal["running", "provisioning", "teardown", "failed"]
-FailureCode: TypeAlias = Literal[
-    "provider_unreachable",
-    "image_pull_timeout",
-    "setup_failed",
-    "validation_failed",
-    "unknown",
-]
+
+class CloudStatus(StrEnum):
+    RUNNING = "running"
+    PROVISIONING = "provisioning"
+    TEARDOWN = "teardown"
+    FAILED = "failed"
+
+
+class FailureCode(StrEnum):
+    PROVIDER_UNREACHABLE = "provider_unreachable"
+    IMAGE_PULL_TIMEOUT = "image_pull_timeout"
+    SETUP_FAILED = "setup_failed"
+    VALIDATION_FAILED = "validation_failed"
+    UNKNOWN = "unknown"
 
 
 def _error(code: ErrorCode, message: str) -> NoReturn:
@@ -132,30 +139,24 @@ class CloudAgentResource:
         status_value = payload["status"]
         failure_code_value = payload["failure_code"]
         if status_value is not None and not isinstance(status_value, str):
-            _error(ErrorCode.INVALID_RESPONSE, "status must be a string or null")
-        if failure_code_value is not None and not isinstance(failure_code_value, str):
-            _error(ErrorCode.INVALID_RESPONSE, "failure_code must be a string or null")
-        if status_value not in {"running", "provisioning", "teardown", "failed", None}:
             _error(ErrorCode.INVALID_RESPONSE, "status is not a public cloud status")
-        if failure_code_value not in {
-            "provider_unreachable",
-            "image_pull_timeout",
-            "setup_failed",
-            "validation_failed",
-            "unknown",
-            None,
-        }:
+        if failure_code_value is not None and not isinstance(failure_code_value, str):
             _error(ErrorCode.INVALID_RESPONSE, "failure_code is not a public failure code")
-
-        status = cast(CloudStatus | None, status_value)
-        failure_code = cast(FailureCode | None, failure_code_value)
+        try:
+            status = None if status_value is None else CloudStatus(status_value)
+        except ValueError:
+            _error(ErrorCode.INVALID_RESPONSE, "status is not a public cloud status")
+        try:
+            failure_code = None if failure_code_value is None else FailureCode(failure_code_value)
+        except ValueError:
+            _error(ErrorCode.INVALID_RESPONSE, "failure_code is not a public failure code")
         if expect_deleted and status is not None:
             _error(ErrorCode.INVALID_RESPONSE, "cloud delete response status must be null")
         if not expect_deleted and status is None:
             _error(ErrorCode.INVALID_RESPONSE, "cloud resource status must not be null")
-        if status == "failed" and failure_code is None:
+        if status is CloudStatus.FAILED and failure_code is None:
             _error(ErrorCode.INVALID_RESPONSE, "failed resources require a failure_code")
-        if status != "failed" and failure_code is not None:
+        if status is not CloudStatus.FAILED and failure_code is not None:
             _error(ErrorCode.INVALID_RESPONSE, "only failed resources may have a failure_code")
 
         return cls(
@@ -177,6 +178,6 @@ class CloudAgentResource:
             "chat_uids": list(self.chat_uids),
             "url": self.url,
             "provider": self.provider,
-            "status": self.status,
-            "failure_code": self.failure_code,
+            "status": None if self.status is None else self.status.value,
+            "failure_code": None if self.failure_code is None else self.failure_code.value,
         }

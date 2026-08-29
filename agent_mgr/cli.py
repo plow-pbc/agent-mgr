@@ -109,28 +109,15 @@ def _need(args: list[str], count: int, usage: str) -> None:
         raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"usage: {usage}")
 
 
-def _json_input(source: str) -> object:
-    if source == "-":
-        if sys.stdin.isatty():
-            raise AgentMgrError(
-                ErrorCode.INVALID_ARGUMENT,
-                "refusing to wait for cloud JSON on an interactive terminal",
-                "pipe a JSON object or pass a file path",
-                2,
-            )
-        text = sys.stdin.read()
-    else:
-        try:
-            text = Path(source).read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            raise AgentMgrError(
-                ErrorCode.INVALID_ARGUMENT,
-                "cloud request file is not valid UTF-8",
-            ) from None
-        except OSError as error:
-            raise AgentMgrError(
-                ErrorCode.IO_ERROR, f"could not read cloud request: {error}"
-            ) from error
+def _json_input() -> object:
+    if sys.stdin.isatty():
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            "refusing to wait for cloud JSON on an interactive terminal",
+            "pipe a JSON object on stdin",
+            2,
+        )
+    text = sys.stdin.read()
     try:
         return json.loads(text)
     except json.JSONDecodeError as error:
@@ -149,10 +136,10 @@ def _usage(stream: TextIO = sys.stdout) -> None:
   check-connectors | migrate-plugin-env
   backup-homes | prune-backups
   up | down | restart | logs | agent | compose | resolve-guard
-  cloud-create <request.json|->
+  cloud-create
   cloud-list
   cloud-get <agent-id>
-  cloud-update-chats <agent-id> <request.json|->
+  cloud-update-chats <agent-id>
   cloud-delete <agent-id>""",
         file=stream,
     )
@@ -160,8 +147,8 @@ def _usage(stream: TextIO = sys.stdout) -> None:
 
 def _run(operation: str, args: list[str], json_output: bool, registry: Registry) -> int:
     if operation == "cloud-create":
-        _need(args, 1, "agent-mgr --json cloud-create <request.json|->")
-        create_request = CreateCloudAgentRequest.from_json(_json_input(args[0]))
+        _need(args, 0, "agent-mgr --json cloud-create")
+        create_request = CreateCloudAgentRequest.from_json(_json_input())
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
         try:
             resource = client.create(create_request)
@@ -187,19 +174,25 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         _emit(operation, {"agent": client.get(args[0]).to_json()})
         return 0
     if operation == "cloud-update-chats":
-        _need(
-            args,
-            2,
-            "agent-mgr --json cloud-update-chats <agent-id> <request.json|->",
-        )
-        update_request = UpdateCloudAgentChatsRequest.from_json(_json_input(args[1]))
+        _need(args, 1, "agent-mgr --json cloud-update-chats <agent-id>")
+        update_request = UpdateCloudAgentChatsRequest.from_json(_json_input())
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
         _emit(operation, {"agent": client.update_chats(args[0], update_request).to_json()})
         return 0
     if operation == "cloud-delete":
         _need(args, 1, "agent-mgr --json cloud-delete <agent-id>")
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        _emit(operation, {"agent": client.delete(args[0]).to_json()})
+        try:
+            resource = client.delete(args[0])
+        except AgentMgrError as error:
+            if error.code in {ErrorCode.INVALID_RESPONSE, ErrorCode.REMOTE_UNREACHABLE}:
+                raise AgentMgrError(
+                    error.code,
+                    error.message,
+                    "deletion may have succeeded; run agent-mgr --json cloud-list before retrying",
+                ) from None
+            raise
+        _emit(operation, {"agent": resource.to_json()})
         return 0
     if operation == "ls":
         _need(args, 0, "agent-mgr ls")

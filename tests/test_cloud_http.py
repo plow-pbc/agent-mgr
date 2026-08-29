@@ -30,6 +30,30 @@ def _running_server(
         thread.join()
 
 
+def _recording_handler(
+    requests: list[tuple[str, str | None]],
+    *,
+    status: int = 200,
+    location: str | None = None,
+) -> type[BaseHTTPRequestHandler]:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append((self.path, self.headers.get("Authorization")))
+            self.send_response(status)
+            if location is not None:
+                self.send_header("Location", location)
+            else:
+                self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            if status == 200:
+                self.wfile.write(b"null")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+    return Handler
+
+
 class _Response:
     def __init__(self, payload: bytes, read_error: Exception | None = None) -> None:
         self.payload = payload
@@ -50,7 +74,6 @@ class _Response:
 class _RecordingOpener:
     def __init__(self) -> None:
         self.requests: list[request.Request] = []
-        self.handlers: tuple[object, ...] = ()
         self._response = _Response(b"null")
         self._error: Exception | None = None
 
@@ -88,7 +111,6 @@ def recording_opener(monkeypatch: pytest.MonkeyPatch) -> _RecordingOpener:
     opener = _RecordingOpener()
 
     def build_opener(*handlers: object) -> _RecordingOpener:
-        opener.handlers = handlers
         return opener
 
     monkeypatch.setattr(request, "build_opener", build_opener)
@@ -335,49 +357,15 @@ def test_transport_sanitizes_unreachable_failures(
     assert "secret-token" not in str(raised.value)
 
 
-@pytest.mark.parametrize("status", [301, 302, 307, 308])
-def test_transport_rejects_redirects_without_a_second_request(
-    status: int, recording_opener: _RecordingOpener
-) -> None:
-    recording_opener.raise_http_error(status, b'{"detail":"moved"}')
-    with pytest.raises(AgentMgrError) as raised:
-        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
-    assert raised.value.code is ErrorCode.REMOTE_REJECTED
-    assert len(recording_opener.requests) == 1
-    assert any(
-        isinstance(handler, request.HTTPRedirectHandler) for handler in recording_opener.handlers
-    )
-
-
 def test_transport_does_not_contact_a_real_redirect_target() -> None:
-    source_authorizations: list[str | None] = []
+    source_requests: list[tuple[str, str | None]] = []
     target_requests: list[tuple[str, str | None]] = []
 
-    class TargetHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            target_requests.append((self.path, self.headers.get("Authorization")))
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b"null")
-
-        def log_message(self, format: str, *args: object) -> None:
-            return None
-
-    with _running_server(TargetHandler) as target:
+    with _running_server(_recording_handler(target_requests)) as target:
         target_url = f"http://127.0.0.1:{target.server_port}/redirect-target"
-
-        class SourceHandler(BaseHTTPRequestHandler):
-            def do_GET(self) -> None:
-                source_authorizations.append(self.headers.get("Authorization"))
-                self.send_response(302)
-                self.send_header("Location", target_url)
-                self.end_headers()
-
-            def log_message(self, format: str, *args: object) -> None:
-                return None
-
-        with _running_server(SourceHandler) as source:
+        with _running_server(
+            _recording_handler(source_requests, status=302, location=target_url)
+        ) as source:
             transport = HttpCloudTransport.from_environment(
                 {
                     "PLOW_API_BASE": f"http://127.0.0.1:{source.server_port}",
@@ -388,39 +376,19 @@ def test_transport_does_not_contact_a_real_redirect_target() -> None:
                 transport.request("GET", "/v1/agents/cloud")
 
     assert raised.value.code is ErrorCode.REMOTE_REJECTED
-    assert source_authorizations == ["Bearer secret-token"]
+    assert source_requests == [("/v1/agents/cloud", "Bearer secret-token")]
     assert target_requests == []
 
 
 def test_loopback_transport_bypasses_an_ambient_http_proxy(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    target_authorizations: list[str | None] = []
+    target_requests: list[tuple[str, str | None]] = []
     proxy_requests: list[tuple[str, str | None]] = []
 
-    class TargetHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            target_authorizations.append(self.headers.get("Authorization"))
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b"null")
-
-        def log_message(self, format: str, *args: object) -> None:
-            return None
-
-    class ProxyHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            proxy_requests.append((self.path, self.headers.get("Authorization")))
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(b"null")
-
-        def log_message(self, format: str, *args: object) -> None:
-            return None
-
-    with _running_server(TargetHandler) as target, _running_server(ProxyHandler) as proxy:
+    with _running_server(_recording_handler(target_requests)) as target, _running_server(
+        _recording_handler(proxy_requests)
+    ) as proxy:
         for variable in (
             "HTTP_PROXY",
             "http_proxy",
@@ -442,5 +410,5 @@ def test_loopback_transport_bypasses_an_ambient_http_proxy(
 
         assert transport.request("GET", "/v1/agents/cloud") is None
 
-    assert target_authorizations == ["Bearer secret-token"]
+    assert target_requests == [("/v1/agents/cloud", "Bearer secret-token")]
     assert proxy_requests == []

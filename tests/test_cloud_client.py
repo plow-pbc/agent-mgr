@@ -94,39 +94,6 @@ def test_list_rejects_object_items() -> None:
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
 
 
-@pytest.mark.parametrize(
-    ("operation", "response_status"),
-    [
-        ("create", None),
-        ("list", None),
-        ("get", None),
-        ("update_chats", None),
-        ("delete", "running"),
-    ],
-)
-def test_resource_status_null_is_scoped_to_delete(
-    operation: str, response_status: str | None
-) -> None:
-    response = resource().to_json()
-    response["status"] = response_status
-    transport = FakeTransport([response] if operation == "list" else response)
-    client = CloudClient(transport)
-
-    with pytest.raises(AgentMgrError) as raised:
-        if operation == "create":
-            client.create(CreateCloudAgentRequest(("chat-a",)))
-        elif operation == "list":
-            client.list()
-        elif operation == "get":
-            client.get("agent-id")
-        elif operation == "update_chats":
-            client.update_chats("agent-id", UpdateCloudAgentChatsRequest(("chat-a",)))
-        else:
-            client.delete("agent-id")
-
-    assert raised.value.code is ErrorCode.INVALID_RESPONSE
-
-
 @pytest.mark.parametrize("agent_id", ["", "agent/id", "../agent", "agent?x=y"])
 def test_agent_id_validation_happens_before_transport(agent_id: str) -> None:
     transport = FakeTransport(resource().to_json())

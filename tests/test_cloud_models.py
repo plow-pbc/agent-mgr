@@ -8,7 +8,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from agent_mgr.cloud_models import (
     CloudAgentResource,
+    CloudStatus,
     CreateCloudAgentRequest,
+    FailureCode,
     UpdateCloudAgentChatsRequest,
 )
 from agent_mgr.errors import AgentMgrError, ErrorCode
@@ -42,7 +44,11 @@ def test_resource_preserves_chat_order_and_multiplicity() -> None:
         "failure_code": None,
     }
 
-    assert CloudAgentResource.from_json(raw).to_json() == raw
+    resource = CloudAgentResource.from_json(raw)
+
+    assert resource.status is CloudStatus.RUNNING
+    assert resource.failure_code is None
+    assert resource.to_json() == raw
 
 
 @pytest.mark.parametrize(
@@ -101,6 +107,38 @@ def test_resource_rejects_inconsistent_or_open_ended_states(status, failure_code
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
 
 
+def test_live_resource_rejects_null_status() -> None:
+    raw = {
+        "agent_id": "a" * 32,
+        "chat_uids": ["cht_a"],
+        "url": "https://agent.example",
+        "provider": "exe:hermes",
+        "status": None,
+        "failure_code": None,
+    }
+
+    with pytest.raises(AgentMgrError) as raised:
+        CloudAgentResource.from_json(raw)
+
+    assert raised.value.code is ErrorCode.INVALID_RESPONSE
+
+
+def test_deleted_resource_rejects_live_status() -> None:
+    raw = {
+        "agent_id": "a" * 32,
+        "chat_uids": ["cht_a"],
+        "url": "https://agent.example",
+        "provider": "exe:hermes",
+        "status": "running",
+        "failure_code": None,
+    }
+
+    with pytest.raises(AgentMgrError) as raised:
+        CloudAgentResource.from_delete_json(raw)
+
+    assert raised.value.code is ErrorCode.INVALID_RESPONSE
+
+
 def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
     fixture = Path(__file__).parent / "fixtures" / "cloud-agent-contract.json"
     resources = json.loads(fixture.read_text())
@@ -125,6 +163,19 @@ def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
     assert {
         resource["failure_code"] for resource in resources if resource["failure_code"] is not None
     } == {
+        "provider_unreachable",
+        "image_pull_timeout",
+        "setup_failed",
+        "validation_failed",
+        "unknown",
+    }
+    assert {status.value for status in CloudStatus} == {
+        "running",
+        "provisioning",
+        "teardown",
+        "failed",
+    }
+    assert {code.value for code in FailureCode} == {
         "provider_unreachable",
         "image_pull_timeout",
         "setup_failed",

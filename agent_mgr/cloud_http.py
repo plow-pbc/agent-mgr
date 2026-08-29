@@ -53,7 +53,6 @@ class CloudTransport(Protocol):
 class HttpCloudTransport:
     base_url: str
     token: str = field(repr=False)
-    timeout_seconds: float = 30.0
 
     @classmethod
     def from_environment(cls, environ: Mapping[str, str]) -> HttpCloudTransport:
@@ -127,7 +126,7 @@ class HttpCloudTransport:
         else:
             opener = request.build_opener(_NoRedirect())
         try:
-            with opener.open(sent, timeout=self.timeout_seconds) as response:
+            with opener.open(sent, timeout=30) as response:
                 payload = response.read()
         except error.HTTPError as http_error:
             message = f"Plow API rejected the request ({http_error.code})"

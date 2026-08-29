@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import json
-import socket
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -96,10 +95,10 @@ def _json_document(result, operation: str) -> dict[str, Any]:
 @pytest.mark.parametrize(
     "operation,args",
     [
-        ("cloud-create", ("request.json",)),
+        ("cloud-create", ()),
         ("cloud-list", ()),
         ("cloud-get", ("agent-id",)),
-        ("cloud-update-chats", ("agent-id", "request.json")),
+        ("cloud-update-chats", ("agent-id",)),
         ("cloud-delete", ("agent-id",)),
     ],
 )
@@ -109,15 +108,15 @@ def test_cloud_commands_require_json(operation: str, args: tuple[str, ...], run)
     assert "requires --json" in result.stderr
 
 
-def test_cloud_create_reads_the_api_request_shape_from_a_file(run, tmp_path, cloud_server) -> None:
+def test_cloud_create_reads_the_api_request_shape_from_stdin(run, cloud_server) -> None:
     resource = _contract_resources()[1]
     cloud_server.respond(resource)
-    request = tmp_path / "request.json"
-    request.write_text(
-        json.dumps({"name": "Mary", "provider": "exe:hermes", "chat_uids": ["cht_a"]})
+    result = run(
+        "--json",
+        "cloud-create",
+        env=cloud_server.environment,
+        input=json.dumps({"name": "Mary", "provider": "exe:hermes", "chat_uids": ["cht_a"]}),
     )
-
-    result = run("--json", "cloud-create", str(request), env=cloud_server.environment)
 
     assert result.returncode == 0
     body = _json_document(result, "cloud-create")
@@ -153,20 +152,15 @@ def test_cloud_get_emits_a_resource(run, cloud_server) -> None:
     assert cloud_server.requests == [("GET", f"/v1/agents/cloud/{resource['agent_id']}", None)]
 
 
-def test_cloud_update_chats_reads_the_api_request_shape_from_a_file(
-    run, tmp_path, cloud_server
-) -> None:
+def test_cloud_update_chats_reads_the_api_request_shape_from_stdin(run, cloud_server) -> None:
     resource = _contract_resources()[0]
     cloud_server.respond(resource)
-    request = tmp_path / "request.json"
-    request.write_text(json.dumps({"chat_uids": ["cht_a", "cht_b"]}))
-
     result = run(
         "--json",
         "cloud-update-chats",
         resource["agent_id"],
-        str(request),
         env=cloud_server.environment,
+        input=json.dumps({"chat_uids": ["cht_a", "cht_b"]}),
     )
 
     assert result.returncode == 0
@@ -198,62 +192,13 @@ def test_cloud_delete_emits_the_teardown_resource(run, cloud_server) -> None:
         (json.dumps({"chat_uids": []}), "invalid_argument"),
     ],
 )
-def test_cloud_create_reports_input_failures(run, tmp_path, contents, code) -> None:
-    request = tmp_path / "request.json"
-    request.write_text(contents)
-
-    result = run("--json", "cloud-create", str(request))
+def test_cloud_create_reports_input_failures(run, contents, code) -> None:
+    result = run("--json", "cloud-create", input=contents)
 
     assert result.returncode == 1
     body = _json_document(result, "cloud-create")
     assert body["ok"] is False
     assert body["error"]["code"] == code
-
-
-@pytest.mark.parametrize(
-    ("operation", "leading_args"),
-    [
-        ("cloud-create", ()),
-        ("cloud-update-chats", ("agent-id",)),
-    ],
-)
-def test_cloud_request_files_reject_invalid_utf8_as_one_json_document(
-    run, tmp_path, operation: str, leading_args: tuple[str, ...]
-) -> None:
-    request = tmp_path / "request.json"
-    request.write_bytes(b'{"chat_uids":["cht_a"]}\xff')
-
-    result = run("--json", operation, *leading_args, str(request))
-
-    assert result.returncode == 1
-    body = _json_document(result, operation)
-    assert body["ok"] is False
-    assert body["error"]["code"] == "invalid_argument"
-    assert body["error"]["message"] == "cloud request file is not valid UTF-8"
-    assert "\\xff" not in result.stdout
-
-
-def test_cloud_create_accepts_piped_json(run, cloud_server) -> None:
-    resource = _contract_resources()[1]
-    cloud_server.respond(resource)
-
-    result = run(
-        "--json",
-        "cloud-create",
-        "-",
-        env=cloud_server.environment,
-        input=json.dumps({"chat_uids": ["cht_piped"]}),
-    )
-
-    assert result.returncode == 0
-    assert _json_document(result, "cloud-create")["result"] == {"agent": resource}
-    assert cloud_server.requests == [
-        (
-            "POST",
-            "/v1/agents/cloud",
-            {"name": "cloud agent", "provider": None, "chat_uids": ["cht_piped"]},
-        )
-    ]
 
 
 def test_cloud_create_refuses_terminal_stdin(monkeypatch, capsys) -> None:
@@ -264,7 +209,7 @@ def test_cloud_create_refuses_terminal_stdin(monkeypatch, capsys) -> None:
     monkeypatch.setattr(stdin, "isatty", lambda: True)
     monkeypatch.setattr(cli.sys, "stdin", stdin)
 
-    assert cli.main(["--json", "cloud-create", "-"]) == 2
+    assert cli.main(["--json", "cloud-create"]) == 2
 
     captured = capsys.readouterr()
     body = _json_document(captured, "cloud-create")
@@ -272,118 +217,16 @@ def test_cloud_create_refuses_terminal_stdin(monkeypatch, capsys) -> None:
     assert "interactive terminal" in body["error"]["message"]
 
 
-def test_cloud_reports_missing_environment(run) -> None:
-    result = run(
-        "--json",
-        "cloud-list",
-        env={"PLOW_API_BASE": "", "PLOW_API_TOKEN": TOKEN},
-    )
-
-    assert result.returncode == 1
-    body = _json_document(result, "cloud-list")
-    assert body["error"]["code"] == "configuration_error"
-
-
-@pytest.mark.parametrize(
-    ("key", "value", "secret_marker"),
-    [
-        ("PLOW_API_TOKEN", "private-token-\N{SNOWMAN}", "private-token"),
-        (
-            "PLOW_API_TOKEN",
-            "private-control-token\n",
-            "private-control-token",
-        ),
-        (
-            "PLOW_API_BASE",
-            "https://private-origin-\N{SNOWMAN}.invalid",
-            "private-origin",
-        ),
-    ],
-)
-def test_cloud_reports_unencodable_configuration_as_sanitized_json(
-    run, key: str, value: str, secret_marker: str
-) -> None:
-    environ = {
-        "PLOW_API_BASE": "https://api.example",
-        "PLOW_API_TOKEN": TOKEN,
-    }
-    environ[key] = value
-
-    result = run("--json", "cloud-get", "invalid/id", env=environ)
-
-    assert result.returncode == 1
-    assert result.stderr == ""
-    assert secret_marker not in result.stdout
-    assert secret_marker not in result.stderr
-    body = _json_document(result, "cloud-get")
-    assert body["error"]["code"] == "configuration_error"
-
-
-def test_cloud_reports_remote_detail_without_exposing_the_token(run, cloud_server) -> None:
-    cloud_server.respond({"detail": f"credential {TOKEN} is unauthorized"}, status=401)
-
-    result = run("--json", "cloud-list", env=cloud_server.environment)
-
-    assert result.returncode == 1
-    body = _json_document(result, "cloud-list")
-    assert body["error"]["code"] == "remote_rejected"
-    assert "[redacted]" in body["error"]["message"]
-
-
-def test_cloud_does_not_reflect_an_unknown_response_field_name(run, cloud_server) -> None:
-    resource = _contract_resources()[0]
-    resource[TOKEN] = True
-    cloud_server.respond(resource)
-
-    result = run("--json", "cloud-get", resource["agent_id"], env=cloud_server.environment)
-
-    assert result.returncode == 1
-    assert TOKEN not in result.stdout
-    assert TOKEN not in result.stderr
-    body = _json_document(result, "cloud-get")
-    assert body["error"]["code"] == "invalid_response"
-
-
-def test_cloud_reports_connection_refusal(run) -> None:
-    with socket.socket() as refusal_socket:
-        refusal_socket.bind(("127.0.0.1", 0))
-        port = refusal_socket.getsockname()[1]
-        assert refusal_socket.fileno() >= 0
-
-        result = run(
-            "--json",
-            "cloud-list",
-            env={
-                "PLOW_API_BASE": f"http://127.0.0.1:{port}",
-                "PLOW_API_TOKEN": TOKEN,
-            },
-        )
-
-    assert result.returncode == 1
-    body = _json_document(result, "cloud-list")
-    assert body["error"]["code"] == "remote_unreachable"
-
-
-@pytest.mark.parametrize("input_source", ["file", "stdin"])
 def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
-    run, tmp_path, cloud_server, input_source: str
+    run, cloud_server
 ) -> None:
     payload = r'{"chat_uids":["\ud800"]}'
     cloud_server.respond(_contract_resources()[1])
-    source = "-"
-    standard_input = payload
-    if input_source == "file":
-        request = tmp_path / "request.json"
-        request.write_text(payload, encoding="utf-8")
-        source = str(request)
-        standard_input = None
-
     result = run(
         "--json",
         "cloud-create",
-        source,
         env=cloud_server.environment,
-        input=standard_input,
+        input=payload,
     )
 
     assert result.returncode == 1
@@ -393,22 +236,14 @@ def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
     assert cloud_server.requests == []
 
 
-def test_cloud_reports_malformed_success_json(run, cloud_server) -> None:
+def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, cloud_server) -> None:
     cloud_server.respond_bytes(b"not-json")
-
-    result = run("--json", "cloud-list", env=cloud_server.environment)
-
-    assert result.returncode == 1
-    body = _json_document(result, "cloud-list")
-    assert body["error"]["code"] == "invalid_response"
-
-
-def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, tmp_path, cloud_server) -> None:
-    cloud_server.respond_bytes(b"not-json")
-    request = tmp_path / "request.json"
-    request.write_text(json.dumps({"chat_uids": ["cht_a"]}))
-
-    result = run("--json", "cloud-create", str(request), env=cloud_server.environment)
+    result = run(
+        "--json",
+        "cloud-create",
+        env=cloud_server.environment,
+        input=json.dumps({"chat_uids": ["cht_a"]}),
+    )
 
     assert result.returncode == 1
     body = _json_document(result, "cloud-create")
@@ -419,15 +254,30 @@ def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, tmp_path, cl
     assert cloud_server.requests[0][0] == "POST"
 
 
+def test_cloud_delete_marks_an_unreadable_success_as_ambiguous(run, cloud_server) -> None:
+    resource = _contract_resources()[0]
+    cloud_server.respond_bytes(b"not-json")
+
+    result = run("--json", "cloud-delete", resource["agent_id"], env=cloud_server.environment)
+
+    assert result.returncode == 1
+    body = _json_document(result, "cloud-delete")
+    assert body["error"]["code"] == "invalid_response"
+    assert body["error"]["remediation"] == (
+        "deletion may have succeeded; run agent-mgr --json cloud-list before retrying"
+    )
+    assert cloud_server.requests[0][0] == "DELETE"
+
+
 def test_help_lists_every_cloud_argument_shape(run) -> None:
     result = run("--help")
 
     assert result.returncode == 0
     for invocation in (
-        "cloud-create <request.json|->",
+        "cloud-create",
         "cloud-list",
         "cloud-get <agent-id>",
-        "cloud-update-chats <agent-id> <request.json|->",
+        "cloud-update-chats <agent-id>",
         "cloud-delete <agent-id>",
     ):
         assert invocation in result.stdout

@@ -66,11 +66,11 @@ export PLOW_API_BASE=https://api.plow.co
 read -rsp 'Plow API token: ' PLOW_API_TOKEN; export PLOW_API_TOKEN
 
 printf '%s\n' '{"name":"Mary","provider":"exe:hermes","chat_uids":["cht_example"]}' \
-  | agent-mgr --json cloud-create -
+  | agent-mgr --json cloud-create
 agent-mgr --json cloud-list
 agent-mgr --json cloud-get AGENT_ID
 printf '%s\n' '{"chat_uids":["cht_example","cht_second"]}' \
-  | agent-mgr --json cloud-update-chats AGENT_ID -
+  | agent-mgr --json cloud-update-chats AGENT_ID
 agent-mgr --json cloud-delete AGENT_ID
 ```
 
