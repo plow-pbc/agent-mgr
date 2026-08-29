@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from typing import Self
 from urllib import error, request
@@ -8,6 +12,21 @@ import pytest
 
 from agent_mgr.cloud_http import HttpCloudTransport
 from agent_mgr.errors import AgentMgrError, ErrorCode
+
+
+@contextmanager
+def _running_server(
+    handler: type[BaseHTTPRequestHandler],
+) -> Iterator[ThreadingHTTPServer]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
 
 
 class _Response:
@@ -88,6 +107,22 @@ def test_environment_requires_both_cloud_values(missing: str) -> None:
         HttpCloudTransport.from_environment(environ)
     assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
     assert "secret-token" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "token",
+    ["secret-token\rX-Injected: yes", "secret-token\nX-Injected: yes"],
+)
+def test_environment_rejects_header_control_characters_without_exposing_token(
+    token: str,
+) -> None:
+    with pytest.raises(AgentMgrError) as raised:
+        HttpCloudTransport.from_environment(
+            {"PLOW_API_BASE": "https://api.example", "PLOW_API_TOKEN": token}
+        )
+    assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
+    assert "secret-token" not in str(raised.value)
+    assert raised.value.__cause__ is None
 
 
 @pytest.mark.parametrize(
@@ -223,6 +258,49 @@ def test_transport_rejects_redirects_without_a_second_request(
         isinstance(handler, request.HTTPRedirectHandler)
         for handler in recording_opener.handlers
     )
+
+
+def test_transport_does_not_contact_a_real_redirect_target() -> None:
+    source_authorizations: list[str | None] = []
+    target_requests: list[tuple[str, str | None]] = []
+
+    class TargetHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            target_requests.append((self.path, self.headers.get("Authorization")))
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(b"null")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+    with _running_server(TargetHandler) as target:
+        target_url = f"http://127.0.0.1:{target.server_port}/redirect-target"
+
+        class SourceHandler(BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                source_authorizations.append(self.headers.get("Authorization"))
+                self.send_response(302)
+                self.send_header("Location", target_url)
+                self.end_headers()
+
+            def log_message(self, format: str, *args: object) -> None:
+                return None
+
+        with _running_server(SourceHandler) as source:
+            transport = HttpCloudTransport.from_environment(
+                {
+                    "PLOW_API_BASE": f"http://127.0.0.1:{source.server_port}",
+                    "PLOW_API_TOKEN": "secret-token",
+                }
+            )
+            with pytest.raises(AgentMgrError) as raised:
+                transport.request("GET", "/v1/agents/cloud")
+
+    assert raised.value.code is ErrorCode.REMOTE_REJECTED
+    assert source_authorizations == ["Bearer secret-token"]
+    assert target_requests == []
 
 
 @pytest.mark.parametrize(

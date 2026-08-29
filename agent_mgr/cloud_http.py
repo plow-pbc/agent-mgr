@@ -44,6 +44,11 @@ class HttpCloudTransport:
                 ErrorCode.CONFIGURATION_ERROR,
                 "missing required environment variable: PLOW_API_TOKEN",
             )
+        if any(ord(character) < 0x20 or ord(character) == 0x7F for character in token):
+            raise AgentMgrError(
+                ErrorCode.CONFIGURATION_ERROR,
+                "PLOW_API_TOKEN contains invalid characters",
+            )
 
         try:
             parsed = urlsplit(base_url)
