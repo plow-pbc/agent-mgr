@@ -25,6 +25,7 @@ def test_set_latch_uses_getpass_for_a_terminal_token(
 
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)), check=True)
     run("restore", "rowan", check=True)
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
     manager_registry = Registry(registry)
     agent = resolve_agent("rowan", manager_registry, ROOT)
     terminal = io.StringIO("dev_abc\nwould-echo\n")

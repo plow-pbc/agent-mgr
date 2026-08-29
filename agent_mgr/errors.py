@@ -13,7 +13,7 @@ class ErrorCode(StrEnum):
     OPERATION_FAILED = "operation_failed"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class AgentMgrError(Exception):
     code: ErrorCode
     message: str
