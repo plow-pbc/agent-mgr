@@ -255,7 +255,7 @@ touch ~/agent-backups/backup-homes/.written-by-backup-homes
 `prune-backups` is its own command rather than a `find` written out here: it is
 an `rm -rf`, it shipped over-broad three times while it lived in this file, and
 the only way to test it here was to parse the snippet back out and re-run it.
-Its reasoning is at `lib/prune-backups`. The day count must be a whole number of
+Its reasoning is in `agent_mgr/backups.py`. The day count must be a whole number of
 **at least 1**, and is checked, because it lands inside `find`'s own expression:
 `-1` becomes `-mtime +-1`, which matches *fresh* directories, and `0` would
 delete the run written seconds earlier in the same line.
@@ -532,14 +532,14 @@ read the *What this builds on* section of the [README](../README.md), which owns
 that rule — restating it here is how this page came to state the opposite of the
 code for a commit.
 
-After bumping `runtime/plow-chat-plugin.ref` alone,
+After bumping `artifacts.plow_chat_plugin.revision` in `runtime/stack.json` alone,
 `agent-mgr install-plugin <name>` does just that step (plus the idempotent
 legacy-dotenv migration every install path carries) — useful when an agent's
 restore hook is expensive (the rentals agent re-seeds a vault and rebuilds its
 property hubs) and nothing else changed.
 
 `agent-mgr install-skill <name>` is the same shape for the fleet skills
-(`runtime/google-workspace-skill.ref` and `runtime/plow-invite-skill.ref`) —
+(`artifacts.google_workspace_skill` and `artifacts.plow_invite_skill` in the same lock) —
 also the first thing to run on an agent still reporting `NOT_AUTHENTICATED`
 from the image-bundled local-OAuth `google-workspace` copy. A destination the
 agent's own `skills.tsv` pins is skipped per skill, there and in `restore`

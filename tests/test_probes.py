@@ -219,15 +219,11 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     table learned about it. That table is the single owner of the agent-repo
     contract, so the next hook must not be able to land without a row."""
     import pathlib
-    import re
+    import sys
+
     root = pathlib.Path(__file__).resolve().parent.parent
-    # The resolver's own list, not a name heuristic: it is what decides which
-    # keys are agent-supplied repo-relative paths rather than derived values,
-    # and the path loop walks it, so a path key cannot reach the resolver
-    # without passing through here.
-    loop = re.search(r'^AGENT_REPO_PATHS="([A-Z_ ]+)"$',
-                     (root / "lib" / "common.sh").read_text(), re.M)
-    assert loop, "AGENT_REPO_PATHS moved -- this probe reads it to know what to check"
+    sys.path.insert(0, str(root))
+    from agent_mgr.descriptor import OPTIONAL_PATH_KEYS
     # The TABLE, not the file: a hook mentioned only in prose or an example block
     # would satisfy a whole-README grep while the row the contract lives in stays
     # missing -- which is the way a third hook would realistically land.
@@ -239,7 +235,7 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     # No AGENT_KEYS membership check: AGENT_KEYS interpolates $AGENT_REPO_PATHS,
     # so a path key is carried by construction and the drift this used to police
     # cannot be written.
-    for hook in loop.group(1).split():
+    for hook in sorted(OPTIONAL_PATH_KEYS):
         assert f"`{hook}`" in rows, (
             f"{hook} is a declared repo path but the agent-repo table does not name it")
         # The descriptor is where an author actually meets the hook: AGENT_PRE_TRANSITION

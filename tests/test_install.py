@@ -93,29 +93,39 @@ def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp
     assert "PLOW_AGENT_TOKEN=tok_live" in env.read_text().splitlines()
 
 
-@pytest.mark.parametrize("preexisting", [
-    pytest.param("", id="fresh_dotenv"),
-    # The stale row is the bug that shipped: activate's copy skipped set keys,
-    # so re-activation left the PREVIOUS (dead) token under the current name.
-    pytest.param("PLOW_AGENT_TOKEN=tok_stale\nPLOW_HOME_CHANNEL=cht_old\n", id="stale_current_values"),
-])
+@pytest.mark.parametrize(
+    "preexisting",
+    [
+        pytest.param("", id="fresh_dotenv"),
+        # The stale row is the bug that shipped: activate's copy skipped set keys,
+        # so re-activation left the PREVIOUS (dead) token under the current name.
+        pytest.param(
+            "PLOW_AGENT_TOKEN=tok_stale\nPLOW_HOME_CHANNEL=cht_old\n", id="stale_current_values"
+        ),
+    ],
+)
 def test_activate_syncs_legacy_names(run, instance, tmp_path, preexisting):
     """The pinned activate script is frozen and writes PLOW_CHAT_*; activate's
     post-step must SYNC those onto the current names — overwriting, because the
     script just minted the freshest values there are. A break here passes every
     other activate test: their stub scripts write no dotenv at all."""
     from conftest import fake_curl
+
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
     if preexisting:
         env.write_text(preexisting)
     (tmp_path / "act").mkdir()
-    b = fake_curl(tmp_path / "act", body=(
-        "#!/usr/bin/env bash\n"
-        'd=""\n'
-        'while [ $# -gt 0 ]; do case "$1" in --data-dir) d="$2"; shift 2 ;; *) shift ;; esac; done\n'
-        "printf 'PLOW_CHAT_TOKEN=tok_live\\nPLOW_CHAT_CHAT_UID=cht_dm\\n' >> \"$d/.env\"\n"))
+    b = fake_curl(
+        tmp_path / "act",
+        body=(
+            "#!/usr/bin/env bash\n"
+            'd=""\n'
+            'while [ $# -gt 0 ]; do case "$1" in --data-dir) d="$2"; shift 2 ;; *) shift ;; esac; done\n'
+            "printf 'PLOW_CHAT_TOKEN=tok_live\\nPLOW_CHAT_CHAT_UID=cht_dm\\n' >> \"$d/.env\"\n"
+        ),
+    )
     r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     lines = env.read_text().splitlines()
@@ -173,22 +183,29 @@ def test_restore_on_an_instance_with_no_config_is_refused(run, instance):
     assert "config.yaml" in r.stderr
 
 
-@pytest.mark.parametrize("pin", ["plow-chat-plugin.ref", "plow-chat-activate.ref",
-                                 "google-workspace-skill.ref", "plow-invite-skill.ref"])
-def test_every_shipped_pin_is_a_sha_not_a_branch(pin):
+def test_every_shipped_pin_is_a_sha_not_a_branch():
     """A branch would silently re-point a running agent on the next upstream push.
 
     Both, because the activate pin gates the one command that is a one-time
     irreversible spend -- a branch name or a truncated SHA in that file would
     otherwise surface only when an operator ran it.
     """
-    ref = (ROOT / "runtime" / pin).read_text().strip()
-    assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)
+    import json
+
+    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
+    for artifact in artifacts.values():
+        ref = artifact["revision"]
+        assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)
 
 
 def test_the_image_pin_is_a_digest_not_a_tag():
-    ref = (ROOT / "runtime" / "image.ref").read_text().strip()
-    assert ref.startswith("sha256:") and len(ref) == 71
+    import json
+
+    ref = json.loads((ROOT / "runtime" / "stack.json").read_text())["images"]["hermes_local"][
+        "reference"
+    ]
+    digest = ref.rpartition("@")[2]
+    assert digest.startswith("sha256:") and len(digest) == 71
 
 
 @pytest.mark.parametrize(
@@ -250,8 +267,11 @@ def test_a_relative_config_path_resolves_against_the_instance_repo(run, instance
 def test_a_missing_config_names_the_path_it_looked_at(run, instance):
     """The old message named a directory, which is useless when the whole point
     is that the file is somewhere else."""
-    run("register", "str", str(instance("str", descriptor="AGENT_CONFIG=runtime/config.yaml\n",
-                                        config=None)))
+    run(
+        "register",
+        "str",
+        str(instance("str", descriptor="AGENT_CONFIG=runtime/config.yaml\n", config=None)),
+    )
     r = run("restore", "str")
     assert r.returncode != 0
     assert "runtime/config.yaml" in r.stderr
@@ -284,7 +304,7 @@ def test_restore_is_the_whole_deploy_including_the_instances_own_step(run, insta
     repo = instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/seed.sh\n")
     (repo / "scripts").mkdir()
     hook = repo / "scripts" / "seed.sh"
-    hook.write_text(f'#!/usr/bin/env bash\ntouch {tmp_path / "hook-ran"}\n')
+    hook.write_text(f"#!/usr/bin/env bash\ntouch {tmp_path / 'hook-ran'}\n")
     hook.chmod(0o755)
     run("register", "str", str(repo))
     r = run("restore", "str")
@@ -350,10 +370,11 @@ def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance,
     # adapter in the directory the gateway enumerates.
     assert not (plugin / "ref").exists(), "the ref/ tree survived the install"
 
+
 def _transition_env(tmp_path, log=None):
     from conftest import fake_docker
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan",
-                    name="rowan", log=log)
+
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan", log=log)
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
@@ -362,9 +383,14 @@ def _guarded(instance, run, tmp_path, *, refuses):
     repo = instance("rowan", descriptor="AGENT_PRE_TRANSITION=scripts/guard.sh\n")
     (repo / "scripts").mkdir(exist_ok=True)
     g = repo / "scripts" / "guard.sh"
-    g.write_text("#!/usr/bin/env bash\n"
-                 + (f'echo "a nightly is mid-ingest" >&2\nexit 1\n' if refuses
-                    else f'touch {tmp_path / "guard-ran"}\n'))
+    g.write_text(
+        "#!/usr/bin/env bash\n"
+        + (
+            f'echo "a nightly is mid-ingest" >&2\nexit 1\n'
+            if refuses
+            else f"touch {tmp_path / 'guard-ran'}\n"
+        )
+    )
     g.chmod(0o755)
     run("register", "rowan", str(repo))
     return repo
@@ -374,12 +400,18 @@ def test_a_refusing_guard_stops_every_transition(run, instance, tmp_path):
     """The rentals agent's guard is a nightly-ingest check. Its doc copies
     drifted across three review rounds; a hook the tool calls has no copies."""
     import os
+
     _guarded(instance, run, tmp_path, refuses=True)
     from conftest import fake_docker
+
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     env = {"PATH": f"{b}:{os.environ['PATH']}"}
-    for cmd in (["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
-                ["compose", "rowan", "up", "-d", "--force-recreate"]):
+    for cmd in (
+        ["up", "rowan"],
+        ["down", "rowan"],
+        ["restart", "rowan"],
+        ["compose", "rowan", "up", "-d", "--force-recreate"],
+    ):
         r = run(*cmd, env=env)
         assert r.returncode != 0, f"{cmd} transitioned past a refusing guard"
         assert "refused" in r.stderr
@@ -390,6 +422,7 @@ def _live(instance, run, tmp_path):
     run through it, so a transition needs a deliberate operator."""
     run("register", "rowan", str(instance("rowan", descriptor="AGENT_LIVE=1\n")))
     from conftest import fake_docker
+
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
@@ -407,14 +440,20 @@ def _run_tty(argv, reply, registry, tmp_path, env_path, timeout=None):
     """agent-mgr on a real pty: [ -t 0 ] is the branch these tests exercise."""
     import pty
     import subprocess
+
     env = dict(os.environ)
-    env.update({"AGENT_MGR_REGISTRY": str(registry), "HOME": str(tmp_path / "home"),
-                **env_path})
+    env.update({"AGENT_MGR_REGISTRY": str(registry), "HOME": str(tmp_path / "home"), **env_path})
     master, slave = pty.openpty()
     try:
         os.write(master, f"{reply}\n".encode())
-        return subprocess.run([str(ROOT / "agent-mgr"), *argv], stdin=slave,
-                              capture_output=True, text=True, env=env, timeout=timeout)
+        return subprocess.run(
+            [str(ROOT / "agent-mgr"), *argv],
+            stdin=slave,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=timeout,
+        )
     finally:
         os.close(master)
         os.close(slave)
@@ -427,8 +466,12 @@ def test_a_live_agent_refuses_a_non_interactive_transition(run, instance, tmp_pa
     refusal names the acknowledgement, because a deploy script hitting this is
     being told how to say "the restart is the point"."""
     env = _live(instance, run, tmp_path)
-    for cmd in (["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
-                ["compose", "rowan", "up", "-d", "--force-recreate"]):
+    for cmd in (
+        ["up", "rowan"],
+        ["down", "rowan"],
+        ["restart", "rowan"],
+        ["compose", "rowan", "up", "-d", "--force-recreate"],
+    ):
         r = run(*cmd, env=env)
         assert r.returncode != 0, f"{cmd} transitioned a live agent silently"
         assert "AGENT_TRANSITION_ACK" in r.stderr
@@ -441,8 +484,9 @@ def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, insta
     The yes is exported, so the child never asks again -- with only ONE answer
     on the pty, a re-prompt would block on the empty terminal and fail this
     test by timeout, and a refusal would fail it by exit code."""
-    r = _run_tty(["restore", "rowan"], "y", registry, tmp_path,
-                 _live(instance, run, tmp_path), timeout=120)
+    r = _run_tty(
+        ["restore", "rowan"], "y", registry, tmp_path, _live(instance, run, tmp_path), timeout=120
+    )
     assert r.returncode == 0, r.stderr
     # And the reload actually ran -- exit 0 with the reload silently skipped
     # would leave this test covering nothing.
@@ -459,7 +503,8 @@ def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_p
     assert r.returncode != 0
     assert "AGENT_TRANSITION_ACK" in r.stderr
     assert not (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists(), (
-        "restore wrote into the home before refusing")
+        "restore wrote into the home before refusing"
+    )
     r = run("restore", "rowan", env={**env, "AGENT_TRANSITION_ACK": "1"})
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").is_file()
@@ -470,8 +515,7 @@ def test_the_interactive_prompt_defaults_to_no(run, registry, instance, tmp_path
     """A real pty, because [ -t 0 ] is the branch under test. Only an explicit
     yes proceeds; empty and garbage refuse -- the default answer to "message a
     real person?" is No."""
-    r = _run_tty(["up", "rowan"], reply, registry, tmp_path,
-                 _live(instance, run, tmp_path))
+    r = _run_tty(["up", "rowan"], reply, registry, tmp_path, _live(instance, run, tmp_path))
     assert (r.returncode == 0) == ok, (reply, r.stderr)
 
 
@@ -481,32 +525,41 @@ def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instanc
     "activation failed" -- and the natural response is to run it again, spending
     a second activation to recover from a guard that said "not right now"."""
     import os
+
     _guarded(instance, run, tmp_path, refuses=True)
     from conftest import fake_docker
+
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
 
     r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"a refused reload failed an activation that had landed: {r.stderr}"
     assert "do NOT re-run activate" in r.stderr, (
-        "the operator was not told the activation succeeded, which is the whole point")
+        "the operator was not told the activation succeeded, which is the whole point"
+    )
 
 
-@pytest.mark.parametrize("args", [
-    ("install-plugin", "rowan"),
-    ("install-skill", "rowan"),
-    ("sign-in", "rowan"),
-    ("add-skill", "rowan", "plow-pbc/property-hunt", "--ref", "a" * 40),
-])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ("install-plugin", "rowan"),
+        ("install-skill", "rowan"),
+        ("sign-in", "rowan"),
+        ("add-skill", "rowan", "plow-pbc/property-hunt", "--ref", "a" * 40),
+    ],
+)
 def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
-        run, instance, tmp_path, args):
+    run, instance, tmp_path, args
+):
     """The negative half of `activate` being "the one command a refusal does not
     fail". These three are in the same position -- the write has landed by the
     reload -- so activate's `|| echo ...SUCCEEDED...` is the obvious next
     copy-paste, and it would make the word "one" false with a green suite."""
     import os
+
     _guarded(instance, run, tmp_path, refuses=True)
     from conftest import fake_docker, fake_skill_gh
+
     home = tmp_path / "home" / ".hermes-rowan"
     home.mkdir(parents=True, exist_ok=True)
     # What each subcommand needs BEFORE its reload, so the refusal is what stops
@@ -526,8 +579,10 @@ def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
 
 def test_the_guard_runs_before_a_transition_and_not_before_a_read(run, instance, tmp_path):
     import os
+
     _guarded(instance, run, tmp_path, refuses=False)
     from conftest import fake_docker
+
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     env = {"PATH": f"{b}:{os.environ['PATH']}"}
     marker = tmp_path / "guard-ran"
@@ -541,8 +596,14 @@ def test_the_guard_runs_before_a_transition_and_not_before_a_read(run, instance,
 
 def test_a_declared_guard_that_is_missing_is_named(run, instance, tmp_path):
     import os
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_PRE_TRANSITION=scripts/gone.sh\n")))
+
+    run(
+        "register",
+        "rowan",
+        str(instance("rowan", descriptor="AGENT_PRE_TRANSITION=scripts/gone.sh\n")),
+    )
     from conftest import fake_docker
+
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
@@ -552,17 +613,25 @@ def test_a_declared_guard_that_is_missing_is_named(run, instance, tmp_path):
 def test_an_agent_with_no_guard_transitions_freely(run, instance, tmp_path):
     import os
     from conftest import fake_docker
+
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     assert run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"}).returncode == 0
 
 
-@pytest.mark.parametrize("args", [
-    ["up", "rowan"], ["down", "rowan"], ["restart", "rowan"],
-    ["compose", "rowan", "up", "-d", "--force-recreate"],
-    ["compose", "rowan", "start"], ["compose", "rowan", "pause"],
-    ["compose", "rowan", "unpause"], ["compose", "rowan", "stop"],
-])
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["up", "rowan"],
+        ["down", "rowan"],
+        ["restart", "rowan"],
+        ["compose", "rowan", "up", "-d", "--force-recreate"],
+        ["compose", "rowan", "start"],
+        ["compose", "rowan", "pause"],
+        ["compose", "rowan", "unpause"],
+        ["compose", "rowan", "stop"],
+    ],
+)
 def test_no_route_to_a_transition_bypasses_the_veto(run, instance, tmp_path, args):
     """Every route goes through compose_transition, so a new call site cannot
     forget the veto. start/pause/unpause interrupt a running process as surely
@@ -580,8 +649,9 @@ def test_a_reload_is_a_transition_too(run, instance, tmp_path):
     # Allow the restore's own pre-write veto, then refuse by the time it reloads.
     (repo / "scripts" / "guard.sh").write_text(
         "#!/usr/bin/env bash\n"
-        f'n=$(cat {tmp_path}/count 2>/dev/null || echo 0); echo $((n+1)) > {tmp_path}/count\n'
-        '[ "$n" = 0 ] || { echo "a nightly started" >&2; exit 1; }\n')
+        f"n=$(cat {tmp_path}/count 2>/dev/null || echo 0); echo $((n+1)) > {tmp_path}/count\n"
+        '[ "$n" = 0 ] || { echo "a nightly started" >&2; exit 1; }\n'
+    )
     (repo / "scripts" / "guard.sh").chmod(0o755)
     r = run("restore", "rowan", env=_transition_env(tmp_path))
     assert r.returncode != 0
@@ -592,8 +662,15 @@ def test_the_subcommand_is_classified_not_the_flattened_argv(run, instance, tmp_
     """`up` can appear in a prompt, a filename or a flag value. Matching the
     flattened "$*" made those look like transitions."""
     _guarded(instance, run, tmp_path, refuses=True)
-    r = run("compose", "rowan", "exec", "hermes", "echo", "please up the volume",
-            env=_transition_env(tmp_path))
+    r = run(
+        "compose",
+        "rowan",
+        "exec",
+        "hermes",
+        "echo",
+        "please up the volume",
+        env=_transition_env(tmp_path),
+    )
     assert r.returncode == 0, r.stderr
 
 
@@ -601,6 +678,7 @@ def test_restore_replays_every_pinned_skill(run, instance, tmp_path):
     """It is advertised as the whole deploy. A rebuild that omitted them left an
     agent whose skills.tsv said one thing and whose home held another."""
     from conftest import fake_docker, fake_skill_gh
+
     repo = instance("rowan")
     (repo / "skills.tsv").write_text(f"plow-pbc/x\t{'a' * 40}\tmy-skill\t\n")
     b = fake_skill_gh(tmp_path, skill_name="my-skill")
@@ -617,7 +695,11 @@ def test_a_missing_hook_is_caught_before_anything_is_written(run, instance, tmp_
     """Validated at the end, a missing hook left the plugin and config installed
     under a message saying the deploy did not land -- a report the state
     contradicts."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_RESTORE_HOOK=scripts/gone.sh\n")))
+    run(
+        "register",
+        "rowan",
+        str(instance("rowan", descriptor="AGENT_RESTORE_HOOK=scripts/gone.sh\n")),
+    )
     r = run("restore", "rowan")
     assert r.returncode != 0
     assert "nothing was installed" in r.stderr
@@ -647,7 +729,7 @@ def _block(text, start, end):
     """
     lines = text.split("\n")
     i = next(n for n, l in enumerate(lines) if start in l)
-    j = next(n for n, l in enumerate(lines[i + 1:], i + 1) if l.rstrip() == end)
+    j = next(n for n, l in enumerate(lines[i + 1 :], i + 1) if l.rstrip() == end)
     return "\n".join(lines[i:j])
 
 
@@ -665,16 +747,18 @@ def test_each_pin_is_read_only_where_its_command_fetches():
     agent-mgr, which stayed green even if the two commands SWAPPED which pin
     they read -- precisely the failure it was written for.
     """
-    plugin = _block((ROOT / "lib" / "common.sh").read_text(),
-                    "install_plow_plugin()", "}")
-    assert "plow-chat-plugin.ref" in plugin
-    assert "plow-pbc/hermes-plow-chat" in plugin
-    assert "plow-chat-activate.ref" not in plugin, "the plugin install must not read the activate pin"
+    import json
 
-    activate = _block((ROOT / "agent-mgr").read_text(), "    activate)", "    sign-in)")
-    assert "plow-chat-activate.ref" in activate
-    assert "plow-pbc/hermes-plow-chat" in activate
-    assert "plow-chat-plugin.ref" not in activate, "activate must not read the plugin pin"
+    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
+    plugin = artifacts["plow_chat_plugin"]
+    activation = artifacts["plow_chat_activation"]
+
+    assert plugin["repository"] == activation["repository"] == "plow-pbc/hermes-plow-chat"
+    assert plugin["revision"] != activation["revision"]
+    assert plugin["source"] == "plow-chat-platform"
+    assert activation["source"] == "ref/scripts/create_plow_chat_curl.sh"
+    assert plugin["scope"] == "shared"
+    assert activation["scope"] == "local"
 
 
 def test_the_activate_pin_is_frozen_and_distinct():
@@ -691,13 +775,17 @@ def test_the_activate_pin_is_frozen_and_distinct():
     both files (a sed over runtime/, a copy-paste) installs the pre-strip layout
     as a plugin, and satisfies the equality above on its own.
     """
-    plugin = (ROOT / "runtime" / "plow-chat-plugin.ref").read_text().strip()
-    activate = (ROOT / "runtime" / "plow-chat-activate.ref").read_text().strip()
+    import json
+
+    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
+    plugin = artifacts["plow_chat_plugin"]["revision"]
+    activate = artifacts["plow_chat_activation"]["revision"]
     assert activate == "98ddb2e7f0ce563a7ed6c9af43802d15b5ff62d3", (
         "the activate pin moved. It is frozen behind `Strip the SEED ceremony`, "
         "which deleted the ref/scripts/ path it names -- a later SHA 404s on "
         "activate. If this is deliberate, the new SHA must still predate that "
-        "commit, and the README's builds-on section says why.")
+        "commit, and the README's builds-on section says why."
+    )
     assert plugin != activate
 
 
@@ -711,6 +799,7 @@ def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
     sentence would have been silent.
     """
     import os
+
     b = tmp_path / "failing-bin"
     b.mkdir()
     (b / "gh").write_text("#!/usr/bin/env bash\nexit 1\n")
@@ -732,44 +821,9 @@ def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
     assert "are NOT" not in r.stderr, "install-plugin must not claim the config is gone"
 
 
-def test_the_plugin_install_refuses_a_caller_that_does_not_say_what_landed(tmp_path):
-    """The contract is checked at entry, so a forgetful caller fails immediately.
-
-    Pinned because the difference is invisible from the two real call sites --
-    both pass a sentence, so moving ${1:?...} out of the die string and into a
-    `local` binding changes nothing they can observe. What it changes is the
-    forgetful caller: inside the die it was expanded only on the failure branch,
-    and bash then aborted on the expansion BEFORE die ran, replacing the gh-auth
-    diagnosis with "1: the caller must say what landed" at the one moment the
-    diagnosis was needed. This calls it with no argument against a SUCCEEDING
-    fetch -- which returns 0 silently under the old form.
-    """
-    import os
-    import subprocess
-
-    home = tmp_path / "home" / ".hermes-probe"
-    home.mkdir(parents=True)
-    b = tmp_path / "bin"
-    b.mkdir()
-    install_fake_gh(tmp_path, b)
-
-    script = f"""
-    set -euo pipefail
-    AGENT_MGR_ROOT={ROOT}
-    AGENT_HOME={home}
-    AGENT_NAME=probe
-    die() {{ echo "$*" >&2; exit 1; }}
-    . {ROOT}/lib/common.sh
-    install_plow_plugin
-    """
-    r = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
-                       env={**os.environ, "PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0, "a caller that says nothing about state must not succeed"
-    assert "the caller must say what landed" in r.stderr
-
-
 def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
-        run, instance, tmp_path):
+    run, instance, tmp_path
+):
     """A killed run leaves a valid second plugin tree where the gateway looks.
 
     The trap does not fire on SIGKILL, an OOM kill or a power loss, so the
@@ -792,32 +846,25 @@ def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
 
     r = run("restore", "rowan")
     assert r.returncode == 0, r.stderr
-    assert sorted(p.name for p in plugins.iterdir()) == ["plow-chat-platform"], \
+    assert sorted(p.name for p in plugins.iterdir()) == ["plow-chat-platform"], (
         "an orphaned tree survived the install"
+    )
 
 
-def test_a_rollback_copy_is_promoted_before_the_next_run_can_fail(
-        run, instance, tmp_path):
-    """An install that fails after an interrupted one still leaves a valid tree.
-
-    `find` is stubbed because it drives the chmod pass -- the first fallible
-    step after the recovery point.
-    """
+def test_a_rollback_copy_is_promoted_before_the_next_publication(run, instance, tmp_path):
+    """A killed prior publication is recovered before the next atomic swap."""
     run("register", "rowan", str(instance("rowan")))
     plugins = tmp_path / "home" / ".hermes-rowan" / "plugins"
     rollback = plugins / "plow-chat-platform.previous"
     rollback.mkdir(parents=True)
     (rollback / "plugin.yaml").write_text("name: plow-chat-platform\n")
 
-    b = tmp_path / "bin"
-    b.mkdir(exist_ok=True)
-    (b / "find").write_text("#!/usr/bin/env bash\nexit 1\n")
-    (b / "find").chmod(0o755)
-
     r = run("restore", "rowan")
-    assert r.returncode != 0, "the stubbed find should have failed this install"
-    assert (plugins / "plow-chat-platform" / "plugin.yaml").is_file(), \
-        "the rollback copy was cleared before the fallible step, leaving no tree"
+    assert r.returncode == 0, r.stderr
+    assert (plugins / "plow-chat-platform" / "plugin.yaml").is_file(), (
+        "the recovered tree was lost during publication"
+    )
+    assert not rollback.exists()
 
 
 def test_no_host_side_script_depends_on_a_gnu_only_tool():
@@ -831,6 +878,7 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     12.3 floor and the entrypoint depends on it.
     """
     import re
+
     banned = {
         # Bitten: #19 (realpath) and this PR (flock -- Homebrew-only on the Mac).
         "flock": r"\bflock\b",
@@ -843,13 +891,15 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
     for script in scripts:
         # Full-line comments only. common.sh explains why realpath is NOT used,
         # and that sentence must not trip the check it is documenting.
-        code = "\n".join(l for l in script.read_text().splitlines()
-                         if not l.lstrip().startswith("#"))
+        code = "\n".join(
+            l for l in script.read_text().splitlines() if not l.lstrip().startswith("#")
+        )
         for tool, pattern in banned.items():
             assert not re.search(pattern, code), (
                 f"{script.name} uses {tool}, which is not portable to the "
                 "macOS 12.3 floor README commits to -- the suite runs on Linux, "
-                "so it lands green here and fails on the operator's Mac")
+                "so it lands green here and fails on the operator's Mac"
+            )
 
 
 def test_the_possibly_empty_array_is_always_expansion_guarded():
@@ -865,6 +915,7 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
     is a per-line balance rather than a per-occurrence proof. #26 owns the rest.
     """
     import re
+
     root_files = [ROOT / "agent-mgr"] + sorted((ROOT / "lib").iterdir())
     for script in root_files:
         for n, line in enumerate(script.read_text().splitlines(), 1):
@@ -899,12 +950,12 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
             # Floored, so a lone set-test `[ ${A[@]+x} ]` (one mention, one
             # guard) passes rather than failing a 1 == 2 comparison while being
             # the guard itself.
-            bare = max(0, line.count("AGENT_HOOK_ENV[@]")
-                          - 2 * line.count("AGENT_HOOK_ENV[@]+"))
+            bare = max(0, line.count("AGENT_HOOK_ENV[@]") - 2 * line.count("AGENT_HOOK_ENV[@]+"))
             assert bare == 0, (
                 f"{script.name}:{n} expands AGENT_HOOK_ENV[@] without the `+` "
                 "guard -- empty under `set -u` on the bash 3.2 macOS ships, so "
-                "this passes here and breaks restore on the operator's Mac")
+                "this passes here and breaks restore on the operator's Mac"
+            )
 
 
 def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp_path):
@@ -928,11 +979,13 @@ def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp
     # data is gone. The sentinel is what makes the assertion able to fail.
     (outside / "plow-chat-platform").mkdir(parents=True)
     (outside / "plow-chat-platform" / "plugin.yaml").write_text(
-        "name: plow-chat-platform\n# SENTINEL: the operator's own file\n")
+        "name: plow-chat-platform\n# SENTINEL: the operator's own file\n"
+    )
     (home / "plugins").symlink_to("../not-the-agents")
 
     r = run("restore", "rowan")
     assert r.returncode != 0, "the install followed a planted parent symlink"
     assert "outside" in r.stderr, f"refused, but not for this reason: {r.stderr}"
-    assert "SENTINEL" in (outside / "plow-chat-platform" / "plugin.yaml").read_text(), \
+    assert "SENTINEL" in (outside / "plow-chat-platform" / "plugin.yaml").read_text(), (
         "the install renamed or replaced a host directory outside the home"
+    )

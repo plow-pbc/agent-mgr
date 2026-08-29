@@ -38,9 +38,10 @@ direction.
 Hermes agents — rentals, house-hunting, admin, and one belonging to a different
 person — as containers on a single Linux host.
 
-**Distribution model:** a git clone in `~/services/agent-mgr` with the
-`agent-mgr` script symlinked onto `PATH`. No release, no package, no versioning.
-A registry file maps an agent name to its repo.
+**Distribution model:** a typed Python 3.11+ application, used from a git clone
+and symlink during development and published as a checksummed zipapp on tags.
+A registry file maps an agent name to its repo. JSON envelopes are the machine
+contract; human output remains the compatibility default.
 
 **Trust boundary (known and accepted):** an agent's dotenv sits on the host side
 of the container mount, owned by the operator's uid. The container boundary does
@@ -70,7 +71,7 @@ Anything that reopens that path is blocking.
 | Fleet-CLI DON'T (suppress / flag-as-shape) | Fleet-CLI DO (real finding) |
 |---|---|
 | Ask for a fallback when `docker`, `compose` or the relay fails. Refusing loudly is the design — a host-side answer is exactly the evidence entering the container's namespace was meant to stop accepting. | Flag an error that is **swallowed or misreported**: a failed `compose ps` read as "no gateway running", a dead credential and a dead network collapsed into one message, a probe that reports success without having run. |
-| Demand a config-schema validator, a plugin abstraction, or a packaging story. This is one bash script symlinked onto one host, for one operator. | Flag a **new route to a container transition** that does not go through the single transition seam, or a `compose run` that does not require `--entrypoint`. Both reopen the second-gateway class above. |
+| Demand a cloud lifecycle backend or plugin abstraction before the cloud variants are ready. This remains one operator's local fleet. | Flag a **new route to a container transition** that does not go through the single transition seam, or a `compose run` that does not require `--entrypoint`. Both reopen the second-gateway class above. |
 | Suggest guards for an agent count, host count or concurrency this fleet will not reach. | Flag a **write into an agent's home that skips the ownership check**. Proving Compose agrees with the descriptor is not enough — a descriptor copied from a sibling satisfies that perfectly. It is self-consistent and wrong, and the write lands on the sibling. |
 | Treat doc-only edits to `README.md` / `docs/` as low-value churn. | Flag **prose↔code drift**. The README owns the agent-repo contract; a behaviour change that leaves its table describing the old behaviour is the canonical regression here. |
 | Propose vendoring an upstream artifact to avoid a fetch. | Flag any ref that is **not exact**: a git artifact (plugin, skill) must be a 40-char SHA, a container image a `sha256:` digest — never a tag or a branch. A moving ref silently re-points a running agent on the next upstream push, and these carry the chat token and drive a filesystem. |
@@ -82,5 +83,5 @@ Anything that reopens that path is blocking.
 | — | Flag an **agent-specific fact reaching a code path here**: a hardcoded `~/.hermes-<something>`, a PMS token, a lock or property-search call, a recipe only one agent would run. The test is whether a second agent would want it — not whether it mentions an agent, which comments and fixtures do freely. |
 
 **Update cadence:** edit when the stage changes — a second operator, a second
-host, or a distribution story that is not a symlink. Product and architecture
+host, or Plow starts consuming lifecycle operations. Product and architecture
 edits belong in `README.md`, not here.
