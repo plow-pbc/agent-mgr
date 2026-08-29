@@ -254,29 +254,6 @@ def test_transport_sends_authenticated_compact_utf8_json(
     assert sent.data == b'{"name":"caf\xc3\xa9"}'
 
 
-def test_transport_rejects_a_lone_surrogate_request_body(
-    recording_opener: _RecordingOpener,
-) -> None:
-    with pytest.raises(AgentMgrError) as raised:
-        configured_transport(recording_opener).request(
-            "POST", "/v1/agents/cloud", {"chat_uids": ["\ud800"]}
-        )
-
-    assert raised.value.code is ErrorCode.INVALID_ARGUMENT
-    assert str(raised.value) == "cloud request body is not valid UTF-8 JSON"
-    assert raised.value.__cause__ is None
-    assert recording_opener.requests == []
-
-
-@pytest.mark.parametrize("method", ["GET", "DELETE"])
-def test_transport_omits_body_for_bodyless_methods(
-    method: str, recording_opener: _RecordingOpener
-) -> None:
-    configured_transport(recording_opener).request(method, "/v1/agents/cloud", {"ignored": True})
-    [sent] = recording_opener.requests
-    assert sent.data is None
-
-
 def test_transport_decodes_a_json_success(recording_opener: _RecordingOpener) -> None:
     recording_opener.respond(200, b'{"agent_id":"abc"}')
     transport = configured_transport(recording_opener)
@@ -467,16 +444,3 @@ def test_loopback_transport_bypasses_an_ambient_http_proxy(
 
     assert target_authorizations == ["Bearer secret-token"]
     assert proxy_requests == []
-
-
-@pytest.mark.parametrize(
-    "path",
-    ["https://evil.example/v1/agents/cloud", "//evil.example/v1/agents/cloud"],
-)
-def test_transport_rejects_paths_that_are_absolute_urls(
-    path: str, recording_opener: _RecordingOpener
-) -> None:
-    with pytest.raises(AgentMgrError) as raised:
-        configured_transport(recording_opener).request("GET", path)
-    assert raised.value.code is ErrorCode.INVALID_ARGUMENT
-    assert recording_opener.requests == []

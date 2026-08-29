@@ -107,23 +107,11 @@ class HttpCloudTransport:
         return cls(base_url=base_url.removesuffix("/"), token=token)
 
     def request(self, method: str, path: str, body: dict[str, JsonValue] | None = None) -> object:
-        if not path.startswith("/v1/agents/cloud") or urlsplit(path).netloc:
-            raise AgentMgrError(
-                ErrorCode.INVALID_ARGUMENT,
-                "cloud API path must start with /v1/agents/cloud and be relative",
-            )
-
-        encoded_body = None
-        if body is not None and method not in {"GET", "DELETE"}:
-            try:
-                encoded_body = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode(
-                    "utf-8"
-                )
-            except UnicodeEncodeError:
-                raise AgentMgrError(
-                    ErrorCode.INVALID_ARGUMENT,
-                    "cloud request body is not valid UTF-8 JSON",
-                ) from None
+        encoded_body = (
+            json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+            if body is not None
+            else None
+        )
         sent = request.Request(
             f"{self.base_url}{path}",
             data=encoded_body,

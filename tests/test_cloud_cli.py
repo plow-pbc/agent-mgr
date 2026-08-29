@@ -403,6 +403,22 @@ def test_cloud_reports_malformed_success_json(run, cloud_server) -> None:
     assert body["error"]["code"] == "invalid_response"
 
 
+def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, tmp_path, cloud_server) -> None:
+    cloud_server.respond_bytes(b"not-json")
+    request = tmp_path / "request.json"
+    request.write_text(json.dumps({"chat_uids": ["cht_a"]}))
+
+    result = run("--json", "cloud-create", str(request), env=cloud_server.environment)
+
+    assert result.returncode == 1
+    body = _json_document(result, "cloud-create")
+    assert body["error"]["code"] == "invalid_response"
+    assert body["error"]["remediation"] == (
+        "creation may have succeeded; run agent-mgr --json cloud-list before retrying"
+    )
+    assert cloud_server.requests[0][0] == "POST"
+
+
 def test_help_lists_every_cloud_argument_shape(run) -> None:
     result = run("--help")
 

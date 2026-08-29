@@ -163,7 +163,17 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         _need(args, 1, "agent-mgr --json cloud-create <request.json|->")
         create_request = CreateCloudAgentRequest.from_json(_json_input(args[0]))
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        _emit(operation, {"agent": client.create(create_request).to_json()})
+        try:
+            resource = client.create(create_request)
+        except AgentMgrError as error:
+            if error.code in {ErrorCode.INVALID_RESPONSE, ErrorCode.REMOTE_UNREACHABLE}:
+                raise AgentMgrError(
+                    error.code,
+                    error.message,
+                    "creation may have succeeded; run agent-mgr --json cloud-list before retrying",
+                ) from None
+            raise
+        _emit(operation, {"agent": resource.to_json()})
         return 0
     if operation == "cloud-list":
         _need(args, 0, "agent-mgr --json cloud-list")
