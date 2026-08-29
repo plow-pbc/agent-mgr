@@ -55,6 +55,18 @@ def test_json_failure_has_a_stable_code_and_no_human_prefix(run):
     assert body["error"]["remediation"] == "register the agent repository first"
 
 
+def test_operational_json_failure_preserves_status_and_both_streams(run):
+    result = run("--json", "resolve-guard", "missing")
+
+    assert result.returncode == 1
+    assert result.stderr == ""
+    body = json.loads(result.stdout)
+    assert body["error"]["code"] == "operation_failed"
+    assert body["error"]["exit_code"] == 1
+    assert body["error"]["stdout"] == []
+    assert body["error"]["stderr"] == ["agent-mgr: missing is not registered"]
+
+
 def test_json_registry_listing_is_data_not_a_table(run, instance):
     zed = instance("zed")
     amy = instance("amy")

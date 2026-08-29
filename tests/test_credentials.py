@@ -1,8 +1,9 @@
+import io
 import os
 import shutil
-import sys
 import stat
 import subprocess
+import sys
 
 import pytest
 from conftest import ROOT, LATCH_CONFIG, fake_docker
@@ -12,6 +13,64 @@ def _fake_docker(tmp_path, name="rowan"):
     log = tmp_path / "argv.log"
     b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name, log=log)
     return b, log
+
+
+def test_set_latch_uses_getpass_for_a_terminal_token(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(ROOT))
+    from agent_mgr import commands
+    from agent_mgr.models import ResolvedAgent
+    from agent_mgr.registry import Registry
+
+    class TerminalInput(io.StringIO):
+        def isatty(self):
+            return True
+
+    home = tmp_path / ".hermes-rowan"
+    home.mkdir()
+    installed = home / "config.yaml"
+    installed.write_text(LATCH_CONFIG)
+    (home / ".env").write_text("")
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    descriptor = repo / "agent.env"
+    descriptor.write_text("")
+    agent = ResolvedAgent(
+        name="rowan",
+        repo=repo,
+        home=home,
+        container="hermes-rowan",
+        project="hermes-rowan",
+        timezone="America/Los_Angeles",
+        image="image@sha256:" + "c" * 64,
+        config=repo / "config.yaml",
+        live=False,
+        restore_hook=None,
+        pre_transition_hook=None,
+        cron_spec=None,
+        descriptor=descriptor,
+        hook_environment=(),
+        home_declared=False,
+    )
+    terminal = TerminalInput("dev_abc\nwould-echo\n")
+    written = []
+    prompts = []
+    monkeypatch.setattr(commands.sys, "stdin", terminal)
+    monkeypatch.setattr(commands, "require_own_home", lambda *_: None)
+    monkeypatch.setattr(commands, "config_declares_latch", lambda *_: True)
+    monkeypatch.setattr(commands, "reload_if_running", lambda *_: None)
+    monkeypatch.setattr(commands, "upsert", lambda _agent, _keys, values: written.extend(values))
+    monkeypatch.setattr(
+        commands.getpass,
+        "getpass",
+        lambda prompt, stream: prompts.append((prompt, stream)) or "tok_secret",
+    )
+
+    result = commands.set_latch(agent, Registry(tmp_path / "registry"))
+
+    assert result == 0
+    assert written == ["dev_abc", "tok_secret"]
+    assert terminal.readline() == "would-echo\n"
+    assert prompts == [("DOMO_MCP_TOKEN: ", commands.sys.stderr)]
 
 
 def test_sign_in_authenticates_against_the_installed_config_not_the_repo_copy(run, instance, tmp_path):

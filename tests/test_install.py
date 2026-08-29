@@ -168,6 +168,24 @@ def test_migrate_plugin_env_without_a_dotenv_points_at_restore(run, instance, tm
     assert "restore" in r.stderr
 
 
+def test_migrate_plugin_env_refuses_a_home_claimed_by_another_agent(
+    run, instance, tmp_path
+):
+    shared = tmp_path / "home" / ".hermes-amy"
+    shared.mkdir(parents=True)
+    dotenv = shared / ".env"
+    dotenv.write_text("PLOW_CHAT_TOKEN=do-not-move\n")
+    run("register", "amy", str(instance("amy")), check=True)
+    rowan = instance("rowan", descriptor="AGENT_HOME=$HOME/.hermes-amy\n")
+    run("register", "rowan", str(rowan), check=True)
+
+    result = run("migrate-plugin-env", "rowan")
+
+    assert result.returncode != 0
+    assert "amy is already registered there" in result.stderr
+    assert dotenv.read_text() == "PLOW_CHAT_TOKEN=do-not-move\n"
+
+
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     run("restore", "rowan")

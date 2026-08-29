@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import getpass
 import json
 import os
 import re
@@ -234,8 +235,11 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
         )
     print("DOMO_DEVICE_UID: ", end="", file=sys.stderr)
     uid = sys.stdin.readline().strip()
-    print("DOMO_MCP_TOKEN: ", end="", file=sys.stderr)
-    token = sys.stdin.readline().strip()
+    if sys.stdin.isatty():
+        token = getpass.getpass("DOMO_MCP_TOKEN: ", stream=sys.stderr).strip()
+    else:
+        print("DOMO_MCP_TOKEN: ", end="", file=sys.stderr)
+        token = sys.stdin.readline().strip()
     upsert(agent, ["DOMO_DEVICE_UID", "DOMO_MCP_TOKEN"], [uid, token])
     print(f"wrote DOMO_DEVICE_UID and DOMO_MCP_TOKEN (...{token[-3:]}) to {dotenv}")
     reload_if_running(agent, registry, "the credential just written")

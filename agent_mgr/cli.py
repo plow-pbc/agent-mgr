@@ -36,6 +36,7 @@ from .local import (
     compose,
     require_container_ours,
     require_fetch_safe,
+    require_own_home,
     require_running,
     resolve_guard,
     transition,
@@ -59,17 +60,31 @@ def _emit(operation: str, result: dict[str, JsonValue]) -> None:
     print(json.dumps(body, separators=(",", ":"), sort_keys=True))
 
 
-def _fail(operation: str, error: AgentMgrError, json_output: bool) -> int:
+def _fail(
+    operation: str,
+    error: AgentMgrError,
+    json_output: bool,
+    output: tuple[list[JsonValue], list[JsonValue]] | None = None,
+) -> int:
     if json_output:
+        details: dict[str, JsonValue] = {
+            "code": error.code.value,
+            "message": error.message,
+            "remediation": error.remediation,
+        }
+        if output is not None:
+            details.update(
+                {
+                    "exit_code": error.exit_code,
+                    "stdout": output[0],
+                    "stderr": output[1],
+                }
+            )
         body: dict[str, JsonValue] = {
             "ok": False,
             "schema_version": JSON_SCHEMA_VERSION,
             "operation": operation,
-            "error": {
-                "code": error.code.value,
-                "message": error.message,
-                "remediation": error.remediation,
-            },
+            "error": details,
         }
         print(json.dumps(body, separators=(",", ":"), sort_keys=True))
     else:
@@ -205,6 +220,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                     ErrorCode.INVALID_ARGUMENT,
                     "migrate_plugin_env: unknown mode -- the only mode is --sync",
                 )
+            require_own_home(agent, registry)
             migrate_plugin_env(agent, len(args) == 2)
         else:
             _need(args, 1, f"agent-mgr {operation} <name>")
@@ -391,8 +407,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         message = completed.stderr.strip() or completed.stdout.strip() or f"{operation} failed"
         return _fail(
             operation,
-            AgentMgrError(ErrorCode.OPERATION_FAILED, message, "inspect the operation output"),
+            AgentMgrError(
+                ErrorCode.OPERATION_FAILED,
+                message,
+                "inspect the operation output",
+                completed.returncode,
+            ),
             True,
+            (
+                list(completed.stdout.splitlines()),
+                list(completed.stderr.splitlines()),
+            ),
         )
     try:
         return _run(operation, args, json_output, Registry.from_environment())
