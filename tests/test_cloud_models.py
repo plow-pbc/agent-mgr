@@ -72,36 +72,6 @@ def test_request_unknown_field_diagnostic_keeps_the_local_field_name() -> None:
 
 
 @pytest.mark.parametrize(
-    ("status", "failure_code", "deleted"),
-    [
-        ("running", None, False),
-        ("provisioning", None, False),
-        ("teardown", None, False),
-        (None, None, True),
-        ("failed", "provider_unreachable", False),
-        ("failed", "image_pull_timeout", False),
-        ("failed", "setup_failed", False),
-        ("failed", "validation_failed", False),
-        ("failed", "unknown", False),
-    ],
-)
-def test_resource_accepts_every_public_terminal_shape(status, failure_code, deleted: bool) -> None:
-    raw = {
-        "agent_id": "a" * 32,
-        "chat_uids": ["cht_a"],
-        "url": "https://agent.example",
-        "provider": "exe:hermes",
-        "status": status,
-        "failure_code": failure_code,
-    }
-
-    resource = (
-        CloudAgentResource.from_delete_json(raw) if deleted else CloudAgentResource.from_json(raw)
-    )
-    assert resource.to_json() == raw
-
-
-@pytest.mark.parametrize(
     ("status", "failure_code"),
     [
         ("running", "unknown"),
@@ -151,4 +121,13 @@ def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
         "provisioning",
         "teardown",
         "failed",
+    }
+    assert {
+        resource["failure_code"] for resource in resources if resource["failure_code"] is not None
+    } == {
+        "provider_unreachable",
+        "image_pull_timeout",
+        "setup_failed",
+        "validation_failed",
+        "unknown",
     }

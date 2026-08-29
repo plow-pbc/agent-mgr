@@ -37,26 +37,42 @@ def resource() -> CloudAgentResource:
     )
 
 
-def test_create_maps_request_and_decodes_resource() -> None:
-    transport = FakeTransport(resource().to_json())
-    client = CloudClient(transport)
-    request = CreateCloudAgentRequest(("chat-a",), "Mary", "exe:hermes")
-
-    result = client.create(request)
-
-    assert isinstance(result, CloudAgentResource)
-    assert transport.calls == [("POST", "/v1/agents/cloud", request.to_json())]
+def deleted_resource() -> CloudAgentResource:
+    deleted = resource().to_json()
+    deleted["status"] = None
+    return CloudAgentResource.from_delete_json(deleted)
 
 
-def test_list_maps_path_and_decodes_resources() -> None:
-    expected = resource()
-    transport = FakeTransport([expected.to_json()])
+LIVE = resource()
+DELETED = deleted_resource()
+CREATE = CreateCloudAgentRequest(("chat-a",), "Mary", "exe:hermes")
+UPDATE = UpdateCloudAgentChatsRequest(("chat-a", "chat-b"))
 
-    result = CloudClient(transport).list()
 
-    assert result == (expected,)
-    assert isinstance(result, tuple)
-    assert transport.calls == [("GET", "/v1/agents/cloud", None)]
+@pytest.mark.parametrize("operation", ["create", "list", "get", "update_chats", "delete"])
+def test_operations_map_transport_calls(operation: str) -> None:
+    cases = {
+        "create": (LIVE.to_json(), (CREATE,), LIVE, ("POST", "/v1/agents/cloud", CREATE.to_json())),
+        "list": ([LIVE.to_json()], (), (LIVE,), ("GET", "/v1/agents/cloud", None)),
+        "get": (LIVE.to_json(), ("agent-id",), LIVE, ("GET", "/v1/agents/cloud/agent-id", None)),
+        "update_chats": (
+            LIVE.to_json(),
+            ("agent-id", UPDATE),
+            LIVE,
+            ("PUT", "/v1/agents/cloud/agent-id/chats", UPDATE.to_json()),
+        ),
+        "delete": (
+            DELETED.to_json(),
+            ("agent-id",),
+            DELETED,
+            ("DELETE", "/v1/agents/cloud/agent-id", None),
+        ),
+    }
+    response, args, expected, expected_call = cases[operation]
+    transport = FakeTransport(response)
+
+    assert getattr(CloudClient(transport), operation)(*args) == expected
+    assert transport.calls == [expected_call]
 
 
 def test_list_rejects_non_array_response() -> None:
@@ -76,39 +92,6 @@ def test_list_rejects_object_items() -> None:
         CloudClient(transport).list()
 
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
-
-
-def test_get_maps_agent_path_and_decodes_resource() -> None:
-    transport = FakeTransport(resource().to_json())
-
-    result = CloudClient(transport).get("agent-id")
-
-    assert isinstance(result, CloudAgentResource)
-    assert result == resource()
-    assert transport.calls == [("GET", "/v1/agents/cloud/agent-id", None)]
-
-
-def test_update_chats_maps_request_and_decodes_resource() -> None:
-    transport = FakeTransport(resource().to_json())
-    request = UpdateCloudAgentChatsRequest(("chat-a", "chat-b"))
-
-    result = CloudClient(transport).update_chats("agent-id", request)
-
-    assert isinstance(result, CloudAgentResource)
-    assert result == resource()
-    assert transport.calls == [("PUT", "/v1/agents/cloud/agent-id/chats", request.to_json())]
-
-
-def test_delete_maps_agent_path_and_decodes_deleted_resource() -> None:
-    deleted = resource().to_json()
-    deleted["status"] = None
-    transport = FakeTransport(deleted)
-
-    result = CloudClient(transport).delete("agent-id")
-
-    assert isinstance(result, CloudAgentResource)
-    assert result.status is None
-    assert transport.calls == [("DELETE", "/v1/agents/cloud/agent-id", None)]
 
 
 @pytest.mark.parametrize(
