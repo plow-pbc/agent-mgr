@@ -87,6 +87,10 @@ def test_resource_accepts_every_public_terminal_shape(status, failure_code) -> N
         ("new-state", None),
         (None, "setup_failed"),
         ("failed", "vendor_message"),
+        ([], None),
+        ({}, None),
+        ("failed", []),
+        ("failed", {}),
     ],
 )
 def test_resource_rejects_inconsistent_or_open_ended_states(status, failure_code) -> None:

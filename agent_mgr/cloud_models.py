@@ -122,6 +122,10 @@ class CloudAgentResource:
         )
         status_value = payload["status"]
         failure_code_value = payload["failure_code"]
+        if status_value is not None and not isinstance(status_value, str):
+            _error(ErrorCode.INVALID_RESPONSE, "status must be a string or null")
+        if failure_code_value is not None and not isinstance(failure_code_value, str):
+            _error(ErrorCode.INVALID_RESPONSE, "failure_code must be a string or null")
         if status_value not in {"running", "provisioning", "teardown", "failed", None}:
             _error(ErrorCode.INVALID_RESPONSE, "status is not a public cloud status")
         if failure_code_value not in {
