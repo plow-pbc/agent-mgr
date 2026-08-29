@@ -15,7 +15,7 @@ This is the DRY boundary: one cloud control plane, with `agent-mgr` as a client.
 - Add immutable typed models for Plow's two request shapes and one resource shape.
 - Preserve Plow's closed lifecycle vocabulary exactly: `running`, `provisioning`, `teardown`, and `failed`; `null` is accepted only for the resource returned by deletion.
 - Preserve Plow's closed failure vocabulary exactly: `provider_unreachable`, `image_pull_timeout`, `setup_failed`, `validation_failed`, and `unknown`.
-- Reject unknown fields, missing fields, wrong scalar types, empty chat lists, duplicate chat identifiers, and inconsistent `status`/`failure_code` pairs before returning data to callers.
+- Reject unknown fields, missing fields, wrong scalar types, empty chat lists, and inconsistent `status`/`failure_code` pairs before returning data to callers. Deduplicate chat identifiers in first-seen order, matching Plow's public request model.
 - Add a standard-library HTTP transport. The zipapp must remain dependency-free at runtime.
 - Require `PLOW_API_BASE` and `PLOW_API_TOKEN`; do not supply production defaults. Permit plain HTTP only for loopback development addresses.
 - Add JSON-only commands:

@@ -312,7 +312,7 @@ class HttpCloudTransport:
     timeout_seconds: float = 30.0
 ```
 
-Add `from_environment(cls, environ: Mapping[str, str]) -> HttpCloudTransport` and `request(self, method: str, path: str, body: dict[str, JsonValue] | None = None) -> object`. `from_environment` reads both exact keys with `environ.get(key, "").strip()`, raises `CONFIGURATION_ERROR` naming only a missing key, and never interpolates either value. Import `field` from `dataclasses`; the `repr=False` token field is required so assertion failures and debug representations cannot print it. Normalize one trailing slash from the validated base. Require a root-only URL with no userinfo, query, or fragment. Accept `http` only when `urlsplit(url).hostname` is one of the three loopback names in the spec.
+Add `from_environment(cls, environ: Mapping[str, str]) -> HttpCloudTransport`; add the concrete `request()` method only in Step 7, after its failing tests exist. `from_environment` reads both exact keys with `environ.get(key, "").strip()`, raises `CONFIGURATION_ERROR` naming only a missing key, and never interpolates either value. Import `field` from `dataclasses`; the `repr=False` token field is required so assertion failures and debug representations cannot print it. Normalize one trailing slash from the validated base. Require a root-only URL with no userinfo, query, or fragment. Accept `http` only when `urlsplit(url).hostname` is one of the three loopback names in the spec.
 
 - [ ] **Step 4: Run configuration tests and verify GREEN**
 
@@ -559,6 +559,8 @@ Expected: commands fail as unknown operations.
 - [ ] **Step 3: Add request loading and cloud dispatch**
 
 Add all five operation names to `NATIVE_JSON_OPERATIONS`. Before `_run()` dispatch, reject a cloud operation when `json_output` is false with `INVALID_ARGUMENT`, remediation `rerun with --json`, and exit code 2.
+
+Add the five operation names and their argument shapes to `_usage()` so discovery and invalid-invocation output do not omit supported commands.
 
 Implement:
 
