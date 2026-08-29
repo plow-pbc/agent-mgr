@@ -21,6 +21,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+      - if: runner.os == 'macOS'
+        run: |
+          brew install docker docker-compose
+          mkdir -p "$HOME/.docker"
+          jq -n --arg directory "$(brew --prefix)/lib/docker/cli-plugins" \
+            '{cliPluginsExtraDirs: [$directory]}' > "$HOME/.docker/config.json"
+          docker compose version
       - run: uv run --no-project --python ${{ matrix.python }} --with pytest==8.4.2 --with pyyaml==6.0.2 pytest -q
 
   quality:
