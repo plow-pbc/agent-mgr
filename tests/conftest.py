@@ -339,14 +339,21 @@ PLUGIN_TARBALL = {
         "def register(ctx):\n    pass\n",
 }
 
-# The fleet google-workspace skill every agent gets, at the path the canonical
-# copy keeps in plow-pbc/plow. Restore fetches it unconditionally, so the
-# default `gh` serves it the way it serves the plugin -- otherwise every plain
-# `run("restore", ...)` in the suite would fail on a fetch it never asked about.
-FLEET_SKILL_SRC = "cloud-agents/hermes/image/seed/skills/productivity/google-workspace"
+# The fleet skills every agent gets, at the paths the canonical copies keep in
+# plow-pbc/plow's hosted-agent seed. Restore fetches them unconditionally, so
+# the default `gh` serves them the way it serves the plugin -- otherwise every
+# plain `run("restore", ...)` in the suite would fail on a fetch it never asked
+# about. One tarball carries both trees: the real fetch is a whole-repo
+# snapshot fetch-tree extracts a src subtree from.
+FLEET_SEED = "cloud-agents/hermes/image/seed/skills"
+FLEET_SKILL_SRC = f"{FLEET_SEED}/productivity/google-workspace"
 FLEET_SKILL_TARBALL = {
     f"plow-pbc-plow-abc1234/{FLEET_SKILL_SRC}/SKILL.md":
         "---\nname: google-workspace\n---\n# google-workspace\n",
+    f"plow-pbc-plow-abc1234/{FLEET_SEED}/growth/plow-invite/SKILL.md":
+        "---\nname: plow-invite\n---\n# plow-invite\n",
+    f"plow-pbc-plow-abc1234/{FLEET_SEED}/growth/plow-invite/scripts/mint_invite.py":
+        "#!/usr/bin/env python3\n",
 }
 
 

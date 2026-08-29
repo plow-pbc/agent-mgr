@@ -30,9 +30,10 @@ It runs on the Linux host the fleet lives on and on a Mac, where the floor is
 uses to resolve itself through the symlink above before anything else is
 sourced. Everything after that point is portable, and `python3`, `docker` and
 an authenticated `gh` have to be on `PATH` — `restore` installs the Plow Chat
-plugin and the fleet `google-workspace` skill through `gh api` for **every**
-agent, not only one shipping a `skills.tsv` (one whose own `skills.tsv` pins
-`productivity/google-workspace` keeps its instance copy instead).
+plugin and the pinned fleet skills (`google-workspace`, `plow-invite`) through
+`gh api` for **every** agent, not only one shipping a `skills.tsv` (one whose
+own `skills.tsv` pins a fleet destination keeps its instance copy for that
+destination instead).
 
 ```sh
 agent-mgr new errands ~/services/errands-hermes-agent
@@ -77,10 +78,12 @@ The test for where something belongs: **would a second agent want this?**
 - `agent.env` — no, it *is* this agent's identity → **its repo**
 - a recipe that publishes a property map — no, one agent runs it → **its repo**
 - the Plow Chat plugin — yes, every agent → **common**, pinned by SHA
-- the `google-workspace` redirect skill — yes, every agent → **common**, pinned
-  in `runtime/google-workspace-skill.ref` (a fleet pin `restore` installs and
-  `install-skill` re-installs — except an agent whose own `skills.tsv` pins that
-  destination, where the instance pin is authoritative and both defer to it)
+- a fleet skill — yes, every agent → **common**, one pin per tree in
+  `runtime/*-skill.ref` (the `FLEET_SKILLS` table: the `google-workspace`
+  redirect and the `plow-invite` referral, both sourced from plow-pbc/plow's
+  hosted-agent seed; `restore` installs and `install-skill` re-installs each —
+  except an agent whose own `skills.tsv` pins that destination, where the
+  instance pin is authoritative and both skip it)
 - a skill two agents share — pinned by SHA from upstream, installed by `add-skill`
 
 One question, two buckets, and the answer for a shared artifact is the same
@@ -266,11 +269,12 @@ is ignored, including one `agent-mgr` owns.
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, in `runtime/plow-chat-plugin.ref` |
 | the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, in `runtime/plow-chat-activate.ref` |
 | [`plow-pbc/plow`](https://github.com/plow-pbc/plow) | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, in `runtime/google-workspace-skill.ref` |
+| the same repo | the fleet `plow-invite` skill — the delight-triggered referral, one source shared with the hosted-agent image (its seed carries the matching twin pointer) | a **40-char SHA**, in `runtime/plow-invite-skill.ref` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
-All four pins are exact on purpose — a `sha256:` digest for the image, a
+All five pins are exact on purpose — a `sha256:` digest for the image, a
 40-char SHA for each of the two things taken from `hermes-plow-chat` and for
-the fleet skill taken from `plow-pbc/plow`. A tag or a
+each fleet skill taken from `plow-pbc/plow`. A tag or a
 branch re-resolves on the next pull, which silently changes a large unreviewed
 surface under a running agent that holds live credentials — and for the plugin,
 one that holds the chat token.

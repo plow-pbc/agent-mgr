@@ -122,7 +122,7 @@ usage: agent-mgr <command> [args]
 
   restore <name>              install config.yaml + .env skeleton into its home
   install-plugin <name>       Plow Chat plugin, from the fleet-wide pinned SHA
-  install-skill <name>        fleet google-workspace skill, from its pinned SHA
+  install-skill <name>        the pinned fleet skills (google-workspace, plow-invite)
   migrate-plugin-env <name> [--sync]  copy legacy PLOW_CHAT_* dotenv values onto the current names (--sync overwrites)
   add-skill <name> <repo> [--ref SHA] [--dest PATH] [--src PATH]
   cron-sync <name>            converge the repo's cron spec onto the scheduler
@@ -984,35 +984,55 @@ install_plow_plugin() {
         || die "could not install the Plow Chat plugin from plow-pbc/hermes-plow-chat at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? $landed"
 }
 
-# The pinned fleet google-workspace skill, into this agent's home. It replaces
-# the image-bundled copy of the same name, which teaches a local-OAuth path no
-# instance has; hermes's skills_sync keeps a diverged user copy, so this
-# override is durable. Sequenced by restore before the skills.tsv replay so an
-# instance row can still deliberately override it (last-writer-wins).
+# The pinned fleet skills, one `<ref file>:<dest>` per entry. Every tree's
+# source of truth is the HOSTED-agent seed in plow-pbc/plow
+# (cloud-agents/hermes/image/seed/skills/<dest>): the hosted runtime bakes that
+# tree into its image, this fleet installs the same tree into each home at a
+# pinned SHA. One skill source, two delivery mechanisms — keep fleet skills
+# runtime-agnostic (env-only config, paths relative to the skill dir) so the
+# twins keep converging instead of forking; see the matching pointer in the
+# seed's skill headers.
 #
-# Same shape as install_plow_plugin above, deliberately: one caller contract,
-# one pin-file idiom, one env override for tests. Reloads nothing -- callers do.
-install_fleet_skill() {
-    local landed="${1:?install_fleet_skill: the caller must say what landed}"
-    local ref
-    ref="${AGENT_MGR_SKILL_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/google-workspace-skill.ref")}"
-    # A SHA, never a branch: a branch would silently re-point every agent's
-    # Google path on the next upstream push.
-    [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the fleet-skill ref must be a 40-char SHA, got: $ref"
-    "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" skills SKILL.md \
-        plow-pbc/plow "$ref" productivity/google-workspace \
-        cloud-agents/hermes/image/seed/skills/productivity/google-workspace \
-        || die "could not install the google-workspace fleet skill from plow-pbc/plow at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? $landed"
+# google-workspace replaces the image-bundled copy of the same name, which
+# teaches a local-OAuth path no instance has; hermes's skills_sync keeps a
+# diverged user copy, so the override is durable. Sequenced by restore before
+# the skills.tsv replay so an instance row can still deliberately override it
+# (last-writer-wins).
+FLEET_SKILLS="google-workspace-skill.ref:productivity/google-workspace
+plow-invite-skill.ref:growth/plow-invite"
+
+# Every fleet skill whose dest the instance doesn't pin itself, into this
+# agent's home. Same shape as install_plow_plugin above, deliberately: one
+# caller contract, one pin-file idiom, one env override for tests. Reloads
+# nothing -- callers do.
+install_fleet_skills() {
+    local landed="${1:?install_fleet_skills: the caller must say what landed}"
+    local entry ref_file dest ref
+    for entry in $FLEET_SKILLS; do
+        ref_file="${entry%%:*}"
+        dest="${entry#*:}"
+        # The instance pin is authoritative over the fleet copy: skipping here
+        # leaves no window -- not even a failed replay's -- where the fleet
+        # copy sits where the reviewed instance pin should be.
+        if instance_owns_skill "$dest"; then
+            echo "fleet ${dest##*/} skill: skipped -- $AGENT_NAME's own skills.tsv pins $dest"
+            continue
+        fi
+        ref="${AGENT_MGR_SKILL_REF:-$(tr -d '[:space:]' < "$AGENT_MGR_ROOT/runtime/$ref_file")}"
+        # A SHA, never a branch: a branch would silently re-point every agent's
+        # copy on the next upstream push.
+        [[ "$ref" =~ ^[0-9a-f]{40}$ ]] || die "the fleet-skill ref must be a 40-char SHA, got: $ref"
+        "$AGENT_MGR_ROOT/lib/fetch-tree" "$AGENT_HOME" skills SKILL.md \
+            plow-pbc/plow "$ref" "$dest" \
+            "cloud-agents/hermes/image/seed/skills/$dest" \
+            || die "could not install the ${dest##*/} fleet skill from plow-pbc/plow at ${ref:0:7} -- is 'gh' installed and authenticated (gh auth status)? $landed"
+    done
 }
 
-# Does this agent's own skills.tsv pin productivity/google-workspace? That
-# instance pin is authoritative over the fleet copy: restore skips the fleet
-# install and install-skill refuses, so no window -- not even a failed
-# replay's -- leaves the fleet copy sitting where the reviewed instance pin
-# should be.
-instance_owns_google_workspace() {
+# Does this agent's own skills.tsv pin this destination?
+instance_owns_skill() {
     [ -s "$AGENT_DIR/skills.tsv" ] && \
-        awk -F'\t' '$3 == "productivity/google-workspace" {found=1} END {exit !found}' "$AGENT_DIR/skills.tsv"
+        awk -F'\t' -v d="$1" '$3 == d {found=1} END {exit !found}' "$AGENT_DIR/skills.tsv"
 }
 
 # Refuse to write into a home that is not this agent's.
