@@ -110,12 +110,8 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
 
 
 def model_provider(file: Path) -> str:
-    try:
-        text = file.read_text()
-    except OSError as exc:
-        raise AgentMgrError(ErrorCode.IO_ERROR, f"cannot read {file}") from exc
     inside = False
-    for line in text.splitlines():
+    for line in file.read_text().splitlines():
         if line == "model:":
             inside = True
             continue

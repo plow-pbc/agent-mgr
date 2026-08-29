@@ -365,10 +365,7 @@ def test_the_image_rule_reads_what_compose_resolved(
 
 
 def test_restore_refuses_a_bad_image_before_it_writes_anything(run, instance, tmp_path):
-    """The image rule lives on resolve-guard, which `restore` used to reach only
-    through reload-if-running on its LAST line -- so a deploy would install
-    config, the plugin and every pinned skill and refuse afterwards, having
-    already done the thing the refusal exists to prevent."""
+    """A deploy must enforce the image rule before installing anything."""
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     image="nousresearch/hermes-agent:latest")
@@ -387,10 +384,7 @@ def test_restore_refuses_a_bad_image_before_it_writes_anything(run, instance, tm
     ("add-skill", "rowan", "plow-pbc/x", "--ref", "a" * 40),
 ])
 def test_every_write_command_preflights_the_image(run, instance, tmp_path, args):
-    """restore was fixed and its two siblings kept the shape it was fixed for:
-    both reached resolve-guard only through reload-if-running on their last
-    line, so the plugin or the skill landed in the mounted credential home and
-    the refusal came after."""
+    """Every write must enforce the image rule before touching the mounted home."""
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     image="nousresearch/hermes-agent:latest")
