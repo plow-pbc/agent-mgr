@@ -3,11 +3,13 @@ import os
 import pathlib
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 # The PATH the suite inherited, before it was made docker-free. Only
 # tests/test_compose.py uses it -- see the fixture below.

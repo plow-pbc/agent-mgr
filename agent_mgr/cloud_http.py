@@ -71,9 +71,7 @@ class HttpCloudTransport:
 
         return cls(base_url=base_url.removesuffix("/"), token=token)
 
-    def request(
-        self, method: str, path: str, body: dict[str, JsonValue] | None = None
-    ) -> object:
+    def request(self, method: str, path: str, body: dict[str, JsonValue] | None = None) -> object:
         if not path.startswith("/v1/agents/cloud") or urlsplit(path).netloc:
             raise AgentMgrError(
                 ErrorCode.INVALID_ARGUMENT,
@@ -82,9 +80,9 @@ class HttpCloudTransport:
 
         encoded_body = None
         if body is not None and method not in {"GET", "DELETE"}:
-            encoded_body = json.dumps(
-                body, ensure_ascii=False, separators=(",", ":")
-            ).encode("utf-8")
+            encoded_body = json.dumps(body, ensure_ascii=False, separators=(",", ":")).encode(
+                "utf-8"
+            )
         sent = request.Request(
             f"{self.base_url}{path}",
             data=encoded_body,
@@ -106,9 +104,7 @@ class HttpCloudTransport:
                 message = f"{message}: {detail.replace(self.token, '[redacted]')}"
             raise AgentMgrError(ErrorCode.REMOTE_REJECTED, message) from None
         except error.URLError:
-            raise AgentMgrError(
-                ErrorCode.REMOTE_UNREACHABLE, "Plow API is unreachable"
-            ) from None
+            raise AgentMgrError(ErrorCode.REMOTE_UNREACHABLE, "Plow API is unreachable") from None
 
         try:
             decoded: object = json.loads(payload)

@@ -48,9 +48,7 @@ def _nonempty_string(
     return value
 
 
-def _chat_uids(
-    value: object, code: ErrorCode = ErrorCode.INVALID_ARGUMENT
-) -> tuple[str, ...]:
+def _chat_uids(value: object, code: ErrorCode = ErrorCode.INVALID_ARGUMENT) -> tuple[str, ...]:
     if not isinstance(value, list):
         _error(code, "chat_uids must be an array")
     validated = [_nonempty_string(item, "chat_uids", code) for item in value]
@@ -69,17 +67,9 @@ class CreateCloudAgentRequest:
     @classmethod
     def from_json(cls, value: object) -> CreateCloudAgentRequest:
         payload = _object(value, {"name", "provider", "chat_uids"}, {"chat_uids"})
-        name = (
-            _nonempty_string(payload["name"], "name")
-            if "name" in payload
-            else "cloud agent"
-        )
+        name = _nonempty_string(payload["name"], "name") if "name" in payload else "cloud agent"
         provider_value = payload.get("provider")
-        provider = (
-            None
-            if provider_value is None
-            else _nonempty_string(provider_value, "provider")
-        )
+        provider = None if provider_value is None else _nonempty_string(provider_value, "provider")
         return cls(chat_uids=_chat_uids(payload["chat_uids"]), name=name, provider=provider)
 
     def to_json(self) -> dict[str, JsonValue]:
@@ -146,14 +136,10 @@ class CloudAgentResource:
             _error(ErrorCode.INVALID_RESPONSE, "only failed resources may have a failure_code")
 
         return cls(
-            agent_id=_nonempty_string(
-                payload["agent_id"], "agent_id", ErrorCode.INVALID_RESPONSE
-            ),
+            agent_id=_nonempty_string(payload["agent_id"], "agent_id", ErrorCode.INVALID_RESPONSE),
             chat_uids=_chat_uids(payload["chat_uids"], ErrorCode.INVALID_RESPONSE),
             url=_nonempty_string(payload["url"], "url", ErrorCode.INVALID_RESPONSE),
-            provider=_nonempty_string(
-                payload["provider"], "provider", ErrorCode.INVALID_RESPONSE
-            ),
+            provider=_nonempty_string(payload["provider"], "provider", ErrorCode.INVALID_RESPONSE),
             status=status,
             failure_code=failure_code,
         )

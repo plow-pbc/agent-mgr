@@ -10,6 +10,9 @@ from pathlib import Path
 from typing import TextIO
 
 from .backups import backup_homes, prune_backups
+from .cloud_client import CloudClient
+from .cloud_http import HttpCloudTransport
+from .cloud_models import CreateCloudAgentRequest, UpdateCloudAgentChatsRequest
 from .commands import (
     activate,
     add_skill,
@@ -46,7 +49,18 @@ from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
 JSON_SCHEMA_VERSION = 1
-NATIVE_JSON_OPERATIONS = frozenset({"ls", "register", "unregister", "new", "resolve"})
+CLOUD_OPERATIONS = frozenset(
+    {
+        "cloud-create",
+        "cloud-list",
+        "cloud-get",
+        "cloud-update-chats",
+        "cloud-delete",
+    }
+)
+NATIVE_JSON_OPERATIONS = (
+    frozenset({"ls", "register", "unregister", "new", "resolve"}) | CLOUD_OPERATIONS
+)
 UNBOUNDED_JSON_OPERATIONS = frozenset({"logs", "compose"})
 
 
@@ -95,6 +109,31 @@ def _need(args: list[str], count: int, usage: str) -> None:
         raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"usage: {usage}")
 
 
+def _json_input(source: str) -> object:
+    if source == "-":
+        if sys.stdin.isatty():
+            raise AgentMgrError(
+                ErrorCode.INVALID_ARGUMENT,
+                "refusing to wait for cloud JSON on an interactive terminal",
+                "pipe a JSON object or pass a file path",
+                2,
+            )
+        text = sys.stdin.read()
+    else:
+        try:
+            text = Path(source).read_text(encoding="utf-8")
+        except OSError as error:
+            raise AgentMgrError(
+                ErrorCode.IO_ERROR, f"could not read cloud request: {error}"
+            ) from error
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as error:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT, f"invalid cloud request JSON: {error.msg}"
+        ) from error
+
+
 def _usage(stream: TextIO = sys.stdout) -> None:
     print(
         """usage: agent-mgr [--json] <command> [args]
@@ -104,12 +143,49 @@ def _usage(stream: TextIO = sys.stdout) -> None:
   activate | sign-in | set-latch | check-latch | chats | set-home
   check-connectors | migrate-plugin-env
   backup-homes | prune-backups
-  up | down | restart | logs | agent | compose | resolve-guard""",
+  up | down | restart | logs | agent | compose | resolve-guard
+  cloud-create <request.json|->
+  cloud-list
+  cloud-get <agent-id>
+  cloud-update-chats <agent-id> <request.json|->
+  cloud-delete <agent-id>""",
         file=stream,
     )
 
 
 def _run(operation: str, args: list[str], json_output: bool, registry: Registry) -> int:
+    if operation == "cloud-create":
+        _need(args, 1, "agent-mgr --json cloud-create <request.json|->")
+        create_request = CreateCloudAgentRequest.from_json(_json_input(args[0]))
+        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
+        _emit(operation, {"agent": client.create(create_request).to_json()})
+        return 0
+    if operation == "cloud-list":
+        _need(args, 0, "agent-mgr --json cloud-list")
+        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
+        resources = client.list()
+        _emit(operation, {"agents": [resource.to_json() for resource in resources]})
+        return 0
+    if operation == "cloud-get":
+        _need(args, 1, "agent-mgr --json cloud-get <agent-id>")
+        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
+        _emit(operation, {"agent": client.get(args[0]).to_json()})
+        return 0
+    if operation == "cloud-update-chats":
+        _need(
+            args,
+            2,
+            "agent-mgr --json cloud-update-chats <agent-id> <request.json|->",
+        )
+        update_request = UpdateCloudAgentChatsRequest.from_json(_json_input(args[1]))
+        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
+        _emit(operation, {"agent": client.update_chats(args[0], update_request).to_json()})
+        return 0
+    if operation == "cloud-delete":
+        _need(args, 1, "agent-mgr --json cloud-delete <agent-id>")
+        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
+        _emit(operation, {"agent": client.delete(args[0]).to_json()})
+        return 0
     if operation == "ls":
         _need(args, 0, "agent-mgr ls")
         entries = registry.entries()
@@ -372,6 +448,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         _usage(sys.stderr)
         return 2
     operation, args = words[0], words[1:]
+    if operation in CLOUD_OPERATIONS and not json_output:
+        return _fail(
+            operation,
+            AgentMgrError(
+                ErrorCode.INVALID_ARGUMENT,
+                f"{operation} requires --json",
+                "rerun with --json",
+                2,
+            ),
+            False,
+        )
     if json_output and operation in UNBOUNDED_JSON_OPERATIONS:
         return _fail(
             operation,
