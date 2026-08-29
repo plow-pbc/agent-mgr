@@ -103,7 +103,8 @@ writes the dotenv `0600` and only when it is absent, so a file you create first
 keeps your umask — 644 on a stock host — for a file that ends up holding the
 chat token.) After `up` is the bound that costs you silently: the zone reaches
 the container when the container is **created**, so changing it later needs
-another `agent-mgr up`, never `restart`, which does not recreate.
+`agent-mgr restart` or another `agent-mgr up`; both recreate the container from
+the current descriptor and shared Compose template.
 
 Check it before moving on — `agent-mgr resolve bob` reads that dotenv back, so
 it prints your zone if the edit landed and the fleet default if it did not.

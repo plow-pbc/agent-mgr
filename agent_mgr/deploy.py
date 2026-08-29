@@ -116,7 +116,7 @@ def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> 
         print(f"{agent.name} is not running -- {reason}; it will be read on next start")
         return
     print(f"restarting {agent.name}'s gateway -- {reason}")
-    if transition(agent, ["restart", "hermes"]):
+    if transition(agent, ["up", "-d", "--force-recreate", "hermes"]):
         raise AgentMgrError(ErrorCode.IO_ERROR, f"could not restart {agent.name}")
 
 

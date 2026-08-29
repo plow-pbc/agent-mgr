@@ -287,7 +287,9 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         command = {
             "up": ["up", "-d"],
             "down": ["down"],
-            "restart": ["restart", "hermes"],
+            # Compose restart retains the old container definition and misses
+            # changes in the shared template.
+            "restart": ["up", "-d", "--force-recreate", "hermes"],
             "logs": ["logs", "-f", "--tail", "100"],
         }[operation]
         if operation == "logs":
