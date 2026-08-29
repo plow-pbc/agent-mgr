@@ -31,7 +31,7 @@ def dotenv_read(file: Path, key: str) -> str:
 
 def config_declares_latch(file: Path) -> bool:
     inside = False
-    for line in file.read_text().splitlines():
+    for line in read_regular_text(file).splitlines():
         if line == "mcp_servers:":
             inside = True
             continue
