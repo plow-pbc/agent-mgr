@@ -6,11 +6,15 @@ from enum import StrEnum
 
 class ErrorCode(StrEnum):
     AGENT_NOT_FOUND = "agent_not_found"
+    CONFIGURATION_ERROR = "configuration_error"
     INVALID_ARGUMENT = "invalid_argument"
     INVALID_DESCRIPTOR = "invalid_descriptor"
     INVALID_NAME = "invalid_name"
+    INVALID_RESPONSE = "invalid_response"
     IO_ERROR = "io_error"
     OPERATION_FAILED = "operation_failed"
+    REMOTE_REJECTED = "remote_rejected"
+    REMOTE_UNREACHABLE = "remote_unreachable"
 
 
 @dataclass(slots=True)

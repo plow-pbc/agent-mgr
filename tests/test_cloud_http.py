@@ -1,0 +1,414 @@
+from __future__ import annotations
+
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
+from http.client import IncompleteRead
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
+from typing import Self
+from urllib import error, request
+
+import pytest
+
+from agent_mgr.cloud_http import HttpCloudTransport
+from agent_mgr.errors import AgentMgrError, ErrorCode
+
+
+@contextmanager
+def _running_server(
+    handler: type[BaseHTTPRequestHandler],
+) -> Iterator[ThreadingHTTPServer]:
+    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join()
+
+
+def _recording_handler(
+    requests: list[tuple[str, str | None]],
+    *,
+    status: int = 200,
+    location: str | None = None,
+) -> type[BaseHTTPRequestHandler]:
+    class Handler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            requests.append((self.path, self.headers.get("Authorization")))
+            self.send_response(status)
+            if location is not None:
+                self.send_header("Location", location)
+            else:
+                self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            if status == 200:
+                self.wfile.write(b"null")
+
+        def log_message(self, format: str, *args: object) -> None:
+            return None
+
+    return Handler
+
+
+class _Response:
+    def __init__(self, payload: bytes, read_error: Exception | None = None) -> None:
+        self.payload = payload
+        self.read_error = read_error
+
+    def read(self) -> bytes:
+        if self.read_error is not None:
+            raise self.read_error
+        return self.payload
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+
+class _RecordingOpener:
+    def __init__(self) -> None:
+        self.requests: list[request.Request] = []
+        self._response = _Response(b"null")
+        self._error: Exception | None = None
+
+    def respond(self, status: int, payload: bytes) -> None:
+        assert 200 <= status < 300
+        self._response = _Response(payload)
+        self._error = None
+
+    def fail_while_reading(self, read_error: Exception) -> None:
+        self._response = _Response(b"", read_error)
+        self._error = None
+
+    def raise_http_error(self, status: int, payload: bytes) -> None:
+        self._error = error.HTTPError(
+            "https://api.example/v1/agents/cloud",
+            status,
+            "remote error",
+            None,
+            BytesIO(payload),
+        )
+
+    def raise_url_error(self, reason: str) -> None:
+        self._error = error.URLError(reason)
+
+    def open(self, sent: request.Request, *, timeout: float) -> _Response:
+        assert timeout == 30.0
+        self.requests.append(sent)
+        if self._error is not None:
+            raise self._error
+        return self._response
+
+
+@pytest.fixture
+def recording_opener(monkeypatch: pytest.MonkeyPatch) -> _RecordingOpener:
+    opener = _RecordingOpener()
+
+    def build_opener(*handlers: object) -> _RecordingOpener:
+        return opener
+
+    monkeypatch.setattr(request, "build_opener", build_opener)
+    return opener
+
+
+def configured_transport(recording_opener: _RecordingOpener) -> HttpCloudTransport:
+    return HttpCloudTransport.from_environment(
+        {
+            "PLOW_API_BASE": "https://api.example/",
+            "PLOW_API_TOKEN": "secret-token",
+        }
+    )
+
+
+@pytest.mark.parametrize("missing", ["PLOW_API_BASE", "PLOW_API_TOKEN"])
+def test_environment_requires_both_cloud_values(missing: str) -> None:
+    environ = {
+        "PLOW_API_BASE": "https://api.example",
+        "PLOW_API_TOKEN": "secret-token",
+    }
+    del environ[missing]
+    with pytest.raises(AgentMgrError) as raised:
+        HttpCloudTransport.from_environment(environ)
+    assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
+    assert "secret-token" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "secret-token\rX-Injected: yes",
+        "secret-token\nX-Injected: yes",
+        "secret-token\r",
+        "secret-token\n",
+        "secret-token\t",
+    ],
+)
+def test_environment_rejects_header_control_characters_without_exposing_token(
+    token: str,
+) -> None:
+    with pytest.raises(AgentMgrError) as raised:
+        HttpCloudTransport.from_environment(
+            {"PLOW_API_BASE": "https://api.example", "PLOW_API_TOKEN": token}
+        )
+    assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
+    assert str(raised.value) == "PLOW_API_TOKEN contains invalid characters"
+    assert "secret-token" not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "secret_marker"),
+    [
+        ("PLOW_API_TOKEN", "private-token-\N{SNOWMAN}", "private-token"),
+        (
+            "PLOW_API_BASE",
+            "https://private-origin-\N{SNOWMAN}.invalid",
+            "private-origin",
+        ),
+    ],
+)
+def test_environment_rejects_non_ascii_configuration_without_disclosure(
+    key: str, value: str, secret_marker: str
+) -> None:
+    environ = {
+        "PLOW_API_BASE": "https://api.example",
+        "PLOW_API_TOKEN": "secret-token",
+    }
+    environ[key] = value
+
+    with pytest.raises(AgentMgrError) as raised:
+        HttpCloudTransport.from_environment(environ)
+
+    assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
+    assert secret_marker not in str(raised.value)
+    assert secret_marker not in repr(raised.value)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://api.example",
+        "ftp://api.example",
+        "https://user:password@api.example",
+        "https://api.example/path?query=yes",
+        "https://api.example/path#fragment",
+    ],
+)
+def test_base_url_rejects_unsafe_or_ambiguous_origins(url: str) -> None:
+    with pytest.raises(AgentMgrError):
+        HttpCloudTransport.from_environment(
+            {"PLOW_API_BASE": url, "PLOW_API_TOKEN": "secret-token"}
+        )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        " https://api.example",
+        "https://api.example ",
+        "https://api .example",
+        "https://api.example\t.evil",
+        "https://api.example\r.evil",
+        "https://api.example\n.evil",
+        "https://api.example\x00.evil",
+        "https://api.example%00.evil",
+        "https://api.example%09.evil",
+        "https://api.example%0a.evil",
+        "https://api.example%0D.evil",
+        "https://api.example%20.evil",
+        "https://api.example%7f.evil",
+    ],
+)
+def test_base_url_rejects_control_or_whitespace_authorities_without_disclosure(
+    url: str,
+) -> None:
+    with pytest.raises(AgentMgrError) as raised:
+        HttpCloudTransport.from_environment(
+            {"PLOW_API_BASE": url, "PLOW_API_TOKEN": "secret-token"}
+        )
+
+    assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
+    assert str(raised.value) == "PLOW_API_BASE must be a valid URL origin"
+    assert url not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
+@pytest.mark.parametrize("url", ["http://localhost:8000", "http://127.0.0.1:8000"])
+def test_loopback_http_is_allowed_for_development(url: str) -> None:
+    assert (
+        HttpCloudTransport.from_environment(
+            {"PLOW_API_BASE": url, "PLOW_API_TOKEN": "secret-token"}
+        ).base_url
+        == url
+    )
+
+
+def test_transport_repr_redacts_token() -> None:
+    transport = HttpCloudTransport.from_environment(
+        {"PLOW_API_BASE": "https://api.example", "PLOW_API_TOKEN": "secret-token"}
+    )
+    assert "secret-token" not in repr(transport)
+
+
+def test_transport_sends_authenticated_compact_utf8_json(
+    recording_opener: _RecordingOpener,
+) -> None:
+    recording_opener.respond(200, b'{"ok":true}')
+    configured_transport(recording_opener).request(
+        "POST", "/v1/agents/cloud", {"name": "caf\N{LATIN SMALL LETTER E WITH ACUTE}"}
+    )
+
+    [sent] = recording_opener.requests
+    headers = {name.lower(): value for name, value in sent.header_items()}
+    assert sent.get_method() == "POST"
+    assert sent.full_url == "https://api.example/v1/agents/cloud"
+    assert headers["content-type"] == "application/json"
+    assert headers["accept"] == "application/json"
+    assert headers["authorization"] == "Bearer secret-token"
+    assert sum(name.lower() == "authorization" for name, _ in sent.header_items()) == 1
+    assert sent.data == b'{"name":"caf\xc3\xa9"}'
+
+
+def test_transport_decodes_a_json_success(recording_opener: _RecordingOpener) -> None:
+    recording_opener.respond(200, b'{"agent_id":"abc"}')
+    transport = configured_transport(recording_opener)
+    assert transport.request("GET", "/v1/agents/cloud/abc") == {"agent_id": "abc"}
+
+
+def test_transport_rejects_malformed_success_json(
+    recording_opener: _RecordingOpener,
+) -> None:
+    recording_opener.respond(200, b"not-json-secret-token")
+    with pytest.raises(AgentMgrError) as raised:
+        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+    assert raised.value.code is ErrorCode.INVALID_RESPONSE
+    assert "secret-token" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "read_error",
+    [
+        IncompleteRead(b"partial secret-token", 100),
+        OSError("body read exposed secret-token"),
+    ],
+    ids=["incomplete-read", "os-error"],
+)
+def test_transport_sanitizes_success_body_read_failures(
+    read_error: Exception, recording_opener: _RecordingOpener
+) -> None:
+    recording_opener.fail_while_reading(read_error)
+
+    with pytest.raises(AgentMgrError) as raised:
+        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+
+    assert raised.value.code is ErrorCode.INVALID_RESPONSE
+    assert str(raised.value) == "Plow API response could not be read"
+    assert "secret-token" not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
+def test_transport_reports_only_recognized_remote_detail(
+    recording_opener: _RecordingOpener,
+) -> None:
+    recording_opener.raise_http_error(
+        400,
+        b'{"detail":"provider is not available","token":"secret-token"}',
+    )
+    with pytest.raises(AgentMgrError) as raised:
+        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+    assert raised.value.code is ErrorCode.REMOTE_REJECTED
+    assert str(raised.value) == "Plow API rejected the request (400): provider is not available"
+    assert "secret-token" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"secret-token",
+        b'["secret-token"]',
+        b'{"detail":["secret-token"]}',
+    ],
+)
+def test_transport_does_not_report_unrecognized_remote_bodies(
+    payload: bytes, recording_opener: _RecordingOpener
+) -> None:
+    recording_opener.raise_http_error(400, payload)
+    with pytest.raises(AgentMgrError) as raised:
+        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+    assert raised.value.code is ErrorCode.REMOTE_REJECTED
+    assert str(raised.value) == "Plow API rejected the request (400)"
+
+
+def test_transport_sanitizes_unreachable_failures(
+    recording_opener: _RecordingOpener,
+) -> None:
+    recording_opener.raise_url_error("upstream included secret-token")
+    with pytest.raises(AgentMgrError) as raised:
+        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+    assert raised.value.code is ErrorCode.REMOTE_UNREACHABLE
+    assert str(raised.value) == "Plow API is unreachable"
+    assert "secret-token" not in str(raised.value)
+
+
+def test_transport_does_not_contact_a_real_redirect_target() -> None:
+    source_requests: list[tuple[str, str | None]] = []
+    target_requests: list[tuple[str, str | None]] = []
+
+    with _running_server(_recording_handler(target_requests)) as target:
+        target_url = f"http://127.0.0.1:{target.server_port}/redirect-target"
+        with _running_server(
+            _recording_handler(source_requests, status=302, location=target_url)
+        ) as source:
+            transport = HttpCloudTransport.from_environment(
+                {
+                    "PLOW_API_BASE": f"http://127.0.0.1:{source.server_port}",
+                    "PLOW_API_TOKEN": "secret-token",
+                }
+            )
+            with pytest.raises(AgentMgrError) as raised:
+                transport.request("GET", "/v1/agents/cloud")
+
+    assert raised.value.code is ErrorCode.REMOTE_REJECTED
+    assert source_requests == [("/v1/agents/cloud", "Bearer secret-token")]
+    assert target_requests == []
+
+
+def test_loopback_transport_bypasses_an_ambient_http_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target_requests: list[tuple[str, str | None]] = []
+    proxy_requests: list[tuple[str, str | None]] = []
+
+    with _running_server(_recording_handler(target_requests)) as target, _running_server(
+        _recording_handler(proxy_requests)
+    ) as proxy:
+        for variable in (
+            "HTTP_PROXY",
+            "http_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ):
+            monkeypatch.delenv(variable, raising=False)
+        monkeypatch.setenv("http_proxy", f"http://127.0.0.1:{proxy.server_port}")
+        transport = HttpCloudTransport.from_environment(
+            {
+                "PLOW_API_BASE": f"http://127.0.0.1:{target.server_port}",
+                "PLOW_API_TOKEN": "secret-token",
+            }
+        )
+
+        assert transport.request("GET", "/v1/agents/cloud") is None
+
+    assert target_requests == [("/v1/agents/cloud", "Bearer secret-token")]
+    assert proxy_requests == []

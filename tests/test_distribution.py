@@ -59,3 +59,13 @@ def test_release_zipapp_contains_every_resource_needed_for_restore(tmp_path):
     )
     assert resolved.returncode == 0, resolved.stderr
     assert json.loads(resolved.stdout)["result"]["name"] == "rowan"
+    cloud = subprocess.run(
+        [str(artifact), "--json", "cloud-list"],
+        env={"PATH": os.environ["PATH"]},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert cloud.returncode == 1
+    assert json.loads(cloud.stdout)["error"]["code"] == "configuration_error"
+    assert cloud.stderr == ""

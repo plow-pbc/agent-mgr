@@ -57,6 +57,29 @@ detaches terminal stdin: pipe input (for example, `credential-helper | agent-mgr
 --json set-latch errands`), and set `AGENT_TRANSITION_ACK=1` for an intentional
 live transition. `logs` and `compose` reject JSON because they can stream forever.
 
+## Cloud agents
+
+The cloud-control commands use Plow's API and return structured JSON:
+
+```bash
+export PLOW_API_BASE=https://api.plow.co
+read -rsp 'Plow API token: ' PLOW_API_TOKEN; export PLOW_API_TOKEN
+
+printf '%s\n' '{"name":"Mary","provider":"exe:hermes","chat_uids":["cht_example"]}' \
+  | agent-mgr --json cloud-create
+agent-mgr --json cloud-list
+agent-mgr --json cloud-get AGENT_ID
+printf '%s\n' '{"chat_uids":["cht_example","cht_second"]}' \
+  | agent-mgr --json cloud-update-chats AGENT_ID
+agent-mgr --json cloud-delete AGENT_ID
+```
+
+Create normally returns `status: "provisioning"`. Callers should poll
+`cloud-get` until the agent reaches `running`, `failed`, or `teardown`. Retry
+creation after `failed`; repeat deletion after `teardown`. agent-mgr never
+contacts exe.dev or handles tenant credentials. Local Compose commands remain
+separate from the cloud-control commands.
+
 ## Why it exists
 
 Four sibling repos hand-copied the same deployment scaffold, and the copies
