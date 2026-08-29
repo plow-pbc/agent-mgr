@@ -533,10 +533,10 @@ legacy-dotenv migration every install path carries) — useful when an agent's
 restore hook is expensive (the rentals agent re-seeds a vault and rebuilds its
 property hubs) and nothing else changed.
 
-`agent-mgr install-skill <name>` is the same shape for
-`runtime/google-workspace-skill.ref`, the fleet `google-workspace` skill —
+`agent-mgr install-skill <name>` is the same shape for the fleet skills
+(`runtime/google-workspace-skill.ref` and `runtime/plow-invite-skill.ref`) —
 also the first thing to run on an agent still reporting `NOT_AUTHENTICATED`
-from the image-bundled local-OAuth copy. It refuses an agent whose own
-`skills.tsv` pins `productivity/google-workspace`: the instance pin is
-authoritative there (`restore` likewise skips the fleet copy for such an
-agent), so bump that row and re-run `restore` instead.
+from the image-bundled local-OAuth `google-workspace` copy. A destination the
+agent's own `skills.tsv` pins is skipped per skill, there and in `restore`
+alike: the instance pin is authoritative, so bump that row and re-run
+`restore` to change that one copy — the other fleet skills still install.
