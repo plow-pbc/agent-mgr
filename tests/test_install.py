@@ -174,7 +174,7 @@ def test_restore_on_an_instance_with_no_config_is_refused(run, instance):
 
 
 @pytest.mark.parametrize("pin", ["plow-chat-plugin.ref", "plow-chat-activate.ref",
-                                 "google-workspace-skill.ref"])
+                                 "google-workspace-skill.ref", "plow-invite-skill.ref"])
 def test_every_shipped_pin_is_a_sha_not_a_branch(pin):
     """A branch would silently re-point a running agent on the next upstream push.
 
