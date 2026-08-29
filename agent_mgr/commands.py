@@ -111,7 +111,7 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
 
 def model_provider(file: Path) -> str:
     inside = False
-    for line in file.read_text().splitlines():
+    for line in read_regular_text(file).splitlines():
         if line == "model:":
             inside = True
             continue
