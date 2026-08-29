@@ -60,7 +60,8 @@ agent-mgr restore errands --json
 
 The JSON schema version is independent of the CLI version. Human output remains
 the default for this compatibility release; machine consumers should always
-request JSON explicitly.
+request JSON explicitly. `logs` and the unrestricted `compose` escape hatch
+reject `--json` with a structured error because either can stream without bound.
 
 ## Why it exists
 

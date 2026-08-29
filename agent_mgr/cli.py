@@ -46,6 +46,7 @@ from .registry import Registry
 ROOT = Path(__file__).resolve().parent.parent
 JSON_SCHEMA_VERSION = 1
 NATIVE_JSON_OPERATIONS = frozenset({"ls", "register", "unregister", "new", "resolve"})
+UNBOUNDED_JSON_OPERATIONS = frozenset({"logs", "compose"})
 
 
 def _emit(operation: str, result: dict[str, JsonValue]) -> None:
@@ -357,6 +358,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         _usage(sys.stderr)
         return 2
     operation, args = words[0], words[1:]
+    if json_output and operation in UNBOUNDED_JSON_OPERATIONS:
+        return _fail(
+            operation,
+            AgentMgrError(
+                ErrorCode.INVALID_ARGUMENT,
+                f"{operation} is unavailable with --json because it can produce unbounded output",
+                "run it without --json",
+                2,
+            ),
+            True,
+        )
     if json_output and operation not in NATIVE_JSON_OPERATIONS:
         completed = subprocess.run(
             [sys.executable, str(ROOT / "agent-mgr"), operation, *args],

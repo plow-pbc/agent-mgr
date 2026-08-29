@@ -1,5 +1,7 @@
 import json
 
+import pytest
+
 
 def payload(result):
     assert result.stderr == ""
@@ -90,3 +92,22 @@ def test_every_operation_has_one_json_document_on_stdout(run, instance, tmp_path
     assert body["result"]["exit_code"] == 0
     assert body["result"]["stdout"] == []
     assert result.stderr == ""
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        ("logs", "rowan"),
+        ("compose", "rowan", "logs", "-f"),
+    ],
+)
+def test_json_rejects_unbounded_streaming_operations(run, arguments):
+    result = run("--json", *arguments)
+
+    assert result.returncode == 2
+    assert result.stderr == ""
+    body = json.loads(result.stdout)
+    assert body["ok"] is False
+    assert body["operation"] == arguments[0]
+    assert body["error"]["code"] == "invalid_argument"
+    assert "unbounded output" in body["error"]["message"]
