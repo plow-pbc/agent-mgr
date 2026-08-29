@@ -104,7 +104,7 @@ private vault repo, never in the agent's.
 |---|---|---|
 | [`plow-pbc/str-hermes-agent`](https://github.com/plow-pbc/str-hermes-agent) | short-term rentals — messages guests, answers from the operations wiki, unlocks doors | the only one running its product end to end; carries a vault mount and a PMS |
 | [`plow-pbc/property-hunt-hermes-agent`](https://github.com/plow-pbc/property-hunt-hermes-agent) | house hunting — reads a photo of a listing, identifies the house, puts it on a private map | the skill and the agent are one checkout, mounted rather than pinned; the store, map and browser live on the Mac, reached through Latch |
-| [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar | the thinnest: no vault, no product surface, nothing on the Mac |
+| [`plow-pbc/life-assistant-hermes-agent`](https://github.com/plow-pbc/life-assistant-hermes-agent) | life and family logistics — mail, calendar, a Pi-hosted wall display | the thinnest: no vault; the wall is reached through Latch on the owner's Mac (same LAN), never from the agent directly |
 
 Adding one here means adding it to `.knightwatch/siblings` too, or a reviewer
 of this repo cannot read it. This table is the authority; that file only makes
