@@ -9,6 +9,7 @@ class ErrorCode(StrEnum):
     INVALID_ARGUMENT = "invalid_argument"
     INVALID_DESCRIPTOR = "invalid_descriptor"
     INVALID_NAME = "invalid_name"
+    INVALID_RESPONSE = "invalid_response"
     IO_ERROR = "io_error"
     OPERATION_FAILED = "operation_failed"
 
