@@ -400,6 +400,11 @@ agent-mgr add-skill errands plow-pbc/plow --dest plow-connectors \
     --src cloud-agents/hermes/image/seed/skills/productivity/plow-connectors
 ```
 
+(`plow-connectors` is the retiring REST path — Gmail/Calendar work is moving
+to the fleet `google-workspace` skill, Plow Latch / `plow-gog` through the
+owner's Mac, which `install-skill` already pins; the REST skill stays for
+Slack.)
+
 The pin is recorded in the agent repo's `skills.tsv`, so what an agent runs is
 reviewable beside its config. Refs are always 40-char SHAs — a branch would
 silently re-point a running agent on the next upstream push.
