@@ -210,6 +210,29 @@ def test_cloud_create_reports_input_failures(run, tmp_path, contents, code) -> N
     assert body["error"]["code"] == code
 
 
+@pytest.mark.parametrize(
+    ("operation", "leading_args"),
+    [
+        ("cloud-create", ()),
+        ("cloud-update-chats", ("agent-id",)),
+    ],
+)
+def test_cloud_request_files_reject_invalid_utf8_as_one_json_document(
+    run, tmp_path, operation: str, leading_args: tuple[str, ...]
+) -> None:
+    request = tmp_path / "request.json"
+    request.write_bytes(b'{"chat_uids":["cht_a"]}\xff')
+
+    result = run("--json", operation, *leading_args, str(request))
+
+    assert result.returncode == 1
+    body = _json_document(result, operation)
+    assert body["ok"] is False
+    assert body["error"]["code"] == "invalid_argument"
+    assert body["error"]["message"] == "cloud request file is not valid UTF-8"
+    assert "\\xff" not in result.stdout
+
+
 def test_cloud_create_accepts_piped_json(run, cloud_server) -> None:
     resource = _contract_resources()[1]
     cloud_server.respond(resource)

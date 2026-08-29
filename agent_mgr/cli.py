@@ -122,6 +122,11 @@ def _json_input(source: str) -> object:
     else:
         try:
             text = Path(source).read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            raise AgentMgrError(
+                ErrorCode.INVALID_ARGUMENT,
+                "cloud request file is not valid UTF-8",
+            ) from None
         except OSError as error:
             raise AgentMgrError(
                 ErrorCode.IO_ERROR, f"could not read cloud request: {error}"

@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from http.client import IncompleteRead
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from typing import Self
@@ -30,10 +31,13 @@ def _running_server(
 
 
 class _Response:
-    def __init__(self, payload: bytes) -> None:
+    def __init__(self, payload: bytes, read_error: Exception | None = None) -> None:
         self.payload = payload
+        self.read_error = read_error
 
     def read(self) -> bytes:
+        if self.read_error is not None:
+            raise self.read_error
         return self.payload
 
     def __enter__(self) -> Self:
@@ -53,6 +57,10 @@ class _RecordingOpener:
     def respond(self, status: int, payload: bytes) -> None:
         assert 200 <= status < 300
         self._response = _Response(payload)
+        self._error = None
+
+    def fail_while_reading(self, read_error: Exception) -> None:
+        self._response = _Response(b"", read_error)
         self._error = None
 
     def raise_http_error(self, status: int, payload: bytes) -> None:
@@ -142,11 +150,46 @@ def test_base_url_rejects_unsafe_or_ambiguous_origins(url: str) -> None:
         )
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        " https://api.example",
+        "https://api.example ",
+        "https://api .example",
+        "https://api.example\t.evil",
+        "https://api.example\r.evil",
+        "https://api.example\n.evil",
+        "https://api.example\x00.evil",
+        "https://api.example%00.evil",
+        "https://api.example%09.evil",
+        "https://api.example%0a.evil",
+        "https://api.example%0D.evil",
+        "https://api.example%20.evil",
+        "https://api.example%7f.evil",
+    ],
+)
+def test_base_url_rejects_control_or_whitespace_authorities_without_disclosure(
+    url: str,
+) -> None:
+    with pytest.raises(AgentMgrError) as raised:
+        HttpCloudTransport.from_environment(
+            {"PLOW_API_BASE": url, "PLOW_API_TOKEN": "secret-token"}
+        )
+
+    assert raised.value.code is ErrorCode.CONFIGURATION_ERROR
+    assert str(raised.value) == "PLOW_API_BASE must be a valid URL origin"
+    assert url not in str(raised.value)
+    assert raised.value.__cause__ is None
+
+
 @pytest.mark.parametrize("url", ["http://localhost:8000", "http://127.0.0.1:8000"])
 def test_loopback_http_is_allowed_for_development(url: str) -> None:
-    assert HttpCloudTransport.from_environment(
-        {"PLOW_API_BASE": url, "PLOW_API_TOKEN": "secret-token"}
-    ).base_url == url
+    assert (
+        HttpCloudTransport.from_environment(
+            {"PLOW_API_BASE": url, "PLOW_API_TOKEN": "secret-token"}
+        ).base_url
+        == url
+    )
 
 
 def test_transport_repr_redacts_token() -> None:
@@ -179,9 +222,7 @@ def test_transport_sends_authenticated_compact_utf8_json(
 def test_transport_omits_body_for_bodyless_methods(
     method: str, recording_opener: _RecordingOpener
 ) -> None:
-    configured_transport(recording_opener).request(
-        method, "/v1/agents/cloud", {"ignored": True}
-    )
+    configured_transport(recording_opener).request(method, "/v1/agents/cloud", {"ignored": True})
     [sent] = recording_opener.requests
     assert sent.data is None
 
@@ -200,6 +241,28 @@ def test_transport_rejects_malformed_success_json(
         configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
     assert "secret-token" not in str(raised.value)
+
+
+@pytest.mark.parametrize(
+    "read_error",
+    [
+        IncompleteRead(b"partial secret-token", 100),
+        OSError("body read exposed secret-token"),
+    ],
+    ids=["incomplete-read", "os-error"],
+)
+def test_transport_sanitizes_success_body_read_failures(
+    read_error: Exception, recording_opener: _RecordingOpener
+) -> None:
+    recording_opener.fail_while_reading(read_error)
+
+    with pytest.raises(AgentMgrError) as raised:
+        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+
+    assert raised.value.code is ErrorCode.INVALID_RESPONSE
+    assert str(raised.value) == "Plow API response could not be read"
+    assert "secret-token" not in str(raised.value)
+    assert raised.value.__cause__ is None
 
 
 def test_transport_reports_only_recognized_remote_detail(
@@ -255,8 +318,7 @@ def test_transport_rejects_redirects_without_a_second_request(
     assert raised.value.code is ErrorCode.REMOTE_REJECTED
     assert len(recording_opener.requests) == 1
     assert any(
-        isinstance(handler, request.HTTPRedirectHandler)
-        for handler in recording_opener.handlers
+        isinstance(handler, request.HTTPRedirectHandler) for handler in recording_opener.handlers
     )
 
 
