@@ -203,12 +203,9 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
     # Never the whole token, on either stream -- the operator may be screen-sharing.
     assert "tok_xyz" not in r.stdout
     assert "tok_xyz" not in r.stderr
-    # But the last three must be the STORED value's, not the raw paste's. For a
-    # padded paste the raw tail is "z  " -- trailing spaces are invisible in a
-    # terminal, so the operator reads "...z" here and "...xyz" from check-latch's
-    # REVOKED line, and two spellings of one credential is what sends them to
-    # revoke a live token.
-    assert "...xyz" in r.stdout
+    # Even a suffix is credential-derived data and must not reach shared logs.
+    assert "xyz" not in r.stdout
+    assert "xyz" not in r.stderr
 
 
 def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance):

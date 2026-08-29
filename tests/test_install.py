@@ -757,8 +757,6 @@ def test_each_pin_is_read_only_where_its_command_fetches():
     assert plugin["revision"] != activation["revision"]
     assert plugin["source"] == "plow-chat-platform"
     assert activation["source"] == "ref/scripts/create_plow_chat_curl.sh"
-    assert plugin["scope"] == "shared"
-    assert activation["scope"] == "local"
 
 
 def test_the_activate_pin_is_frozen_and_distinct():

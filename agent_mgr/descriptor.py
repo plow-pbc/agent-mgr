@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
 
+from .artifacts import image_reference
 from .errors import AgentMgrError, ErrorCode
 from .models import ResolvedAgent
 from .registry import Registry
@@ -139,19 +138,7 @@ def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
     dotenv = home / ".env"
     if dotenv.is_file():
         timezone = _read_timezone(dotenv) or timezone
-    lock = cast(dict[str, object], json.loads((root / "runtime" / "stack.json").read_text()))
-    images = lock.get("images")
-    if not isinstance(images, dict) or not isinstance(images.get("hermes_local"), dict):
-        raise AgentMgrError(
-            ErrorCode.INVALID_DESCRIPTOR, "runtime/stack.json has no hermes_local image"
-        )
-    image_entry = images["hermes_local"]
-    reference = image_entry.get("reference")
-    if not isinstance(reference, str) or "@sha256:" not in reference:
-        raise AgentMgrError(
-            ErrorCode.INVALID_DESCRIPTOR,
-            "runtime/stack.json hermes_local image is not digest-pinned",
-        )
+    reference = image_reference(root)
     config = _repo_path(repo, values.get("AGENT_CONFIG", "config.yaml"))
     assert config is not None
     return ResolvedAgent(

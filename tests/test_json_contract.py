@@ -1,6 +1,9 @@
+import io
 import json
+import subprocess
 
 import pytest
+from conftest import ROOT
 
 
 def payload(result):
@@ -65,6 +68,26 @@ def test_operational_json_failure_preserves_status_and_both_streams(run):
     assert body["error"]["exit_code"] == 1
     assert body["error"]["stdout"] == []
     assert body["error"]["stderr"] == ["agent-mgr: missing is not registered"]
+
+
+@pytest.mark.parametrize("terminal, expected", [(True, subprocess.DEVNULL), (False, None)])
+def test_operational_json_detaches_only_terminal_stdin(monkeypatch, terminal, expected):
+    monkeypatch.syspath_prepend(str(ROOT))
+    from agent_mgr import cli
+
+    stdin = io.StringIO("piped input\n")
+    monkeypatch.setattr(stdin, "isatty", lambda: terminal)
+    monkeypatch.setattr(cli.sys, "stdin", stdin)
+    seen = {}
+
+    def completed(*_args, **kwargs):
+        seen.update(kwargs)
+        return subprocess.CompletedProcess([], 0, "", "")
+
+    monkeypatch.setattr(cli.subprocess, "run", completed)
+
+    assert cli.main(["--json", "check-connectors", "rowan"]) == 0
+    assert seen["stdin"] is expected
 
 
 def test_json_registry_listing_is_data_not_a_table(run, instance):

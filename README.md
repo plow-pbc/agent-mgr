@@ -48,20 +48,14 @@ agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
 agent-mgr check-latch errands
 ```
 
-Every command accepts `--json`. Read operations such as `resolve` and `ls`
-return typed domain objects; operational commands return a versioned envelope
-with exit status and captured output. Errors use stable codes, so Plow and
-other automation do not need to parse terminal prose:
+Every command accepts `--json`. Reads return typed domain objects; operational
+commands return a versioned envelope with exit status and captured output.
+Errors use stable codes, so automation never has to parse terminal prose:
 
-```sh
-agent-mgr --json resolve errands
-agent-mgr restore errands --json
-```
-
-The JSON schema version is independent of the CLI version. Human output remains
-the default for this compatibility release; machine consumers should always
-request JSON explicitly. `logs` and the unrestricted `compose` escape hatch
-reject `--json` with a structured error because either can stream without bound.
+Machine consumers should always request JSON explicitly. Operational JSON
+detaches terminal stdin: pipe input (for example, `credential-helper | agent-mgr
+--json set-latch errands`), and set `AGENT_TRANSITION_ACK=1` for an intentional
+live transition. `logs` and `compose` reject JSON because they can stream forever.
 
 ## Why it exists
 
@@ -266,19 +260,6 @@ fleet's no-credential-through-compose contract is untouched. Any other key there
 is ignored, including one `agent-mgr` owns.
 
 ## What this builds on
-
-```
-  plow-pbc/hermes-plow-chat      the plow-chat-platform plugin: the phone line
-            │                    implementing the Plow Chat API (api.plow.co/openapi.json)
-            │                    — and, at an earlier SHA, the activation script
-            │ pinned TWICE in runtime/stack.json, each by 40-char SHA:
-            │   plow_chat_plugin       the plugin directory
-            │   plow_chat_activation   create_plow_chat_curl.sh
-            ▼
-        agent-mgr ───── pinned by image digest ─────▶ nousresearch/hermes-agent
-            │                                          (the runtime; third party)
-            └───── the agent's config.yaml ─────▶ Plow Latch, over the relay at api.plow.co
-```
 
 | dependency | what it is | pinned as |
 |---|---|---|

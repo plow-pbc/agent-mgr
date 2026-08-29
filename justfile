@@ -18,4 +18,4 @@ check: lint typecheck test
 
 package:
     python3 scripts/build_zipapp.py dist/agent-mgr.pyz
-    tmp=$$(mktemp -d); HOME="$$tmp" AGENT_MGR_REGISTRY="$$tmp/agents" dist/agent-mgr.pyz --json ls
+    tmp=$(mktemp -d); HOME="$tmp" AGENT_MGR_REGISTRY="$tmp/agents" dist/agent-mgr.pyz --json ls

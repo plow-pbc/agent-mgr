@@ -179,9 +179,7 @@ def add_skill(agent: ResolvedAgent, registry: Registry, args: list[str]) -> int:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT, f"the skill ref must be a 40-char SHA, got: {revision}"
         )
-    artifact = Artifact(
-        repository, revision, options["--src"], f"skills/{options['--dest']}", "local"
-    )
+    artifact = Artifact(repository, revision, options["--src"], f"skills/{options['--dest']}")
     fetch(
         agent,
         "skills",
@@ -240,8 +238,13 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
     else:
         print("DOMO_MCP_TOKEN: ", end="", file=sys.stderr)
         token = sys.stdin.readline().strip()
+    if not uid or not token:
+        missing = "DOMO_DEVICE_UID" if not uid else "DOMO_MCP_TOKEN"
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT, f"{missing} was empty -- nothing was written"
+        )
     upsert(agent, ["DOMO_DEVICE_UID", "DOMO_MCP_TOKEN"], [uid, token])
-    print(f"wrote DOMO_DEVICE_UID and DOMO_MCP_TOKEN (...{token[-3:]}) to {dotenv}")
+    print(f"wrote DOMO_DEVICE_UID and DOMO_MCP_TOKEN to {dotenv}")
     reload_if_running(agent, registry, "the credential just written")
     print(f"now prove it reaches the Mac: agent-mgr check-latch {agent.name}")
     return 0
@@ -299,9 +302,7 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
         print(f"latch reachable from {agent.name}'s container (HTTP 200)")
         return 0
     if code == "401":
-        raise AgentMgrError(
-            ErrorCode.INVALID_ARGUMENT, f"DOMO_MCP_TOKEN (...{token[-3:]}) is REVOKED"
-        )
+        raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, "DOMO_MCP_TOKEN is REVOKED")
     if code == "000":
         raise AgentMgrError(
             ErrorCode.IO_ERROR,

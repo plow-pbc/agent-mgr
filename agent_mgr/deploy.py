@@ -49,9 +49,7 @@ def install_plugin(
                 ErrorCode.INVALID_ARGUMENT,
                 f"the plugin ref must be a 40-char SHA, got: {override}",
             )
-        artifact = Artifact(
-            artifact.repository, override, artifact.source, artifact.destination, artifact.scope
-        )
+        artifact = Artifact(artifact.repository, override, artifact.source, artifact.destination)
     try:
         fetch(agent, "plugins", "plugin.yaml", artifact)
     except AgentMgrError as error:
@@ -93,7 +91,7 @@ def install_fleet_skills(agent: ResolvedAgent) -> None:
                     f"the fleet-skill ref must be a 40-char SHA, got: {override}",
                 )
             artifact = Artifact(
-                artifact.repository, override, artifact.source, artifact.destination, artifact.scope
+                artifact.repository, override, artifact.source, artifact.destination
             )
         fetch(agent, "skills", "SKILL.md", artifact, destination=dest)
 
@@ -106,7 +104,7 @@ def replay_skills(agent: ResolvedAgent) -> None:
         if not line:
             continue
         repository, revision, destination, source = [*line.split("\t"), ""][:4]
-        artifact = Artifact(repository, revision, source, f"skills/{destination}", "local")
+        artifact = Artifact(repository, revision, source, f"skills/{destination}")
         fetch(agent, "skills", "SKILL.md", artifact, destination=destination, source=source)
 
 

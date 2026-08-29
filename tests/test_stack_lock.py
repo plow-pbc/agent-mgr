@@ -23,4 +23,4 @@ def test_stack_lock_has_valid_immutable_artifact_coordinates():
         assert set(artifact["revision"]) <= set("0123456789abcdef")
         assert artifact["source"]
         assert artifact["destination"]
-        assert artifact["scope"] in {"shared", "local"}
+        assert "scope" not in artifact

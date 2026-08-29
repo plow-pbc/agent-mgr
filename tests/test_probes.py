@@ -81,7 +81,7 @@ def test_the_token_is_never_printed_in_full(run, instance, tmp_path):
     _with_latch(tmp_path, "property", tok="supersecrettokenvalue")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="401"))
     assert "supersecrettokenvalue" not in (r.stdout + r.stderr)
-    assert "lue" in r.stderr, "the last 3 characters identify it without disclosing it"
+    assert "lue" not in r.stderr, "credential-derived suffixes must not reach shared logs"
 
 
 @pytest.mark.parametrize(

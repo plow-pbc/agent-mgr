@@ -388,6 +388,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             [sys.executable, str(ROOT / "agent-mgr"), operation, *args],
             text=True,
             capture_output=True,
+            stdin=subprocess.DEVNULL if sys.stdin.isatty() else None,
             check=False,
         )
         if completed.returncode == 0:
