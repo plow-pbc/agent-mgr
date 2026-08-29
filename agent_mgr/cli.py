@@ -73,13 +73,11 @@ def _fail(
             "remediation": error.remediation,
         }
         if output is not None:
-            details.update(
-                {
-                    "exit_code": error.exit_code,
-                    "stdout": output[0],
-                    "stderr": output[1],
-                }
-            )
+            details |= {
+                "exit_code": error.exit_code,
+                "stdout": output[0],
+                "stderr": output[1],
+            }
         body: dict[str, JsonValue] = {
             "ok": False,
             "schema_version": JSON_SCHEMA_VERSION,
