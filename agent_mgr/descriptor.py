@@ -105,13 +105,12 @@ def _repo_path(repo: Path, value: str) -> Path | None:
 
 def _read_timezone(file: Path) -> str | None:
     timezone: str | None = None
-    for number, key, value in _assignments(read_regular_text(file), file, frozenset({"AGENT_TZ"})):
-        if key == "AGENT_TZ":
-            timezone = value
-            if not timezone:
-                raise AgentMgrError(
-                    ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for AGENT_TZ"
-                )
+    for number, _, value in _assignments(read_regular_text(file), file, frozenset({"AGENT_TZ"})):
+        timezone = value
+        if not timezone:
+            raise AgentMgrError(
+                ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for AGENT_TZ"
+            )
     return timezone
 
 

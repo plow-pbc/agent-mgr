@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
 from pathlib import Path
 
 from .errors import AgentMgrError, ErrorCode
+from .files import atomic_write
 from .models import RegistryEntry
 
 VALID_NAME = re.compile(r"^[a-z0-9-]+$")
@@ -67,12 +67,5 @@ class Registry:
 
     def _replace(self, entries: list[RegistryEntry]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        descriptor, temporary = tempfile.mkstemp(dir=self.path.parent)
-        try:
-            with os.fdopen(descriptor, "w") as stream:
-                for entry in entries:
-                    stream.write(f"{entry.name}\t{entry.repo}\n")
-            os.replace(temporary, self.path)
-        except BaseException:
-            Path(temporary).unlink(missing_ok=True)
-            raise
+        content = "".join(f"{entry.name}\t{entry.repo}\n" for entry in entries)
+        atomic_write(self.path, content.encode())
