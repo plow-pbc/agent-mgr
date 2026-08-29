@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import shutil
 import stat
@@ -41,13 +42,17 @@ def test_set_latch_uses_getpass_for_a_terminal_token(
     assert terminal.readline() == "would-echo\n"
 
 
-def test_sign_in_authenticates_against_the_installed_config_not_the_repo_copy(run, instance, tmp_path):
+def test_sign_in_authenticates_against_the_installed_config_not_the_repo_copy(
+    run, instance, tmp_path
+):
     """The gateway resolved model.provider from the INSTALLED config at boot.
     Reading the repo copy would mint a credential for a provider it is not using
     the moment the two differ."""
     run("register", "rowan", str(instance("rowan", config="model:\n  provider: openai-codex\n")))
     run("restore", "rowan")
-    (tmp_path / "home" / ".hermes-rowan" / "config.yaml").write_text("model:\n  provider: anthropic\n")
+    (tmp_path / "home" / ".hermes-rowan" / "config.yaml").write_text(
+        "model:\n  provider: anthropic\n"
+    )
     b, log = _fake_docker(tmp_path)
     r = run("sign-in", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
@@ -63,13 +68,17 @@ def test_sign_in_refuses_before_restore_has_run(run, instance):
     assert "restore" in r.stderr
 
 
-@pytest.mark.parametrize("command", ["activate", "set-latch", "migrate-plugin-env"])
+@pytest.mark.parametrize(
+    "command", ["activate", "scope-chat-credential", "set-latch", "migrate-plugin-env"]
+)
 @pytest.mark.parametrize(
     "descriptor",
     ["AGENT_HOME=/etc\n", "AGENT_HOME=/tmp/.hermes-property\n"],
     ids=["not-a-hermes-home", "a-siblings-conventional-home"],
 )
-def test_credential_writers_refuse_a_home_that_is_not_this_agents(run, instance, command, descriptor):
+def test_credential_writers_refuse_a_home_that_is_not_this_agents(
+    run, instance, command, descriptor
+):
     """Every command that writes a credential into a home takes the same guard.
     Pointed at a sibling's, activate would take that agent off its chat and spend
     a one-time activation; set-latch would hand it a relay credential minted
@@ -110,14 +119,20 @@ CLEAN = "dev_abc\ntok_xyz\n"
         # Padded stdin rides one row -- what a paste looks like, and the axis
         # that pins the value strip. It is independent of the dotenv shape,
         # so pairing it with every row would just re-run the same CLI.
-        (b"HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n",
-         (b"HOSTEX_TOKEN=keep-me",), "  dev_abc \n\ttok_xyz  \n"),
+        (
+            b"HOSTEX_TOKEN=keep-me\nDOMO_DEVICE_UID=\nDOMO_MCP_TOKEN=\n",
+            (b"HOSTEX_TOKEN=keep-me",),
+            "  dev_abc \n\ttok_xyz  \n",
+        ),
         # No DOMO_* at all -- the append arm.
         (b"HOSTEX_TOKEN=keep-me\n", (b"HOSTEX_TOKEN=keep-me",), CLEAN),
         # Two canonical declarations, which is what appending a line at the
         # bottom produces. The upsert must leave exactly one, no stale value.
-        (b"HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nDOMO_MCP_TOKEN=staler\n",
-         (b"HOSTEX_TOKEN=keep-me",), CLEAN),
+        (
+            b"HOSTEX_TOKEN=keep-me\nDOMO_MCP_TOKEN=stale\nDOMO_MCP_TOKEN=staler\n",
+            (b"HOSTEX_TOKEN=keep-me",),
+            CLEAN,
+        ),
         # Bytes this command does not own, and THREE independent mechanisms,
         # each of which would cut or corrupt a credential it must only copy:
         #   \xe9   -- becomes U+FFFD if the file is decoded to edit it
@@ -126,8 +141,11 @@ CLEAN = "dev_abc\ntok_xyz\n"
         # They are independent, so each needs its own byte: a surrogateescape
         # implementation survives the first and cuts the second, and
         # bytes.splitlines() survives both and cuts the third.
-        (b"SEAM_API_KEY=caf\xe9-la\rtin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
-         (b"SEAM_API_KEY=caf\xe9-la\rtin1", b"HOSTEX_TOKEN=a\xc2\x85b"), CLEAN),
+        (
+            b"SEAM_API_KEY=caf\xe9-la\rtin1\nHOSTEX_TOKEN=a\xc2\x85b\nDOMO_MCP_TOKEN=\n",
+            (b"SEAM_API_KEY=caf\xe9-la\rtin1", b"HOSTEX_TOKEN=a\xc2\x85b"),
+            CLEAN,
+        ),
         # No terminating newline -- a hand-edited file, or an editor configured
         # not to add one. Every other row ends in \n, so the trailing-newline
         # conditional in upsert() is never driven through its False side; make
@@ -140,14 +158,24 @@ CLEAN = "dev_abc\ntok_xyz\n"
         # grammars is fine while they read disjoint keys, each matching how its
         # key is produced; what is NOT fine is this command rewriting the other
         # reader's line. Every non-DOMO line is copied verbatim, so it does not.
-        (b"export AGENT_TZ=Europe/Paris\n  HOSTEX_TOKEN = keep-me\nDOMO_MCP_TOKEN=\n",
-         (b"export AGENT_TZ=Europe/Paris", b"  HOSTEX_TOKEN = keep-me"), CLEAN),
+        (
+            b"export AGENT_TZ=Europe/Paris\n  HOSTEX_TOKEN = keep-me\nDOMO_MCP_TOKEN=\n",
+            (b"export AGENT_TZ=Europe/Paris", b"  HOSTEX_TOKEN = keep-me"),
+            CLEAN,
+        ),
     ],
-    ids=["pre-seeded-empty-padded", "absent", "canonical-duplicate",
-         "bytes-we-do-not-own", "no-trailing-newline", "another-readers-keys"],
+    ids=[
+        "pre-seeded-empty-padded",
+        "absent",
+        "canonical-duplicate",
+        "bytes-we-do-not-own",
+        "no-trailing-newline",
+        "another-readers-keys",
+    ],
 )
 def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
-        run, instance, tmp_path, starting_dotenv, preserved, stdin):
+    run, instance, tmp_path, starting_dotenv, preserved, stdin
+):
     """The dotenv is shared -- the rentals agent keeps a PMS token and a lock API
     key in the same file -- so an upsert that rewrote the file would take those
     with it. And whatever spelling a key arrives in, exactly one declaration may
@@ -157,8 +185,7 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
     env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
     env_file.write_bytes(starting_dotenv)
     b, _ = _fake_docker(tmp_path)
-    r = run("set-latch", "rowan", input=stdin,
-            env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("set-latch", "rowan", input=stdin, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     body = env_file.read_bytes()
     # The whole LINE, at column 0 -- not a substring. A future edit that carried
@@ -179,8 +206,9 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
     assert lines.pop() == b"", "the dotenv must end in exactly one newline"
     # By owned key, not by a DOMO_ prefix: a user's own DOMO_REGION would
     # otherwise be exempted from the set this is meant to be guarding.
-    survivors = tuple(l for l in lines
-                      if l.split(b"=", 1)[0] not in (b"DOMO_DEVICE_UID", b"DOMO_MCP_TOKEN"))
+    survivors = tuple(
+        l for l in lines if l.split(b"=", 1)[0] not in (b"DOMO_DEVICE_UID", b"DOMO_MCP_TOKEN")
+    )
     assert survivors == preserved, "a line this command does not own was rewritten or added"
     # One declaration each, in any spelling -- not a second appended beside the
     # one it was meant to replace, and no stale value left underneath.
@@ -225,7 +253,9 @@ def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance
     ],
     ids=["token-blank", "token-whitespace", "uid-whitespace"],
 )
-def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, tmp_path, stdin, missing):
+def test_set_latch_refuses_an_empty_value_rather_than_writing_it(
+    run, instance, tmp_path, stdin, missing
+):
     """An empty write is the half-configured state check-latch exists to report
     -- manufactured by the command meant to prevent it. Refused before anything
     reaches the dotenv, so there is nothing to undo."""
@@ -254,7 +284,9 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, 
         ("fifo", [".env -- run 'agent-mgr restore"]),
     ],
 )
-def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(run, instance, tmp_path, plant, expected):
+def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(
+    run, instance, tmp_path, plant, expected
+):
     """The home is a live container mount, and the agents that most need a latch
     read attacker-controlled input. A gateway that got out of hand can swap the
     dotenv for a symlink to any file the operator can read: following it would
@@ -328,13 +360,15 @@ def test_set_latch_env_reads_only_a_regular_leaf(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
     os.mkfifo(home / ".env")
-    r = subprocess.run([str(ROOT / "lib" / "upsert-env"), str(home),
-                        "DOMO_DEVICE_UID", "DOMO_MCP_TOKEN"],
-                       input="dev_abc\ntok_xyz\n", capture_output=True, text=True, timeout=10)
+    r = subprocess.run(
+        [str(ROOT / "lib" / "upsert-env"), str(home), "DOMO_DEVICE_UID", "DOMO_MCP_TOKEN"],
+        input="dev_abc\ntok_xyz\n",
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
     assert r.returncode != 0
     assert "not a regular file" in r.stderr
-
-
 
 
 def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instance, tmp_path):
@@ -377,3 +411,130 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     # interpolated the value would put it in a terminal and a scrollback.
     assert "tok_xyz" not in r.stderr
     assert "tok_xyz" not in r.stdout
+
+
+def test_activate_narrows_bootstrap_to_line_granted_canonical_credential(run, instance, tmp_path):
+    """The frozen upstream activation remains the phone bind; agent-mgr only
+    narrows its broad result through Plow's existing key endpoint."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    home = tmp_path / "home" / ".hermes-rowan"
+    request_log = tmp_path / "key-request.json"
+    b = tmp_path / "delegate-bin"
+    b.mkdir()
+    curl = b / "curl"
+    curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+url=""
+out=""
+data=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    --data-binary) data="${2#@}"; shift 2 ;;
+    -H) shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "$url" in
+  *raw.githubusercontent.com*)
+    cat > "$out" <<'INSTALL'
+#!/usr/bin/env bash
+while [ $# -gt 0 ]; do
+  case "$1" in --data-dir) home="$2"; shift 2 ;; *) shift ;; esac
+done
+printf 'PLOW_CHAT_CHAT_UID=cht_home\nPLOW_CHAT_TOKEN=plow_bootstrap\n' > "$home/.env"
+INSTALL
+    ;;
+  */v1/chats/cht_home)
+    printf '%s' '{"participants":[{"type":"agent","line":{"uid":"ln_elm"}}]}' > "$out"
+    printf '200'
+    ;;
+  */v1/api-keys/current)
+    cp "$data" "$PLOW_TEST_KEY_REQUEST"
+    printf '%s' '{"id":1,"scopes":["chats:use","llm:chat"],"chat_uids":["line:ln_elm"]}' > "$out"
+    printf '200'
+    ;;
+  *) exit 22 ;;
+esac
+"""
+    )
+    curl.chmod(0o755)
+
+    r = run(
+        "activate",
+        "rowan",
+        env={
+            "PATH": f"{b}:{os.environ['PATH']}",
+            "PLOW_API_BASE": "https://api.test",
+            "PLOW_TEST_KEY_REQUEST": str(request_log),
+        },
+    )
+
+    assert r.returncode == 0, r.stderr
+    dotenv = (home / ".env").read_text()
+    assert "PLOW_HOME_CHANNEL=cht_home" in dotenv
+    assert "PLOW_AGENT_TOKEN=plow_bootstrap" in dotenv
+    assert "PLOW_CHAT_CHAT_UID=cht_home" in dotenv and "PLOW_CHAT_TOKEN=plow_bootstrap" in dotenv
+    request = json.loads(request_log.read_text())
+    assert request == {
+        "name": "agent-mgr:rowan",
+        "scopes": ["chats:use", "llm:chat"],
+        "chat_uids": ["line:ln_elm"],
+    }
+
+
+def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
+    run, instance, tmp_path
+):
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    home = tmp_path / "home" / ".hermes-rowan"
+    (home / ".env").write_text("PLOW_CHAT_CHAT_UID=cht_home\nPLOW_CHAT_TOKEN=plow_bootstrap\n")
+    docker_bin, _ = _fake_docker(tmp_path)
+    b = tmp_path / "scope-bin"
+    b.mkdir()
+    (b / "docker").symlink_to(docker_bin / "docker")
+    request_log = tmp_path / "scope-request.json"
+    curl = b / "curl"
+    curl.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+url=""
+out=""
+data=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -o) out="$2"; shift 2 ;;
+    --data-binary) data="${2#@}"; shift 2 ;;
+    -H) shift 2 ;;
+    http*) url="$1"; shift ;;
+    *) shift ;;
+  esac
+done
+case "$url" in
+  */v1/chats/cht_home) printf '%s' '{"participants":[{"type":"agent","line":{"uid":"ln_elm"}}]}' > "$out"; printf '200' ;;
+  */v1/api-keys/current) cp "$data" "$PLOW_TEST_KEY_REQUEST"; printf '%s' '{"id":1}' > "$out"; printf '200' ;;
+  *) exit 22 ;;
+esac
+"""
+    )
+    curl.chmod(0o755)
+
+    r = run(
+        "scope-chat-credential",
+        "rowan",
+        env={
+            "PATH": f"{b}:{os.environ['PATH']}",
+            "PLOW_API_BASE": "https://api.test",
+            "PLOW_TEST_KEY_REQUEST": str(request_log),
+        },
+    )
+
+    assert r.returncode == 0, r.stderr
+    dotenv = (home / ".env").read_text()
+    assert "PLOW_HOME_CHANNEL=cht_home" in dotenv
+    assert "PLOW_AGENT_TOKEN=plow_bootstrap" in dotenv
+    assert json.loads(request_log.read_text())["chat_uids"] == ["line:ln_elm"]

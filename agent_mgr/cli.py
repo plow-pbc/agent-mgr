@@ -20,6 +20,7 @@ from .commands import (
     check_connectors,
     check_latch,
     cron_sync,
+    scope_chat_credential,
     set_home,
     set_latch,
     sign_in,
@@ -132,7 +133,7 @@ def _usage(stream: TextIO = sys.stdout) -> None:
 
   ls | register | unregister | new | resolve
   restore | install-plugin | install-skill | add-skill | cron-sync
-  activate | sign-in | set-latch | check-latch | chats | set-home
+  activate | scope-chat-credential | sign-in | set-latch | check-latch | chats | set-home
   check-connectors | migrate-plugin-env
   backup-homes | prune-backups
   up | down | restart | logs | agent | compose | resolve-guard
@@ -338,6 +339,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
     if operation in {
         "cron-sync",
         "activate",
+        "scope-chat-credential",
         "sign-in",
         "set-latch",
         "check-latch",
@@ -349,6 +351,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         return {
             "cron-sync": cron_sync,
             "activate": activate,
+            "scope-chat-credential": scope_chat_credential,
             "sign-in": sign_in,
             "set-latch": set_latch,
             "check-latch": check_latch,

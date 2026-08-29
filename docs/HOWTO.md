@@ -36,7 +36,20 @@ agent-mgr sign-in errands     # device-code OAuth; hand the URL to whoever owns 
 no credential — the account binding is *whichever phone texts the code back*. So
 the code must be sent from the handset that should own the agent. A code texted
 by the wrong person binds the agent to the wrong account, and it is a one-time
-spend.
+spend. `agent-mgr` then narrows that same bootstrap credential to the agent's
+existing line through Plow's key API, stores the canonical
+`PLOW_HOME_CHANNEL`/`PLOW_AGENT_TOKEN` pair, and reloads a running container.
+That line grant is what lets a newly added group arrive without reactivation.
+
+For an agent activated before line grants were introduced, run this once after
+the compatible Plow API is deployed:
+
+```sh
+agent-mgr scope-chat-credential rowan
+```
+
+It narrows the existing credential in place; it does not leave a broad key
+behind, spend another activation, rotate the token, or change the home chat.
 
 To let it drive a Mac, mint the pair on that Mac and hand it to `set-latch`,
 which writes it into that instance's own dotenv — `$AGENT_HOME/.env`, the one

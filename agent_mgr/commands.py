@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
+from contextlib import suppress
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
@@ -93,12 +94,20 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
     if result.returncode:
         return result.returncode
     try:
-        migrate_plugin_env(agent, True)
-    except AgentMgrError:
+        narrow_chat_credential(agent)
+    except AgentMgrError as error:
+        # Preserve the pre-line-grant activation contract even when the API
+        # narrowing call is unavailable: the frozen installer wrote legacy
+        # names, and a successful phone bind must still publish the canonical
+        # pair before reporting the follow-up action.
+        with suppress(AgentMgrError):
+            migrate_plugin_env(agent, True)
         print(
-            "activation SUCCEEDED under the legacy PLOW_CHAT_* names -- do NOT re-run activate",
+            "activation SUCCEEDED under a broad credential -- do NOT re-run activate; "
+            f"run 'agent-mgr scope-chat-credential {agent.name}' after fixing: {error.message}",
             file=sys.stderr,
         )
+        return 0
     try:
         reload_if_running(agent, registry, "the credential just written")
     except AgentMgrError:
@@ -107,6 +116,118 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
             file=sys.stderr,
         )
     return 0
+
+
+def _plow_json(
+    method: str,
+    url: str,
+    token: str,
+    payload: dict[str, object] | None = None,
+) -> dict[str, object]:
+    """Call Plow without placing the bearer token in argv or a temp file."""
+    with tempfile.NamedTemporaryFile() as response, tempfile.NamedTemporaryFile() as request:
+        command = [
+            "curl",
+            "-sS",
+            "--max-time",
+            "30",
+            "--config",
+            "-",
+            "-o",
+            response.name,
+            "-w",
+            "%{http_code}",
+            "-X",
+            method,
+        ]
+        if payload is not None:
+            request.write(json.dumps(payload).encode())
+            request.flush()
+            command += ["-H", "Content-Type: application/json", "--data-binary", f"@{request.name}"]
+        command.append(url)
+        result = subprocess.run(
+            command,
+            input=f"header = {json.dumps('Authorization: Bearer ' + token)}\n",
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if result.returncode or result.stdout != "200":
+            raise AgentMgrError(
+                ErrorCode.IO_ERROR,
+                f"{method} {url.removeprefix(url.split('/v1/', 1)[0])} answered "
+                f"{result.stdout or '<none>'} -- {result.stderr.strip()}",
+            )
+        try:
+            parsed = json.loads(Path(response.name).read_text())
+        except (OSError, json.JSONDecodeError) as exc:
+            raise AgentMgrError(
+                ErrorCode.IO_ERROR, f"{method} {url} returned invalid JSON"
+            ) from exc
+    if not isinstance(parsed, dict):
+        raise AgentMgrError(ErrorCode.IO_ERROR, f"{method} {url} returned non-object JSON")
+    return parsed
+
+
+def narrow_chat_credential(agent: ResolvedAgent) -> int:
+    """Convert an activation credential to line reach in place."""
+    dotenv = agent.home / ".env"
+    if not dotenv.is_file():
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr restore {agent.name}' first"
+        )
+    home_uid = dotenv_read(dotenv, "PLOW_HOME_CHANNEL") or dotenv_read(dotenv, "PLOW_CHAT_CHAT_UID")
+    token = dotenv_read(dotenv, "PLOW_AGENT_TOKEN") or dotenv_read(dotenv, "PLOW_CHAT_TOKEN")
+    if not home_uid or not token:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"incomplete Plow credential in {dotenv} -- activation must write a home and token together",
+        )
+    base = (
+        os.environ.get("PLOW_API_BASE")
+        or dotenv_read(dotenv, "PLOW_API_BASE")
+        or "https://api.plow.co"
+    )
+    chat = _plow_json("GET", f"{base}/v1/chats/{home_uid}", token)
+    participants = chat.get("participants")
+    if not isinstance(participants, list):
+        raise AgentMgrError(ErrorCode.IO_ERROR, "home chat has no participant roster")
+    agents = [
+        participant
+        for participant in participants
+        if isinstance(participant, dict) and participant.get("type") == "agent"
+    ]
+    self_agents = [
+        participant for participant in agents if participant.get("relationship") == "self"
+    ]
+    current = self_agents[0] if len(self_agents) == 1 else agents[0] if len(agents) == 1 else None
+    line = current.get("line") if current is not None else None
+    line_uid = line.get("uid") if isinstance(line, dict) else None
+    if not isinstance(line_uid, str) or not line_uid:
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR, "home chat did not identify exactly one current agent line"
+        )
+    _plow_json(
+        "PUT",
+        f"{base}/v1/api-keys/current",
+        token,
+        {
+            "name": f"agent-mgr:{agent.name}",
+            "scopes": ["chats:use", "llm:chat"],
+            "chat_uids": [f"line:{line_uid}"],
+        },
+    )
+    migrate_plugin_env(agent, True)
+    return 0
+
+
+def scope_chat_credential(agent: ResolvedAgent, registry: Registry) -> int:
+    """One-time narrowing for agents activated before line grants existed."""
+    require_own_home(agent, registry)
+    resolve_guard(agent, registry)
+    result = narrow_chat_credential(agent)
+    reload_if_running(agent, registry, "the scoped chat credential just written")
+    return result
 
 
 def model_provider(file: Path) -> str:

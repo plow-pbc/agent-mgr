@@ -22,6 +22,7 @@ def test_restore_writes_a_dotenv_skeleton_carrying_both_platforms(run, instance,
     run("restore", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
     assert "PLOW_AGENT_TOKEN" in env
+    assert "PLOW_HOME_CHANNEL" in env
     assert "DOMO_MCP_TOKEN" in env, "latch is baseline, not an opt-in"
 
 
