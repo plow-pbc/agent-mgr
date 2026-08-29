@@ -20,6 +20,12 @@ class Artifact:
     destination: str
 
 
+def validate_revision(value: str, subject: str, code: ErrorCode) -> str:
+    if len(value) != 40 or any(c not in "0123456789abcdef" for c in value):
+        raise AgentMgrError(code, f"{subject} must be a 40-char SHA, got: {value}")
+    return value
+
+
 def _load_stack(root: Path) -> dict[str, object]:
     raw: object = json.loads((root / "runtime" / "stack.json").read_text())
     if not isinstance(raw, dict) or raw.get("schema_version") != 1:
@@ -50,12 +56,9 @@ def stack(root: Path = ROOT) -> dict[str, Artifact]:
         if not all(isinstance(value.get(field), str) for field in fields):
             raise AgentMgrError(ErrorCode.INVALID_DESCRIPTOR, f"invalid artifact {name}")
         artifact = Artifact(*(value[field] for field in fields))
-        if len(artifact.revision) != 40 or any(
-            c not in "0123456789abcdef" for c in artifact.revision
-        ):
-            raise AgentMgrError(
-                ErrorCode.INVALID_DESCRIPTOR, f"artifact {name} revision must be a 40-char SHA"
-            )
+        validate_revision(
+            artifact.revision, f"artifact {name} revision", ErrorCode.INVALID_DESCRIPTOR
+        )
         result[name] = artifact
     return result
 

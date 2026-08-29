@@ -250,7 +250,7 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(run, instance, 
         # the `-f` gate and is stopped on the write path, which owes the
         # did-not-half-happen line. A FIFO is not a regular file, so `-f` turns
         # it away first and owes only its own diagnosis.
-        ("symlink-out", ["cannot read", "Nothing was written"]),
+        ("symlink-out", ["cannot read"]),
         # Named with the .env path, because eight `die` sites in this file share
         # "run 'agent-mgr restore" -- two of them inside set-latch. A bare
         # fragment would be satisfied by the config.yaml gate at :237, so a

@@ -691,6 +691,23 @@ def test_restore_replays_every_pinned_skill(run, instance, tmp_path):
     assert (tmp_path / "home" / ".hermes-rowan" / "skills" / "my-skill" / "SKILL.md").exists()
 
 
+def test_restore_replaces_a_container_planted_config_symlink(run, instance, tmp_path):
+    repo = instance("rowan", config="model:\n  provider: openai-codex\n")
+    run("register", "rowan", str(repo))
+    run("restore", "rowan")
+    target = tmp_path / "sibling.env"
+    target.write_text("PLOW_AGENT_TOKEN=keep\n")
+    config = tmp_path / "home" / ".hermes-rowan" / "config.yaml"
+    config.unlink()
+    config.symlink_to(target)
+
+    r = run("restore", "rowan")
+
+    assert r.returncode == 0, r.stderr
+    assert target.read_text() == "PLOW_AGENT_TOKEN=keep\n"
+    assert not config.is_symlink()
+
+
 def test_a_missing_hook_is_caught_before_anything_is_written(run, instance, tmp_path):
     """Validated at the end, a missing hook left the plugin and config installed
     under a message saying the deploy did not land -- a report the state

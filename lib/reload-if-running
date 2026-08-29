@@ -1,5 +1,0 @@
-#!/usr/bin/env python3
-import sys
-
-print("reload-if-running: run me through agent-mgr", file=sys.stderr)
-raise SystemExit(1)

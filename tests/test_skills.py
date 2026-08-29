@@ -2,7 +2,7 @@ import base64
 import os
 
 import pytest
-from conftest import fake_docker, fake_skill_gh
+from conftest import ROOT, fake_docker, fake_skill_gh
 
 
 def _fake_bin(tmp_path, skill_name="property-hunt", files=(), agent="property", src=None):
@@ -43,6 +43,19 @@ def test_adding_the_same_skill_again_updates_the_pin_rather_than_duplicating(run
     tsv = (repo / "skills.tsv").read_text()
     assert tsv.count("plow-pbc/property-hunt") == 1
     assert "b" * 40 in tsv and "a" * 40 not in tsv
+
+
+def test_a_failed_manifest_publish_preserves_existing_pins(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(ROOT))
+    from agent_mgr import commands
+
+    manifest = tmp_path / "skills.tsv"
+    manifest.write_text("existing\n")
+    monkeypatch.setattr(commands, "atomic_write",
+                        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("full")))
+    with pytest.raises(commands.AgentMgrError, match="full"):
+        commands._write_manifest(manifest, "replacement\n")
+    assert manifest.read_text() == "existing\n"
 
 
 def test_a_branch_ref_is_refused(run, instance, tmp_path):

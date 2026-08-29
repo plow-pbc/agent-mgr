@@ -1,12 +1,12 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 from pathlib import Path
 
-from .artifacts import Artifact, fetch, stack
+from .artifacts import Artifact, fetch, stack, validate_revision
 from .errors import AgentMgrError, ErrorCode
+from .files import atomic_write
 from .local import (
     compose,
     confirm_transition,
@@ -19,6 +19,11 @@ from .models import ResolvedAgent
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def _publish_home_file(source: Path, home: Path, name: str) -> None:
+    resolved = home.resolve()
+    atomic_write(resolved / name, source.read_bytes(), stage_in=resolved.parent)
 
 
 def migrate_plugin_env(agent: ResolvedAgent, sync: bool = False) -> None:
@@ -44,11 +49,7 @@ def install_plugin(
     artifact = stack()["plow_chat_plugin"]
     override = os.environ.get("AGENT_MGR_PLUGIN_REF")
     if override:
-        if len(override) != 40 or any(c not in "0123456789abcdef" for c in override):
-            raise AgentMgrError(
-                ErrorCode.INVALID_ARGUMENT,
-                f"the plugin ref must be a 40-char SHA, got: {override}",
-            )
+        validate_revision(override, "the plugin ref", ErrorCode.INVALID_ARGUMENT)
         artifact = Artifact(artifact.repository, override, artifact.source, artifact.destination)
     try:
         fetch(agent, "plugins", "plugin.yaml", artifact)
@@ -85,11 +86,7 @@ def install_fleet_skills(agent: ResolvedAgent) -> None:
             continue
         override = os.environ.get("AGENT_MGR_SKILL_REF")
         if override:
-            if len(override) != 40 or any(c not in "0123456789abcdef" for c in override):
-                raise AgentMgrError(
-                    ErrorCode.INVALID_ARGUMENT,
-                    f"the fleet-skill ref must be a 40-char SHA, got: {override}",
-                )
+            validate_revision(override, "the fleet-skill ref", ErrorCode.INVALID_ARGUMENT)
             artifact = Artifact(
                 artifact.repository, override, artifact.source, artifact.destination
             )
@@ -143,12 +140,10 @@ def restore(agent: ResolvedAgent, registry: Registry) -> None:
         skeleton = agent.repo / ".env.example"
         if not skeleton.is_file():
             skeleton = ROOT / "templates" / "env.example"
-        shutil.copyfile(skeleton, dotenv)
-        dotenv.chmod(0o600)
+        _publish_home_file(skeleton, agent.home, ".env")
     install_plugin(agent, "The dotenv skeleton IS written; config.yaml and skills are NOT.")
     install_fleet_skills(agent)
-    shutil.copyfile(agent.config, agent.home / "config.yaml")
-    (agent.home / "config.yaml").chmod(0o600)
+    _publish_home_file(agent.config, agent.home, "config.yaml")
     print(f"restored config.yaml to {agent.home}")
     replay_skills(agent)
     if agent.restore_hook:

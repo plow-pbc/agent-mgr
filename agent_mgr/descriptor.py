@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
 from .artifacts import image_reference
 from .errors import AgentMgrError, ErrorCode
+from .files import read_regular_text
 from .models import ResolvedAgent
 from .registry import Registry
 
@@ -53,13 +55,9 @@ def _value(raw: str, file: Path, line: int, key: str) -> str:
     return result.replace("${HOME}", home).replace("$HOME", home)
 
 
-def parse_descriptor(file: Path) -> ParsedDescriptor:
-    try:
-        text = file.read_text(errors="surrogateescape")
-    except OSError as exc:
-        raise AgentMgrError(ErrorCode.IO_ERROR, f"cannot read {file}") from exc
-    values: dict[str, str] = {}
-    hooks: list[str] = []
+def _assignments(
+    text: str, file: Path, wanted: frozenset[str] | None = None
+) -> Iterator[tuple[int, str, str]]:
     for number, original in enumerate(text.splitlines(), 1):
         line = original.lstrip()
         if not line or line.startswith("#"):
@@ -70,11 +68,23 @@ def parse_descriptor(file: Path) -> ParsedDescriptor:
             continue
         raw_key, raw_value = line.split("=", 1)
         key = raw_key.rstrip()
+        if wanted is not None and key not in wanted:
+            continue
         if not KEY.fullmatch(key):
             raise AgentMgrError(
                 ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: malformed key"
             )
-        value = _value(raw_value, file, number, key)
+        yield number, key, _value(raw_value, file, number, key)
+
+
+def parse_descriptor(file: Path) -> ParsedDescriptor:
+    try:
+        text = file.read_text(errors="surrogateescape")
+    except OSError as exc:
+        raise AgentMgrError(ErrorCode.IO_ERROR, f"cannot read {file}") from exc
+    values: dict[str, str] = {}
+    hooks: list[str] = []
+    for number, key, value in _assignments(text, file):
         if key in OWNED_KEYS:
             if not value and key not in OPTIONAL_PATH_KEYS:
                 raise AgentMgrError(
@@ -94,21 +104,10 @@ def _repo_path(repo: Path, value: str) -> Path | None:
 
 
 def _read_timezone(file: Path) -> str | None:
-    try:
-        text = file.read_text(errors="surrogateescape")
-    except OSError as exc:
-        raise AgentMgrError(ErrorCode.IO_ERROR, f"cannot read {file}") from exc
     timezone: str | None = None
-    for number, original in enumerate(text.splitlines(), 1):
-        line = original.lstrip()
-        if line.startswith("export") and len(line) > 6 and line[6].isspace():
-            line = line[6:].lstrip()
-        if "=" not in line:
-            continue
-        raw_key, raw_value = line.split("=", 1)
-        key = raw_key.rstrip()
+    for number, key, value in _assignments(read_regular_text(file), file, frozenset({"AGENT_TZ"})):
         if key == "AGENT_TZ":
-            timezone = _value(raw_value, file, number, key)
+            timezone = value
             if not timezone:
                 raise AgentMgrError(
                     ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for AGENT_TZ"

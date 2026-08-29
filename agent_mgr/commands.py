@@ -9,9 +9,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from .artifacts import Artifact, fetch, stack
+from .artifacts import Artifact, fetch, stack, validate_revision
 from .deploy import migrate_plugin_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
+from .files import atomic_write, read_regular_text
 from .local import compose, require_own_home, require_running, resolve_guard
 from .models import ResolvedAgent
 from .registry import Registry
@@ -21,7 +22,7 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def dotenv_read(file: Path, key: str) -> str:
     value = ""
-    for line in file.read_text().split("\n"):
+    for line in read_regular_text(file).split("\n"):
         found, separator, raw = line.partition("=")
         if separator and found == key:
             value = raw.strip()
@@ -79,10 +80,7 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
         )
     artifact = stack()["plow_chat_activation"]
     revision = os.environ.get("AGENT_MGR_ACTIVATE_REF", artifact.revision)
-    if len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
-        raise AgentMgrError(
-            ErrorCode.INVALID_ARGUMENT, f"the activate ref must be a 40-char SHA, got: {revision}"
-        )
+    validate_revision(revision, "the activate ref", ErrorCode.INVALID_ARGUMENT)
     with tempfile.NamedTemporaryFile() as script:
         url = (
             f"https://raw.githubusercontent.com/{artifact.repository}/{revision}/{artifact.source}"
@@ -112,8 +110,12 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
 
 
 def model_provider(file: Path) -> str:
+    try:
+        text = file.read_text()
+    except OSError as exc:
+        raise AgentMgrError(ErrorCode.IO_ERROR, f"cannot read {file}") from exc
     inside = False
-    for line in file.read_text().splitlines():
+    for line in text.splitlines():
         if line == "model:":
             inside = True
             continue
@@ -175,10 +177,7 @@ def add_skill(agent: ResolvedAgent, registry: Registry, args: list[str]) -> int:
         if got.returncode:
             raise AgentMgrError(ErrorCode.IO_ERROR, f"could not resolve HEAD for {repository}")
         revision = got.stdout.strip()
-    if len(revision) != 40 or any(c not in "0123456789abcdef" for c in revision):
-        raise AgentMgrError(
-            ErrorCode.INVALID_ARGUMENT, f"the skill ref must be a 40-char SHA, got: {revision}"
-        )
+    validate_revision(revision, "the skill ref", ErrorCode.INVALID_ARGUMENT)
     artifact = Artifact(repository, revision, options["--src"], f"skills/{options['--dest']}")
     fetch(
         agent,
@@ -199,9 +198,16 @@ def add_skill(agent: ResolvedAgent, registry: Registry, args: list[str]) -> int:
         else []
     )
     rows.append(f"{repository}\t{revision}\t{options['--dest']}\t{options['--src']}")
-    manifest.write_text("\n".join(sorted(rows)) + "\n")
+    _write_manifest(manifest, "\n".join(sorted(rows)) + "\n")
     reload_if_running(agent, registry, "the skill just installed")
     return 0
+
+
+def _write_manifest(manifest: Path, content: str) -> None:
+    try:
+        atomic_write(manifest, content.encode(), mode=0o644)
+    except OSError as exc:
+        raise AgentMgrError(ErrorCode.IO_ERROR, f"could not publish {manifest}: {exc}") from exc
 
 
 def upsert(agent: ResolvedAgent, keys: list[str], values: list[str]) -> None:

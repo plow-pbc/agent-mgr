@@ -258,6 +258,21 @@ def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, ins
     assert "DOMO_MCP_TOKEN is empty" in r.stderr
 
 
+def test_a_swapped_dotenv_cannot_send_a_sibling_token_into_the_container(run, instance, tmp_path):
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("restore", "property")
+    secret = tmp_path / "sibling.env"
+    secret.write_text("DOMO_DEVICE_UID=dev_sibling\nDOMO_MCP_TOKEN=tok_sibling\n")
+    dotenv = tmp_path / "home" / ".hermes-property" / ".env"
+    dotenv.unlink()
+    dotenv.symlink_to(secret)
+    log = tmp_path / "docker.log"
+    r = run("check-latch", "property",
+            env=_bin(tmp_path, "property", log=log, exec_output="200"))
+    assert r.returncode != 0
+    assert not log.exists() or "tok_sibling" not in log.read_text()
+
+
 def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credential(
         run, instance, tmp_path):
     """A dotenv check-latch cannot READ is not a dotenv with no credential in it.
