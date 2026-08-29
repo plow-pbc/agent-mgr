@@ -28,20 +28,35 @@ class Registry:
             return []
         rows: list[RegistryEntry] = []
         for line in self.path.read_text().splitlines():
-            name, separator, repo = line.partition("\t")
-            if separator:
-                rows.append(RegistryEntry(name=name, repo=Path(repo)))
+            name, separator, rest = line.partition("\t")
+            if not separator:
+                continue
+            # Two fields is every row written before targets existed, and it is
+            # a local one -- read rather than migrated, so an older agent-mgr
+            # sharing this file keeps working.
+            location, _, target = rest.partition("\t")
+            rows.append(RegistryEntry(name=name, location=location, target=target or "local"))
         return rows
 
-    def lookup(self, name: str) -> Path:
+    def entry(self, name: str) -> RegistryEntry:
         for entry in self.entries():
             if entry.name == name:
-                return entry.repo
+                return entry
         raise AgentMgrError(
             ErrorCode.AGENT_NOT_FOUND,
             f"{name} is not registered",
             "register the agent repository first",
         )
+
+    def lookup(self, name: str) -> Path:
+        entry = self.entry(name)
+        if entry.is_cloud:
+            raise AgentMgrError(
+                ErrorCode.INVALID_ARGUMENT,
+                f"{name} is a cloud agent ({entry.location}), not a checkout",
+                "cloud agents have no repository on this host",
+            )
+        return entry.repo
 
     def add(self, name: str, repo: Path) -> Path:
         if not VALID_NAME.fullmatch(name):
@@ -52,10 +67,29 @@ class Registry:
         if not repo.is_dir():
             raise AgentMgrError(ErrorCode.IO_ERROR, f"no such directory: {repo}")
         canonical = repo.resolve()
-        rows = [entry for entry in self.entries() if entry.name != name]
-        rows.append(RegistryEntry(name, canonical))
-        self._replace(sorted(rows, key=lambda entry: (entry.name, str(entry.repo))))
+        self._upsert(RegistryEntry(name, str(canonical), "local"))
         return canonical
+
+    def add_cloud(self, name: str, agent_id: str) -> str:
+        """Register an exe agent under a name, so the lifecycle verbs can reach it.
+
+        The same name rules as a local row: the name is the address either way,
+        which is the whole point of one verb set over two targets.
+        """
+        if not VALID_NAME.fullmatch(name):
+            raise AgentMgrError(
+                ErrorCode.INVALID_NAME,
+                f"agent name must be lowercase letters, digits and dashes: {name}",
+            )
+        if not agent_id.strip():
+            raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, "agent id must not be empty")
+        self._upsert(RegistryEntry(name, agent_id.strip(), "cloud"))
+        return agent_id.strip()
+
+    def _upsert(self, entry: RegistryEntry) -> None:
+        rows = [row for row in self.entries() if row.name != entry.name]
+        rows.append(entry)
+        self._replace(sorted(rows, key=lambda row: (row.name, row.location)))
 
     def remove(self, name: str) -> None:
         if not self.path.is_file():
@@ -67,5 +101,12 @@ class Registry:
 
     def _replace(self, entries: list[RegistryEntry]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        content = "".join(f"{entry.name}\t{entry.repo}\n" for entry in entries)
+        # A local row keeps its two-field spelling, so this file stays readable
+        # by an agent-mgr that predates targets; only a cloud row needs the third.
+        content = "".join(
+            f"{entry.name}\t{entry.location}\n"
+            if entry.target == "local"
+            else f"{entry.name}\t{entry.location}\t{entry.target}\n"
+            for entry in entries
+        )
         atomic_write(self.path, content.encode())

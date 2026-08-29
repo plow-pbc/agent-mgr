@@ -96,13 +96,18 @@ def _json_document(result, operation: str) -> dict[str, Any]:
     "operation,args",
     [
         ("cloud-create", ()),
-        ("cloud-list", ()),
-        ("cloud-get", ("agent-id",)),
         ("cloud-update-chats", ("agent-id",)),
-        ("cloud-delete", ("agent-id",)),
     ],
 )
-def test_cloud_commands_require_json(operation: str, args: tuple[str, ...], run) -> None:
+def test_the_body_carrying_cloud_commands_require_json(
+    operation: str, args: tuple[str, ...], run
+) -> None:
+    """Only the two verbs that read a request body still demand --json.
+
+    The rest answer a name, so requiring it of the whole namespace made one
+    target machine-only and the other human-usable -- the split this CLI exists
+    to close.
+    """
     result = run(operation, *args)
     assert result.returncode == 2
     assert "requires --json" in result.stderr
@@ -249,7 +254,7 @@ def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, cloud_server
     body = _json_document(result, "cloud-create")
     assert body["error"]["code"] == "invalid_response"
     assert body["error"]["remediation"] == (
-        "creation may have succeeded; run agent-mgr --json cloud-list before retrying"
+        "creation may have succeeded; run agent-mgr cloud-list before retrying"
     )
     assert cloud_server.requests[0][0] == "POST"
 
@@ -264,7 +269,7 @@ def test_cloud_delete_marks_an_unreadable_success_as_ambiguous(run, cloud_server
     body = _json_document(result, "cloud-delete")
     assert body["error"]["code"] == "invalid_response"
     assert body["error"]["remediation"] == (
-        "deletion may have succeeded; run agent-mgr --json cloud-list before retrying"
+        "deletion may have succeeded; run agent-mgr cloud-list before retrying"
     )
     assert cloud_server.requests[0][0] == "DELETE"
 
@@ -276,8 +281,78 @@ def test_help_lists_every_cloud_argument_shape(run) -> None:
     for invocation in (
         "cloud-create",
         "cloud-list",
-        "cloud-get <agent-id>",
-        "cloud-update-chats <agent-id>",
-        "cloud-delete <agent-id>",
+        "cloud-get",
+        "cloud-update-chats",
+        "cloud-delete",
+        "register-cloud",
     ):
         assert invocation in result.stdout
+    # The help has to say what a cloud target cannot do, or `restart` reads as
+    # available on both and its refusal looks like a bug.
+    assert "restart and logs have no exe equivalent" in result.stdout
+
+
+def test_a_registered_cloud_agent_answers_the_local_lifecycle_verbs(run, cloud_server) -> None:
+    """`up` and `chats` name a registered agent, whichever target it is.
+
+    Before this, the cloud half was a separate `cloud-*` namespace addressed by
+    raw agent id, so a caller had to know which kind of agent it held before it
+    could pick a verb -- the split this parity work removes.
+    """
+    resource = _contract_resources()[0]
+    registered = run("register-cloud", "mary", resource["agent_id"])
+    assert registered.returncode == 0
+    assert f"registered mary -> cloud {resource['agent_id']}" in registered.stdout
+
+    cloud_server.respond(resource)
+    up = run("up", "mary", env=cloud_server.environment)
+    assert up.returncode == 0
+    assert resource["agent_id"] in up.stdout
+    assert cloud_server.requests[0][0] == "GET"
+
+    cloud_server.respond(resource)
+    listed = run("chats", "mary", env=cloud_server.environment)
+    assert listed.returncode == 0
+    for chat in resource.get("chat_uids") or []:
+        assert chat in listed.stdout
+
+
+def test_ls_names_each_agents_target(run, cloud_server, tmp_path) -> None:
+    """A row that does not say which target it is makes every verb a guess."""
+    repo = tmp_path / "local-agent"
+    repo.mkdir()
+    assert run("register", "localone", str(repo)).returncode == 0
+    assert run("register-cloud", "cloudone", "abc123").returncode == 0
+
+    result = run("ls")
+    assert result.returncode == 0
+    assert "TARGET" in result.stdout
+    rows = {line.split()[0]: line for line in result.stdout.splitlines() if line.split()}
+    assert "local" in rows["localone"]
+    assert "cloud" in rows["cloudone"]
+    assert "abc123" in rows["cloudone"]
+
+
+def test_restart_and_logs_refuse_a_cloud_agent_by_name(run) -> None:
+    """Refusing beats silently meaning something else per target: an exe restart
+    would delete and re-create the tenant, minting a credential and stranding
+    its chat, and there is no exe log surface at all."""
+    assert run("register-cloud", "mary", "abc123").returncode == 0
+    for operation, reason in (("restart", "delete and re-create"), ("logs", "no log surface")):
+        result = run(operation, "mary")
+        assert result.returncode != 0
+        assert reason in result.stderr
+
+
+def test_a_two_field_registry_row_still_reads_as_local(run, registry, tmp_path) -> None:
+    """Rows written before targets existed carry no third field. They are read,
+    never migrated, so an older agent-mgr sharing this file keeps working."""
+    repo = tmp_path / "legacy"
+    repo.mkdir()
+    Path(registry).parent.mkdir(parents=True, exist_ok=True)
+    Path(registry).write_text(f"legacy\t{repo}\n", encoding="utf-8")
+
+    result = run("ls")
+    assert result.returncode == 0
+    assert "legacy" in result.stdout
+    assert "local" in result.stdout

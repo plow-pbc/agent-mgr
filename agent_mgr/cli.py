@@ -12,7 +12,11 @@ from typing import TextIO
 from .backups import backup_homes, prune_backups
 from .cloud_client import CloudClient
 from .cloud_http import HttpCloudTransport
-from .cloud_models import CreateCloudAgentRequest, UpdateCloudAgentChatsRequest
+from .cloud_models import (
+    CloudAgentResource,
+    CreateCloudAgentRequest,
+    UpdateCloudAgentChatsRequest,
+)
 from .commands import (
     activate,
     add_skill,
@@ -44,7 +48,7 @@ from .local import (
     resolve_guard,
     transition,
 )
-from .models import JsonValue
+from .models import JsonValue, RegistryEntry
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,8 +62,23 @@ CLOUD_OPERATIONS = frozenset(
         "cloud-delete",
     }
 )
+# The two cloud verbs that take a request body on stdin. Only these still
+# require --json: the others answer a name the same way their local twins do.
+CLOUD_STDIN_OPERATIONS = frozenset({"cloud-create", "cloud-update-chats"})
+# What a cloud target can and cannot do, stated once. `restart` and `logs` have
+# no exe equivalent -- restart would have to delete and re-create, which mints a
+# new credential and strands the chat, and exe publishes no log surface at all.
+# Refusing by name beats a verb that silently means something else per target.
+CLOUD_UNSUPPORTED = {
+    "restart": (
+        "exe has no restart: it would delete and re-create the agent, minting a new "
+        "credential and stranding its chat"
+    ),
+    "logs": "exe publishes no log surface; read the agent's status with 'agent-mgr get <name>'",
+}
 NATIVE_JSON_OPERATIONS = (
-    frozenset({"ls", "register", "unregister", "new", "resolve"}) | CLOUD_OPERATIONS
+    frozenset({"ls", "register", "register-cloud", "unregister", "new", "resolve"})
+    | CLOUD_OPERATIONS
 )
 UNBOUNDED_JSON_OPERATIONS = frozenset({"logs", "compose"})
 
@@ -130,18 +149,99 @@ def _usage(stream: TextIO = sys.stdout) -> None:
     print(
         """usage: agent-mgr [--json] <command> [args]
 
-  ls | register | unregister | new | resolve
+  ls | register | register-cloud | unregister | new | resolve
   restore | install-plugin | install-skill | add-skill | cron-sync
   activate | sign-in | set-latch | check-latch | chats | set-home
   check-connectors | migrate-plugin-env
   backup-homes | prune-backups
   up | down | restart | logs | agent | compose | resolve-guard
-  cloud-create
-  cloud-list
-  cloud-get <agent-id>
-  cloud-update-chats <agent-id>
-  cloud-delete <agent-id>""",
+  cloud-create | cloud-list | cloud-get | cloud-update-chats | cloud-delete
+
+  A cloud agent registered with register-cloud answers the same lifecycle verbs
+  as a local one: up, down and chats. restart and logs have no exe equivalent
+  and say so rather than meaning something different per target.""",
         file=stream,
+    )
+
+
+def _cloud() -> CloudClient:
+    return CloudClient(HttpCloudTransport.from_environment(os.environ))
+
+
+def _describe(resource: CloudAgentResource) -> str:
+    """One line per cloud agent, in the shape `ls` already prints."""
+    status = resource.status.value if resource.status else "-"
+    joined = ",".join(resource.chat_uids) or "-"
+    return f"{resource.agent_id}  {status}  {resource.provider or '-'}  chats={joined}"
+
+
+def _cloud_result(operation: str, resource: CloudAgentResource, json_output: bool) -> int:
+    if json_output:
+        _emit(operation, {"agent": resource.to_json()})
+    else:
+        print(_describe(resource))
+    return 0
+
+
+def _cloud_agent_id(name: str, registry: Registry) -> str:
+    """Accept a registered name or a bare agent id, so a cloud verb reads like a
+    local one without breaking the id-taking spelling that shipped first."""
+    try:
+        entry = registry.entry(name)
+    except AgentMgrError as error:
+        if error.code is not ErrorCode.AGENT_NOT_FOUND:
+            raise
+        return name
+    if not entry.is_cloud:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"{name} is a local agent at {entry.location}",
+            "this verb targets cloud agents; use the local lifecycle for a checkout",
+        )
+    return entry.location
+
+
+def _cloud_lifecycle(
+    operation: str, entry: RegistryEntry, args: list[str], json_output: bool
+) -> int:
+    """The shared lifecycle verbs, against an exe agent.
+
+    `up` is create-or-report rather than create: run twice it must not mint a
+    second tenant, and the local `up` is idempotent the same way.
+    """
+    if operation in CLOUD_UNSUPPORTED:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"{operation} is not available for cloud agent {entry.name}: "
+            f"{CLOUD_UNSUPPORTED[operation]}",
+        )
+    client = _cloud()
+    if operation == "up":
+        return _cloud_result(operation, client.get(entry.location), json_output)
+    if operation == "down":
+        try:
+            resource = client.delete(entry.location)
+        except AgentMgrError as error:
+            if error.code in {ErrorCode.INVALID_RESPONSE, ErrorCode.REMOTE_UNREACHABLE}:
+                raise AgentMgrError(
+                    error.code,
+                    error.message,
+                    "deletion may have succeeded; run 'agent-mgr ls' and "
+                    "'agent-mgr cloud-list' before retrying",
+                ) from None
+            raise
+        return _cloud_result(operation, resource, json_output)
+    if operation == "chats":
+        resource = client.get(entry.location)
+        if json_output:
+            _emit(operation, {"chats": list(resource.chat_uids)})
+        else:
+            for chat in resource.chat_uids:
+                print(chat)
+        return 0
+    raise AgentMgrError(
+        ErrorCode.INVALID_ARGUMENT,
+        f"{operation} has no cloud equivalent for {entry.name}",
     )
 
 
@@ -149,7 +249,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
     if operation == "cloud-create":
         _need(args, 0, "agent-mgr --json cloud-create")
         create_request = CreateCloudAgentRequest.from_json(_json_input())
-        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
+        client = _cloud()
         try:
             resource = client.create(create_request)
         except AgentMgrError as error:
@@ -157,43 +257,43 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 raise AgentMgrError(
                     error.code,
                     error.message,
-                    "creation may have succeeded; run agent-mgr --json cloud-list before retrying",
+                    "creation may have succeeded; run agent-mgr cloud-list before retrying",
                 ) from None
             raise
-        _emit(operation, {"agent": resource.to_json()})
-        return 0
+        return _cloud_result(operation, resource, json_output)
     if operation == "cloud-list":
-        _need(args, 0, "agent-mgr --json cloud-list")
-        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        resources = client.list()
-        _emit(operation, {"agents": [resource.to_json() for resource in resources]})
+        _need(args, 0, "agent-mgr cloud-list")
+        resources = _cloud().list()
+        if json_output:
+            _emit(operation, {"agents": [resource.to_json() for resource in resources]})
+        else:
+            for resource in resources:
+                print(_describe(resource))
         return 0
     if operation == "cloud-get":
-        _need(args, 1, "agent-mgr --json cloud-get <agent-id>")
-        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        _emit(operation, {"agent": client.get(args[0]).to_json()})
-        return 0
+        _need(args, 1, "agent-mgr cloud-get <name|agent-id>")
+        return _cloud_result(
+            operation, _cloud().get(_cloud_agent_id(args[0], registry)), json_output
+        )
     if operation == "cloud-update-chats":
-        _need(args, 1, "agent-mgr --json cloud-update-chats <agent-id>")
+        _need(args, 1, "agent-mgr --json cloud-update-chats <name|agent-id>")
         update_request = UpdateCloudAgentChatsRequest.from_json(_json_input())
-        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        _emit(operation, {"agent": client.update_chats(args[0], update_request).to_json()})
-        return 0
+        resource = _cloud().update_chats(_cloud_agent_id(args[0], registry), update_request)
+        return _cloud_result(operation, resource, json_output)
     if operation == "cloud-delete":
-        _need(args, 1, "agent-mgr --json cloud-delete <agent-id>")
-        client = CloudClient(HttpCloudTransport.from_environment(os.environ))
+        _need(args, 1, "agent-mgr cloud-delete <name|agent-id>")
+        client = _cloud()
         try:
-            resource = client.delete(args[0])
+            resource = client.delete(_cloud_agent_id(args[0], registry))
         except AgentMgrError as error:
             if error.code in {ErrorCode.INVALID_RESPONSE, ErrorCode.REMOTE_UNREACHABLE}:
                 raise AgentMgrError(
                     error.code,
                     error.message,
-                    "deletion may have succeeded; run agent-mgr --json cloud-list before retrying",
+                    "deletion may have succeeded; run agent-mgr cloud-list before retrying",
                 ) from None
             raise
-        _emit(operation, {"agent": resource.to_json()})
-        return 0
+        return _cloud_result(operation, resource, json_output)
     if operation == "ls":
         _need(args, 0, "agent-mgr ls")
         entries = registry.entries()
@@ -205,9 +305,9 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 "'agent-mgr register <name> <dir>'"
             )
         else:
-            print(f"{'NAME':16} REPO")
+            print(f"{'NAME':16} {'TARGET':7} REPO / AGENT ID")
             for entry in entries:
-                print(f"{entry.name:16} {entry.repo}")
+                print(f"{entry.name:16} {entry.target:7} {entry.location}")
         return 0
     if operation == "register":
         _need(args, 2, "agent-mgr register <name> <dir>")
@@ -216,6 +316,14 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
             _emit("register", {"agent": {"name": args[0], "repo": str(repo)}})
         else:
             print(f"registered {args[0]} -> {repo}")
+        return 0
+    if operation == "register-cloud":
+        _need(args, 2, "agent-mgr register-cloud <name> <agent-id>")
+        agent_id = registry.add_cloud(args[0], args[1])
+        if json_output:
+            _emit("register-cloud", {"agent": {"name": args[0], "agent_id": agent_id}})
+        else:
+            print(f"registered {args[0]} -> cloud {agent_id}")
         return 0
     if operation == "unregister":
         _need(args, 1, "agent-mgr unregister <name>")
@@ -345,6 +453,15 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         "check-connectors",
     }:
         _need(args, 1, f"agent-mgr {operation} <name>")
+        entry = registry.entry(args[0])
+        if entry.is_cloud:
+            if operation != "chats":
+                raise AgentMgrError(
+                    ErrorCode.INVALID_ARGUMENT,
+                    f"{operation} runs against a checkout, and {entry.name} is a cloud agent",
+                    "exe provisions credentials on first boot; there is nothing to run here",
+                )
+            return _cloud_lifecycle(operation, entry, args, json_output)
         agent = resolve_agent(args[0], registry, ROOT)
         return {
             "cron-sync": cron_sync,
@@ -366,6 +483,9 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         return set_home(resolve_agent(args[0], registry, ROOT), registry, args[1])
     if operation in {"up", "down", "restart", "logs"}:
         _need(args, 1, f"agent-mgr {operation} <name>")
+        entry = registry.entry(args[0])
+        if entry.is_cloud:
+            return _cloud_lifecycle(operation, entry, args, json_output)
         agent = resolve_agent(args[0], registry, ROOT)
         resolve_guard(agent, registry)
         command = {
@@ -458,12 +578,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         _usage(sys.stderr)
         return 2
     operation, args = words[0], words[1:]
-    if operation in CLOUD_OPERATIONS and not json_output:
+    # Only the two body-carrying verbs still require --json. Requiring it of the
+    # whole cloud namespace made the same lifecycle machine-only on one target
+    # and human-usable on the other, which is the parity this CLI is for.
+    if operation in CLOUD_STDIN_OPERATIONS and not json_output:
         return _fail(
             operation,
             AgentMgrError(
                 ErrorCode.INVALID_ARGUMENT,
-                f"{operation} requires --json",
+                f"{operation} reads its request body from stdin and requires --json",
                 "rerun with --json",
                 2,
             ),

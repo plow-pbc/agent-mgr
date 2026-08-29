@@ -99,10 +99,13 @@ def test_json_registry_listing_is_data_not_a_table(run, instance):
     result = run("--json", "ls")
 
     assert result.returncode == 0
+    # `target` and `agent_id` are on every row, not only cloud ones: a consumer
+    # that has to check whether a key exists before reading it is back to
+    # guessing which kind of agent it holds.
     assert payload(result)["result"] == {
         "agents": [
-            {"name": "amy", "repo": str(amy)},
-            {"name": "zed", "repo": str(zed)},
+            {"name": "amy", "repo": str(amy), "target": "local", "agent_id": None},
+            {"name": "zed", "repo": str(zed), "target": "local", "agent_id": None},
         ]
     }
 

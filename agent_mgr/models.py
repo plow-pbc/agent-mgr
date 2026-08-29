@@ -10,11 +10,36 @@ JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
 @dataclass(frozen=True, slots=True)
 class RegistryEntry:
+    """One registered agent, local or cloud.
+
+    `target` is what the lifecycle verbs dispatch on, so `up`, `down` and the
+    rest name a target rather than reading one out of the command they are
+    spelled with. A cloud row carries its `exe` agent id in `location`; a local
+    row carries its repository path, and `repo` reads it back as one.
+    """
+
     name: str
-    repo: Path
+    location: str
+    target: str = "local"
+
+    @property
+    def repo(self) -> Path:
+        return Path(self.location)
+
+    @property
+    def is_cloud(self) -> bool:
+        return self.target == "cloud"
 
     def to_json(self) -> dict[str, JsonValue]:
-        return {"name": self.name, "repo": str(self.repo)}
+        # `repo` stays in the payload for every row: it is the documented key,
+        # and a cloud row answering `agent_id` alone would break a caller that
+        # reads one field for both.
+        return {
+            "name": self.name,
+            "repo": self.location,
+            "target": self.target,
+            "agent_id": self.location if self.is_cloud else None,
+        }
 
 
 @dataclass(frozen=True, slots=True)
