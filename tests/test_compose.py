@@ -87,6 +87,21 @@ def test_the_template_mounts_nothing_but_the_agents_own_home(tmp_path):
     assert [v["target"] for v in svc["volumes"]] == ["/opt/data"]
 
 
+def test_container_shutdown_gives_the_gateway_time_to_release_session_locks(tmp_path):
+    """s6's three-second default killed Hermes before shutdown cleanup finished.
+
+    Docker must wait longer than the s6 service grace window, or a restart can
+    strand an active compression lease and reject transcript writes until its
+    TTL expires.
+    """
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
+    assert r.returncode == 0, r.stderr
+    svc = json.loads(r.stdout)["services"]["hermes"]
+
+    assert svc["environment"]["S6_SERVICES_GRACETIME"] == "30000"
+    assert svc["stop_grace_period"] == "35s"
+
+
 def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
     """This is what 'an agent inherits from agent-mgr' means concretely."""
     build_ctx = tmp_path / "str-repo"
