@@ -175,6 +175,103 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
     return 0
 
 
+def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
+    """Mint this agent's credential server-side and write it -- no text, no code.
+
+    This is the whole difference between standing up a local agent and a cloud
+    one. `activate` cannot avoid the human: `POST /v1/auth/activate` carries no
+    credential, so the account binding is decided by WHICH PHONE texts the code
+    back. Here the caller is already authenticated as the owner, so Plow can
+    mint against that account directly -- exactly what cloud provisioning does.
+
+    The grant names a LINE rather than a chat list, because an agent's identity
+    is its number: a frozen list cannot cover the threads that number receives
+    tomorrow, and a group born on it would be invisible until a re-mint.
+    """
+    require_own_home(agent, registry)
+    dotenv = agent.home / ".env"
+    if not dotenv.is_file():
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr restore {agent.name}' first"
+        )
+    if dotenv_read(dotenv, "PLOW_AGENT_TOKEN"):
+        # Refused rather than overwritten: a second mint strands the credential
+        # the gateway is holding, and the running agent goes deaf on a line it
+        # still believes it serves.
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"{agent.name} already holds a Plow credential",
+            "re-minting strands the live one; unregister and restore a fresh home to replace it",
+        )
+    transport = HttpCloudTransport.from_environment(os.environ)
+    minted = transport.request(
+        "POST", "/v1/relay/agents", {"name": f"agent-mgr:{agent.name}", "line_uid": line_uid}
+    )
+    if not isinstance(minted, dict):
+        raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned invalid JSON")
+    token = minted.get("token")
+    if not isinstance(token, str) or not token:
+        raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned no token")
+    home = _home_chat_on_line(transport.base_url, token, line_uid)
+    result = subprocess.run(
+        [
+            str(ROOT / "lib" / "upsert-env"),
+            str(agent.home),
+            "PLOW_AGENT_TOKEN",
+            "PLOW_HOME_CHANNEL",
+            "PLOW_API_BASE",
+            "PLOW_CHAT_TOKEN",
+            "PLOW_CHAT_CHAT_UID",
+            "PLOW_CHAT_BASE_URL",
+        ],
+        input=f"{token}\n{home}\n{transport.base_url}\n{token}\n{home}\n{transport.base_url}\n",
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"refusing to publish {agent.name}'s minted credential -- see above. Nothing was written.",
+        )
+    reload_if_running(agent, registry, "the credential just minted")
+    return 0
+
+
+def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
+    """The chat this agent should treat as home, read with its own new grant.
+
+    Read as the AGENT, not as the account: the grant is what decides reach, so
+    asking with it is the same question the gateway will ask on its first
+    connection -- and an empty answer here is a grant that would have arrived
+    at a silent agent instead.
+    """
+    transport = HttpCloudTransport.from_environment(
+        {"PLOW_API_BASE": base, "PLOW_API_TOKEN": token}
+    )
+    listing = transport.request("GET", "/v1/chats")
+    rows = listing.get("data") if isinstance(listing, dict) else None
+    if not isinstance(rows, list) or not rows:
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"the minted grant reaches no chat on {line_uid}",
+            "the line must already carry a chat this account owns",
+        )
+
+    # The 1:1 is the home: cron and unprompted output land there, and a group
+    # would put the owner's private deliveries in front of every member.
+    def members(row: object) -> int:
+        participants = row.get("participants") if isinstance(row, dict) else None
+        if not isinstance(participants, list):
+            return 0
+        return sum(1 for p in participants if isinstance(p, dict) and p.get("type") == "member")
+
+    best = min(rows, key=members)
+    uid = best.get("uid") if isinstance(best, dict) else None
+    if not isinstance(uid, str) or not uid:
+        raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "chat listing carried no uid")
+    return uid
+
+
 def scope_chat_credential(agent: ResolvedAgent, registry: Registry) -> int:
     """One-time narrowing for agents activated before line grants existed."""
     require_own_home(agent, registry)

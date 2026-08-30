@@ -20,6 +20,7 @@ from .commands import (
     check_connectors,
     check_latch,
     cron_sync,
+    provision,
     scope_chat_credential,
     set_home,
     set_latch,
@@ -133,7 +134,8 @@ def _usage(stream: TextIO = sys.stdout) -> None:
 
   ls | register | unregister | new | resolve
   restore | install-plugin | install-skill | add-skill | cron-sync
-  activate | scope-chat-credential | sign-in | set-latch | check-latch | chats | set-home
+  activate | provision | scope-chat-credential | sign-in | set-latch | check-latch
+  chats | set-home
   check-connectors | migrate-plugin-env
   backup-homes | prune-backups
   up | down | restart | logs | agent | compose | resolve-guard
@@ -364,6 +366,10 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 ErrorCode.INVALID_ARGUMENT, "usage: agent-mgr add-skill <name> <owner/repo>"
             )
         return add_skill(resolve_agent(args[0], registry, ROOT), registry, args[1:])
+    if operation == "provision":
+        _need(args, 2, "agent-mgr provision <name> <line-uid>")
+        agent = resolve_agent(args[0], registry, ROOT)
+        return provision(agent, registry, args[1])
     if operation == "set-home":
         _need(args, 2, "agent-mgr set-home <name> <cht_...>")
         return set_home(resolve_agent(args[0], registry, ROOT), registry, args[1])
