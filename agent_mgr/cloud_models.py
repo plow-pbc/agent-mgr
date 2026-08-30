@@ -78,37 +78,54 @@ def _chat_uids(
 
 @dataclass(frozen=True, slots=True)
 class CreateCloudAgentRequest:
-    chat_uids: tuple[str, ...]
+    """Provision an agent for one LINE.
+
+    This modelled `{name, provider, chat_uids}` -- Plow's shape before agents
+    became line-scoped. It is now `{line_uid, name?, provider?}`, matching
+    `plow_schemas.api.cloud_agent`: an agent's identity is its number, so a
+    frozen chat list could not name the threads that number receives tomorrow.
+    A client that had already moved (Latch since #241) was answered with
+    `unknown fields: line_uid` plus `missing required fields: chat_uids` --
+    every create failed at this seam, in both directions.
+    """
+
+    line_uid: str
     name: str = "cloud agent"
     provider: str | None = None
 
     @classmethod
     def from_json(cls, value: object) -> CreateCloudAgentRequest:
-        payload = _object(value, {"name", "provider", "chat_uids"}, {"chat_uids"})
+        payload = _object(value, {"name", "provider", "line_uid"}, {"line_uid"})
         name = _nonempty_string(payload["name"], "name") if "name" in payload else "cloud agent"
         provider_value = payload.get("provider")
         provider = None if provider_value is None else _nonempty_string(provider_value, "provider")
-        return cls(chat_uids=_chat_uids(payload["chat_uids"]), name=name, provider=provider)
+        return cls(
+            line_uid=_nonempty_string(payload["line_uid"], "line_uid"),
+            name=name,
+            provider=provider,
+        )
 
     def to_json(self) -> dict[str, JsonValue]:
         return {
             "name": self.name,
             "provider": self.provider,
-            "chat_uids": list(self.chat_uids),
+            "line_uid": self.line_uid,
         }
 
 
 @dataclass(frozen=True, slots=True)
-class UpdateCloudAgentChatsRequest:
-    chat_uids: tuple[str, ...]
+class UpdateCloudAgentLineRequest:
+    """`PUT /v1/agents/cloud/{agent_id}/line` -- the successor to `/chats`."""
+
+    line_uid: str
 
     @classmethod
-    def from_json(cls, value: object) -> UpdateCloudAgentChatsRequest:
-        payload = _object(value, {"chat_uids"}, {"chat_uids"})
-        return cls(chat_uids=_chat_uids(payload["chat_uids"]))
+    def from_json(cls, value: object) -> UpdateCloudAgentLineRequest:
+        payload = _object(value, {"line_uid"}, {"line_uid"})
+        return cls(line_uid=_nonempty_string(payload["line_uid"], "line_uid"))
 
     def to_json(self) -> dict[str, JsonValue]:
-        return {"chat_uids": list(self.chat_uids)}
+        return {"line_uid": self.line_uid}
 
 
 @dataclass(frozen=True, slots=True)

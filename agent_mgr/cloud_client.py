@@ -7,7 +7,7 @@ from agent_mgr.cloud_http import CloudTransport
 from agent_mgr.cloud_models import (
     CloudAgentResource,
     CreateCloudAgentRequest,
-    UpdateCloudAgentChatsRequest,
+    UpdateCloudAgentLineRequest,
 )
 from agent_mgr.errors import AgentMgrError, ErrorCode
 
@@ -38,10 +38,10 @@ class CloudClient:
         value = self.transport.request("GET", f"{CLOUD_PATH}/{_agent_id(agent_id)}")
         return CloudAgentResource.from_json(value)
 
-    def update_chats(
-        self, agent_id: str, request: UpdateCloudAgentChatsRequest
+    def update_line(
+        self, agent_id: str, request: UpdateCloudAgentLineRequest
     ) -> CloudAgentResource:
-        path = f"{CLOUD_PATH}/{_agent_id(agent_id)}/chats"
+        path = f"{CLOUD_PATH}/{_agent_id(agent_id)}/line"
         value = self.transport.request("PUT", path, request.to_json())
         return CloudAgentResource.from_json(value)
 

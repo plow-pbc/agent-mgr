@@ -41,7 +41,7 @@ from .cloud_models import (
     CloudStatus,
     CreateCloudAgentRequest,
     FailureCode,
-    UpdateCloudAgentChatsRequest,
+    UpdateCloudAgentLineRequest,
 )
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
@@ -52,9 +52,16 @@ from .registry import Registry
 # `PLOW_CHAT_CHAT_UID` is the home chat activation writes. It is the honest
 # answer to "which chats does this agent serve": a local gateway's reach is its
 # credential's grant, and the dotenv is the only part of that on this host.
-HOME_CHAT_KEY = "PLOW_CHAT_CHAT_UID"
+# `PLOW_HOME_CHANNEL` is the canonical name; `PLOW_CHAT_CHAT_UID` is the legacy
+# spelling `migrate-plugin-env` moves off. Read canonical first and fall back,
+# or a canonical-only agent reports no chats at all -- which also made an
+# idempotent PUT of its real set look like a change and get refused.
+HOME_CHAT_KEYS = ("PLOW_HOME_CHANNEL", "PLOW_CHAT_CHAT_UID")
+# The line a provisioned agent was minted against. `provision` writes it; an
+# agent that predates it has none, and then no line can be checked against.
+LINE_KEY = "PLOW_AGENT_LINE"
 PROVIDER = "local:docker"
-ROUTE = re.compile(r"^/v1/agents/cloud(?:/(?P<agent_id>[^/]+)(?P<chats>/chats)?)?$")
+ROUTE = re.compile(r"^/v1/agents/cloud(?:/(?P<agent_id>[^/]+)(?P<line>/line)?)?$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,16 +74,36 @@ class ApiError(Exception):
 
 
 def _dotenv_chats(agent: ResolvedAgent) -> tuple[str, ...]:
+    value = _dotenv_value(agent, HOME_CHAT_KEYS)
+    return (value,) if value else ()
+
+
+def _dotenv_value(agent: ResolvedAgent, keys: tuple[str, ...]) -> str:
+    """First key in `keys` that the dotenv declares, last value winning.
+
+    Last value wins to match `upsert`'s own rule: a file that arrived with two
+    declarations is read the way the gateway reads it.
+    """
     path = agent.home / ".env"
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return ()
+        return ""
+    found: dict[str, str] = {}
     for line in lines:
         key, separator, value = line.partition("=")
-        if separator and key.strip() == HOME_CHAT_KEY and value.strip():
-            return (value.strip(),)
-    return ()
+        if separator and key.strip() in keys and value.strip():
+            found[key.strip()] = value.strip()
+    for key in keys:
+        if key in found:
+            return found[key]
+    return ""
+
+
+def _dotenv_line(agent: ResolvedAgent) -> tuple[str, ...]:
+    """The line this agent's credential names, or empty when it predates one."""
+    value = _dotenv_value(agent, (LINE_KEY,))
+    return (value,) if value else ()
 
 
 def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
@@ -154,7 +181,11 @@ class LocalCloudApi:
         # `provider` is not decoration: a request naming exe must not quietly
         # start a container here, or a caller that thinks it provisioned a cloud
         # tenant gets a local one and never learns the difference.
-        if request.provider != PROVIDER:
+        # Omitting it is valid in the shared request model, and the facade knows
+        # its own substrate -- refusing there made a legal Plow request fail
+        # against this host for naming nothing at all. Only a WRONG provider is
+        # a mistake worth stopping.
+        if request.provider is not None and request.provider != PROVIDER:
             raise ApiError(
                 400,
                 f"this host provisions {PROVIDER!r}; {request.provider!r} belongs to another provider",
@@ -164,6 +195,17 @@ class LocalCloudApi:
         # transition veto -- so a copied descriptor could start a second gateway
         # against a sibling's home, or a reused project stop a live agent, from
         # an HTTP request that never touched those checks.
+        held = _dotenv_line(agent)
+        # Ignoring the requested line would answer 202 to a caller that asked
+        # for a number this agent does not serve, and it would only find out by
+        # reading the resource back. The grant is its minted credential's, so
+        # this cannot be satisfied here -- it is refused, not dropped.
+        if held and (request.line_uid,) != held:
+            raise ApiError(
+                409,
+                f"{request.name} is bound to {held[0]}, not {request.line_uid}; a local agent's "
+                "line comes from the credential minted for it",
+            )
         self._guarded(agent, ["up", "-d"], f"could not start {request.name}")
         return self._resource(agent).to_json()
 
@@ -177,23 +219,21 @@ class LocalCloudApi:
         if code:
             raise ApiError(502, f"{failure}: docker compose exited {code}")
 
-    def update_chats(self, agent_id: str, payload: object) -> dict[str, JsonValue]:
-        request = UpdateCloudAgentChatsRequest.from_json(payload)
+    def update_line(self, agent_id: str, payload: object) -> dict[str, JsonValue]:
+        request = UpdateCloudAgentLineRequest.from_json(payload)
         agent = self._agent(agent_id)
-        if tuple(request.chat_uids) == _dotenv_chats(agent):
-            # Asking for the set it already has is not a write. Answering 200
-            # here keeps an idempotent caller -- one that PUTs its desired state
-            # on every reconcile -- from failing against a host that already
-            # matches it.
+        if (request.line_uid,) == _dotenv_line(agent):
+            # Asking for the line it already serves is not a write. Answering
+            # 200 keeps an idempotent caller -- one that PUTs desired state on
+            # every reconcile -- working against a host that already matches.
             return self._resource(agent).to_json()
-        # Refused rather than half-done: on exe the chat set lives in the
-        # credential the API mints, and here it is written by `activate` into a
-        # dotenv this process must not forge. Answering 200 to a write that
-        # changed nothing is the failure worth avoiding.
+        # Refused rather than half-done: a local agent's line grant lives in the
+        # credential minted for it, and this process must not forge one.
+        # Answering 200 to a write that changed nothing is the failure to avoid.
         raise ApiError(
             409,
-            "a local agent's chat grant is its activation credential, minted by "
-            "'agent-mgr activate <name>' from the owner's phone -- it cannot be set over HTTP",
+            f"{agent.name} is bound to its minted credential's line; re-point it with "
+            "'agent-mgr provision' against a fresh home, not over HTTP",
         )
 
     def delete(self, agent_id: str) -> dict[str, JsonValue]:
@@ -238,12 +278,12 @@ def build_handler(api: LocalCloudApi, token: str) -> type[BaseHTTPRequestHandler
             match = ROUTE.match(self.path)
             if not match:
                 raise ApiError(404, "Not Found")
-            agent_id, chats = match.group("agent_id"), match.group("chats")
+            agent_id, line = match.group("agent_id"), match.group("line")
             method = self.command
-            if chats:
+            if line:
                 if method != "PUT":
                     raise ApiError(405, "Method Not Allowed")
-                return 200, api.update_chats(str(agent_id), self._payload())
+                return 200, api.update_line(str(agent_id), self._payload())
             if agent_id is None:
                 if method == "GET":
                     return 200, api.list()

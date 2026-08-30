@@ -15,7 +15,7 @@ from .cloud_http import HttpCloudTransport
 from .cloud_models import (
     CloudAgentResource,
     CreateCloudAgentRequest,
-    UpdateCloudAgentChatsRequest,
+    UpdateCloudAgentLineRequest,
 )
 from .commands import (
     activate,
@@ -59,13 +59,13 @@ CLOUD_OPERATIONS = frozenset(
         "cloud-create",
         "cloud-list",
         "cloud-get",
-        "cloud-update-chats",
+        "cloud-set-line",
         "cloud-delete",
     }
 )
 # The two cloud verbs that take a request body on stdin. Only these still
 # require --json: the others answer a name the same way their local twins do.
-CLOUD_STDIN_OPERATIONS = frozenset({"cloud-create", "cloud-update-chats"})
+CLOUD_STDIN_OPERATIONS = frozenset({"cloud-create", "cloud-set-line"})
 # What a cloud target can and cannot do, stated once. `restart` and `logs` have
 # no exe equivalent -- restart would have to delete and re-create, which mints a
 # new credential and strands the chat, and exe publishes no log surface at all.
@@ -157,7 +157,7 @@ def _usage(stream: TextIO = sys.stdout) -> None:
   backup-homes | prune-backups
   up | down | restart | logs | agent | compose | resolve-guard
   serve [host] [port]   Plow's /v1/agents/cloud API, against local containers
-  cloud-create | cloud-list | cloud-get | cloud-update-chats | cloud-delete
+  cloud-create | cloud-list | cloud-get | cloud-set-line | cloud-delete
 
   A cloud agent registered with register-cloud answers the same lifecycle verbs
   as a local one: up, down and chats. restart and logs have no exe equivalent
@@ -290,10 +290,10 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         return _cloud_result(
             operation, _cloud().get(_cloud_agent_id(args[0], registry)), json_output
         )
-    if operation == "cloud-update-chats":
-        _need(args, 1, "agent-mgr --json cloud-update-chats <name|agent-id>")
-        update_request = UpdateCloudAgentChatsRequest.from_json(_json_input())
-        resource = _cloud().update_chats(_cloud_agent_id(args[0], registry), update_request)
+    if operation == "cloud-set-line":
+        _need(args, 1, "agent-mgr --json cloud-set-line <name|agent-id>")
+        update_request = UpdateCloudAgentLineRequest.from_json(_json_input())
+        resource = _cloud().update_line(_cloud_agent_id(args[0], registry), update_request)
         return _cloud_result(operation, resource, json_output)
     if operation == "cloud-delete":
         _need(args, 1, "agent-mgr cloud-delete <name|agent-id>")

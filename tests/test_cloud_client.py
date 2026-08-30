@@ -8,7 +8,7 @@ from agent_mgr.cloud_client import CloudClient
 from agent_mgr.cloud_models import (
     CloudAgentResource,
     CreateCloudAgentRequest,
-    UpdateCloudAgentChatsRequest,
+    UpdateCloudAgentLineRequest,
 )
 from agent_mgr.errors import AgentMgrError, ErrorCode
 from agent_mgr.models import JsonValue
@@ -46,20 +46,20 @@ def deleted_resource() -> CloudAgentResource:
 LIVE = resource()
 DELETED = deleted_resource()
 CREATE = CreateCloudAgentRequest(("chat-a",), "Mary", "exe:hermes")
-UPDATE = UpdateCloudAgentChatsRequest(("chat-a", "chat-b"))
+UPDATE = UpdateCloudAgentLineRequest(("chat-a", "chat-b"))
 
 
-@pytest.mark.parametrize("operation", ["create", "list", "get", "update_chats", "delete"])
+@pytest.mark.parametrize("operation", ["create", "list", "get", "update_line", "delete"])
 def test_operations_map_transport_calls(operation: str) -> None:
     cases = {
         "create": (LIVE.to_json(), (CREATE,), LIVE, ("POST", "/v1/agents/cloud", CREATE.to_json())),
         "list": ([LIVE.to_json()], (), (LIVE,), ("GET", "/v1/agents/cloud", None)),
         "get": (LIVE.to_json(), ("agent-id",), LIVE, ("GET", "/v1/agents/cloud/agent-id", None)),
-        "update_chats": (
+        "update_line": (
             LIVE.to_json(),
             ("agent-id", UPDATE),
             LIVE,
-            ("PUT", "/v1/agents/cloud/agent-id/chats", UPDATE.to_json()),
+            ("PUT", "/v1/agents/cloud/agent-id/line", UPDATE.to_json()),
         ),
         "delete": (
             DELETED.to_json(),

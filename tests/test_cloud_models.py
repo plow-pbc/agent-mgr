@@ -11,27 +11,40 @@ from agent_mgr.cloud_models import (
     CloudStatus,
     CreateCloudAgentRequest,
     FailureCode,
-    UpdateCloudAgentChatsRequest,
+    UpdateCloudAgentLineRequest,
 )
 from agent_mgr.errors import AgentMgrError, ErrorCode
 
 
 def test_create_request_round_trips_the_api_shape() -> None:
+    """`{line_uid, name?, provider?}` -- an agent is provisioned for a LINE.
+
+    This modelled `chat_uids` and rejected `line_uid` as unknown, so every
+    create from a client that had already moved failed at this seam.
+    """
     request = CreateCloudAgentRequest.from_json(
-        {"name": "Mary", "provider": "exe:hermes", "chat_uids": ["cht_a", "cht_b"]}
+        {"name": "Mary", "provider": "exe:hermes", "line_uid": "ln_p3"}
     )
 
     assert request.to_json() == {
         "name": "Mary",
         "provider": "exe:hermes",
-        "chat_uids": ["cht_a", "cht_b"],
+        "line_uid": "ln_p3",
     }
 
 
-def test_update_request_deduplicates_chats_in_first_seen_order() -> None:
-    request = UpdateCloudAgentChatsRequest.from_json({"chat_uids": ["cht_b", "cht_a", "cht_b"]})
+def test_create_request_defaults_the_name_and_provider() -> None:
+    """Both are optional in Plow's schema: the caller may name only the line,
+    and refusing that request would fail a legal one."""
+    request = CreateCloudAgentRequest.from_json({"line_uid": "ln_p3"})
 
-    assert request.to_json() == {"chat_uids": ["cht_b", "cht_a"]}
+    assert request.to_json() == {"name": "cloud agent", "provider": None, "line_uid": "ln_p3"}
+
+
+def test_update_request_carries_the_line() -> None:
+    request = UpdateCloudAgentLineRequest.from_json({"line_uid": "ln_p4"})
+
+    assert request.to_json() == {"line_uid": "ln_p4"}
 
 
 def test_resource_preserves_chat_order_and_multiplicity() -> None:
@@ -55,23 +68,23 @@ def test_resource_preserves_chat_order_and_multiplicity() -> None:
     "value",
     [
         {},
-        {"chat_uids": []},
-        {"chat_uids": [""]},
-        {"chat_uids": [1]},
-        {"chat_uids": ["cht_a"], "surprise": True},
+        {},
+        {"line_uid": ""},
+        {"line_uid": 1},
+        {"line_uid": "ln_p3", "surprise": True},
         ["cht_a"],
     ],
 )
 def test_update_request_rejects_every_non_contract_shape(value: object) -> None:
     with pytest.raises(AgentMgrError) as raised:
-        UpdateCloudAgentChatsRequest.from_json(value)
+        UpdateCloudAgentLineRequest.from_json(value)
 
     assert raised.value.code is ErrorCode.INVALID_ARGUMENT
 
 
 def test_request_unknown_field_diagnostic_keeps_the_local_field_name() -> None:
     with pytest.raises(AgentMgrError) as raised:
-        UpdateCloudAgentChatsRequest.from_json({"chat_uids": ["cht_a"], "surprise": True})
+        UpdateCloudAgentLineRequest.from_json({"line_uid": "ln_p3", "surprise": True})
 
     assert raised.value.code is ErrorCode.INVALID_ARGUMENT
     assert str(raised.value) == "unknown fields: surprise"

@@ -96,7 +96,7 @@ def _json_document(result, operation: str) -> dict[str, Any]:
     "operation,args",
     [
         ("cloud-create", ()),
-        ("cloud-update-chats", ("agent-id",)),
+        ("cloud-set-line", ("agent-id",)),
     ],
 )
 def test_the_body_carrying_cloud_commands_require_json(
@@ -120,7 +120,7 @@ def test_cloud_create_reads_the_api_request_shape_from_stdin(run, cloud_server) 
         "--json",
         "cloud-create",
         env=cloud_server.environment,
-        input=json.dumps({"name": "Mary", "provider": "exe:hermes", "chat_uids": ["cht_a"]}),
+        input=json.dumps({"name": "Mary", "provider": "exe:hermes", "line_uid": "ln_p3"}),
     )
 
     assert result.returncode == 0
@@ -130,7 +130,7 @@ def test_cloud_create_reads_the_api_request_shape_from_stdin(run, cloud_server) 
         (
             "POST",
             "/v1/agents/cloud",
-            {"name": "Mary", "provider": "exe:hermes", "chat_uids": ["cht_a"]},
+            {"name": "Mary", "provider": "exe:hermes", "line_uid": "ln_p3"},
         )
     ]
 
@@ -157,24 +157,24 @@ def test_cloud_get_emits_a_resource(run, cloud_server) -> None:
     assert cloud_server.requests == [("GET", f"/v1/agents/cloud/{resource['agent_id']}", None)]
 
 
-def test_cloud_update_chats_reads_the_api_request_shape_from_stdin(run, cloud_server) -> None:
+def test_cloud_update_line_reads_the_api_request_shape_from_stdin(run, cloud_server) -> None:
     resource = _contract_resources()[0]
     cloud_server.respond(resource)
     result = run(
         "--json",
-        "cloud-update-chats",
+        "cloud-set-line",
         resource["agent_id"],
         env=cloud_server.environment,
-        input=json.dumps({"chat_uids": ["cht_a", "cht_b"]}),
+        input=json.dumps({"line_uid": "ln_p4"}),
     )
 
     assert result.returncode == 0
-    assert _json_document(result, "cloud-update-chats")["result"] == {"agent": resource}
+    assert _json_document(result, "cloud-set-line")["result"] == {"agent": resource}
     assert cloud_server.requests == [
         (
             "PUT",
-            f"/v1/agents/cloud/{resource['agent_id']}/chats",
-            {"chat_uids": ["cht_a", "cht_b"]},
+            f"/v1/agents/cloud/{resource['agent_id']}/line",
+            {"line_uid": "ln_p4"},
         )
     ]
 
@@ -194,7 +194,7 @@ def test_cloud_delete_emits_the_teardown_resource(run, cloud_server) -> None:
     "contents,code",
     [
         ("not JSON", "invalid_argument"),
-        (json.dumps({"chat_uids": []}), "invalid_argument"),
+        (json.dumps({"line_uid": ""}), "invalid_argument"),
     ],
 )
 def test_cloud_create_reports_input_failures(run, contents, code) -> None:
@@ -225,7 +225,7 @@ def test_cloud_create_refuses_terminal_stdin(monkeypatch, capsys) -> None:
 def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
     run, cloud_server
 ) -> None:
-    payload = r'{"chat_uids":["\ud800"]}'
+    payload = r'{"line_uid":"\ud800"}'
     cloud_server.respond(_contract_resources()[1])
     result = run(
         "--json",
@@ -237,7 +237,7 @@ def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
     assert result.returncode == 1
     body = _json_document(result, "cloud-create")
     assert body["error"]["code"] == "invalid_argument"
-    assert body["error"]["message"] == "chat_uids must contain valid Unicode"
+    assert body["error"]["message"] == "line_uid must contain valid Unicode"
     assert cloud_server.requests == []
 
 
@@ -247,7 +247,7 @@ def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, cloud_server
         "--json",
         "cloud-create",
         env=cloud_server.environment,
-        input=json.dumps({"chat_uids": ["cht_a"]}),
+        input=json.dumps({"line_uid": "ln_p3"}),
     )
 
     assert result.returncode == 1
@@ -282,7 +282,7 @@ def test_help_lists_every_cloud_argument_shape(run) -> None:
         "cloud-create",
         "cloud-list",
         "cloud-get",
-        "cloud-update-chats",
+        "cloud-set-line",
         "cloud-delete",
         "register-cloud",
     ):

@@ -141,7 +141,7 @@ def test_create_answers_202_like_plow_does(base: str, api: _Api) -> None:
         base,
         "POST",
         "/v1/agents/cloud",
-        {"name": "life", "provider": "local:docker", "chat_uids": ["cht_home"]},
+        {"name": "life", "provider": "local:docker", "line_uid": "ln_home"},
     )
 
     assert status == 202
@@ -156,7 +156,7 @@ def test_create_names_the_one_real_asymmetry(base: str) -> None:
         base,
         "POST",
         "/v1/agents/cloud",
-        {"name": "ghost", "provider": "local:docker", "chat_uids": ["cht_home"]},
+        {"name": "ghost", "provider": "local:docker", "line_uid": "ln_home"},
     )
 
     assert status == 400
@@ -174,15 +174,15 @@ def test_delete_returns_a_null_status_resource(base: str, api: _Api) -> None:
     assert api.stopped == ["life"]
 
 
-def test_updating_chats_refuses_rather_than_lying(base: str) -> None:
-    """A local agent's chat grant is its activation credential. Answering 200 to
-    a write that changed nothing is the failure worth avoiding."""
+def test_updating_the_line_refuses_rather_than_lying(base: str) -> None:
+    """A local agent's line comes from the credential minted for it. Answering
+    200 to a write that changed nothing is the failure worth avoiding."""
     status, body = _call(
-        base, "PUT", "/v1/agents/cloud/life/chats", {"chat_uids": ["cht_other"]}
+        base, "PUT", "/v1/agents/cloud/life/line", {"line_uid": "ln_other"}
     )
 
     assert status == 409
-    assert "activate" in body["detail"]
+    assert "bound to" in body["detail"]
 
 
 def test_every_route_is_behind_the_bearer(base: str) -> None:
@@ -204,7 +204,7 @@ def test_every_route_is_behind_the_bearer(base: str) -> None:
 def test_an_unknown_path_is_404_and_a_wrong_method_is_405(base: str) -> None:
     assert _call(base, "GET", "/v1/agents")[0] == 404
     assert _call(base, "POST", "/v1/agents/cloud/life")[0] == 405
-    assert _call(base, "GET", "/v1/agents/cloud/life/chats")[0] == 405
+    assert _call(base, "GET", "/v1/agents/cloud/life/line")[0] == 405
 
 
 def test_serving_without_a_token_is_refused(run) -> None:
@@ -223,7 +223,7 @@ def test_create_refuses_a_provider_that_is_not_this_host(base: str) -> None:
         base,
         "POST",
         "/v1/agents/cloud",
-        {"name": "life", "provider": "exe:hermes", "chat_uids": ["cht_home"]},
+        {"name": "life", "provider": "exe:hermes", "line_uid": "ln_home"},
     )
 
     assert status == 400
@@ -242,20 +242,20 @@ def test_delete_drops_the_registry_row_it_reported_deleted(base: str, api: _Api)
     assert [entry.name for entry in api.registry.entries()] == []
 
 
-def test_updating_chats_to_the_set_it_already_has_is_not_a_write(
+def test_updating_to_the_line_it_already_serves_is_not_a_write(
     base: str, api: _Api, monkeypatch
 ) -> None:
     """An idempotent caller PUTs its desired state on every reconcile; failing a
     request that asks for what is already true breaks it against a host that
     already matches."""
-    monkeypatch.setattr("agent_mgr.serve._dotenv_chats", lambda agent: ("cht_home",))
+    monkeypatch.setattr("agent_mgr.serve._dotenv_line", lambda agent: ("ln_home",))
 
-    same, _ = _call(base, "PUT", "/v1/agents/cloud/life/chats", {"chat_uids": ["cht_home"]})
-    other, body = _call(base, "PUT", "/v1/agents/cloud/life/chats", {"chat_uids": ["cht_x"]})
+    same, _ = _call(base, "PUT", "/v1/agents/cloud/life/line", {"line_uid": "ln_home"})
+    other, body = _call(base, "PUT", "/v1/agents/cloud/life/line", {"line_uid": "ln_x"})
 
     assert same == 200
     assert other == 409
-    assert "activate" in body["detail"]
+    assert "bound to" in body["detail"]
 
 
 def test_a_public_bind_is_refused_without_an_explicit_opt_out(run) -> None:
