@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -206,8 +207,46 @@ class LocalCloudApi:
                 f"{request.name} is bound to {held[0]}, not {request.line_uid}; a local agent's "
                 "line comes from the credential minted for it",
             )
-        self._guarded(agent, ["up", "-d"], f"could not start {request.name}")
-        return self._resource(agent).to_json()
+        self._admit(agent)
+        # Then answer, and bring it up behind the response. `POST` is 202 in
+        # Plow's contract precisely because provisioning outlasts a request --
+        # exe's unpack "can outlast the sixty seconds the gateway allows", and a
+        # first `docker pull` here is minutes. Waiting made the one-click create
+        # time out in the client while the work was succeeding; the caller polls
+        # GET out of `provisioning`, the same loop it runs against exe.
+        started = self._resource(agent).to_json()
+        threading.Thread(
+            target=self._bring_up, args=(agent,), name=f"up:{agent.name}", daemon=True
+        ).start()
+        started["status"] = CloudStatus.PROVISIONING.value
+        started["failure_code"] = None
+        return started
+
+    def _admit(self, agent: ResolvedAgent) -> None:
+        """Ownership and identity, before the answer.
+
+        Separate from `_guarded` because these must refuse with a status code
+        while the caller is still listening; the transition itself happens after
+        the 202, where there is nobody left to raise to.
+        """
+        try:
+            require_own_home(agent, self.registry)
+            resolve_guard(agent, self.registry)
+        except AgentMgrError as error:
+            raise ApiError(409, error.message) from None
+
+    def _bring_up(self, agent: ResolvedAgent) -> None:
+        """The work behind a 202. Failures land in the resource, not a response.
+
+        There is nobody to raise to once the answer is sent, and a second
+        channel for it would be a second thing to keep correct: the next GET
+        reports `failed`, which is how a caller already learns about an exe
+        provision that did not finish.
+        """
+        try:
+            self._guarded(agent, ["up", "-d"], f"could not start {agent.name}")
+        except ApiError:
+            return
 
     def _guarded(self, agent: ResolvedAgent, argv: Sequence[str], failure: str) -> None:
         try:

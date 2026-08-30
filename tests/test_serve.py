@@ -52,6 +52,11 @@ class _Api(LocalCloudApi):
             payload |= {"status": None, "failure_code": None}
         return SimpleNamespace(to_json=lambda: payload)
 
+    def _admit(self, agent) -> None:  # type: ignore[override]
+        # Ownership and descriptor resolution need a real checkout; docker is
+        # what these tests must not reach, and this is the seam between them.
+        return
+
     def _guarded(self, agent, argv, failure: str) -> None:  # type: ignore[override]
         (self.started if argv[0] == "up" else self.stopped).append(agent.name)
 
@@ -265,3 +270,33 @@ def test_a_public_bind_is_refused_without_an_explicit_opt_out(run) -> None:
 
     assert result.returncode != 0
     assert "refusing to bind 0.0.0.0" in result.stderr
+
+
+def test_create_answers_before_the_container_is_up(base: str, api: _Api) -> None:
+    """202 is the contract because provisioning outlasts a request: exe's unpack
+    can outlast the gateway's sixty seconds, and a first `docker pull` here is
+    minutes. Waiting made the one-click create time out in the client while the
+    work was succeeding."""
+    started = threading.Event()
+    release = threading.Event()
+
+    def slow(agent, argv, failure):  # noqa: ANN001, ANN202
+        started.set()
+        release.wait(5)
+        api.started.append(agent.name)
+
+    api._guarded = slow  # type: ignore[method-assign]
+
+    status, body = _call(
+        base,
+        "POST",
+        "/v1/agents/cloud",
+        {"name": "life", "provider": "local:docker", "line_uid": "ln_home"},
+    )
+
+    # Answered while the bring-up is still inside `slow`.
+    assert status == 202
+    assert body["status"] == "provisioning"
+    assert started.wait(5), "the bring-up never started"
+    assert api.started == [], "the answer waited for the container"
+    release.set()
