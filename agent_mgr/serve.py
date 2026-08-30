@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import os
 import re
+from collections.abc import Sequence
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
@@ -44,7 +45,7 @@ from .cloud_models import (
 )
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
-from .local import compose
+from .local import compose, require_own_home, resolve_guard, transition
 from .models import JsonValue, ResolvedAgent
 from .registry import Registry
 
@@ -150,13 +151,41 @@ class LocalCloudApi:
                 "first, then repeat this request.",
             ) from None
         agent = self._agent(request.name)
-        result = compose(agent, ["up", "-d"], capture=True)
-        if result.returncode:
-            raise ApiError(502, f"could not start {request.name}: {result.stderr.strip()[:200]}")
+        # `provider` is not decoration: a request naming exe must not quietly
+        # start a container here, or a caller that thinks it provisioned a cloud
+        # tenant gets a local one and never learns the difference.
+        if request.provider != PROVIDER:
+            raise ApiError(
+                400,
+                f"this host provisions {PROVIDER!r}; {request.provider!r} belongs to another provider",
+            )
+        # The same guards `agent-mgr up` takes, for the same reason. Reaching
+        # for compose directly skipped ownership, container identity and the
+        # transition veto -- so a copied descriptor could start a second gateway
+        # against a sibling's home, or a reused project stop a live agent, from
+        # an HTTP request that never touched those checks.
+        self._guarded(agent, ["up", "-d"], f"could not start {request.name}")
         return self._resource(agent).to_json()
 
+    def _guarded(self, agent: ResolvedAgent, argv: Sequence[str], failure: str) -> None:
+        try:
+            require_own_home(agent, self.registry)
+            resolve_guard(agent, self.registry)
+            code = transition(agent, argv)
+        except AgentMgrError as error:
+            raise ApiError(409, error.message) from None
+        if code:
+            raise ApiError(502, f"{failure}: docker compose exited {code}")
+
     def update_chats(self, agent_id: str, payload: object) -> dict[str, JsonValue]:
-        UpdateCloudAgentChatsRequest.from_json(payload)
+        request = UpdateCloudAgentChatsRequest.from_json(payload)
+        agent = self._agent(agent_id)
+        if tuple(request.chat_uids) == _dotenv_chats(agent):
+            # Asking for the set it already has is not a write. Answering 200
+            # here keeps an idempotent caller -- one that PUTs its desired state
+            # on every reconcile -- from failing against a host that already
+            # matches it.
+            return self._resource(agent).to_json()
         # Refused rather than half-done: on exe the chat set lives in the
         # credential the API mints, and here it is written by `activate` into a
         # dotenv this process must not forge. Answering 200 to a write that
@@ -169,10 +198,16 @@ class LocalCloudApi:
 
     def delete(self, agent_id: str) -> dict[str, JsonValue]:
         agent = self._agent(agent_id)
-        result = compose(agent, ["down"], capture=True)
-        if result.returncode:
-            raise ApiError(502, f"could not stop {agent_id}: {result.stderr.strip()[:200]}")
-        return self._resource(agent, deleted=True).to_json()
+        resource = self._resource(agent, deleted=True)
+        self._guarded(agent, ["down"], f"could not stop {agent_id}")
+        # The row goes with the container. exe's DELETE makes the agent stop
+        # existing, and answering with a deleted resource while leaving a row
+        # that the next GET happily resolves would report a deletion that did
+        # not happen. The HOME is what stays -- credentials, checkpoint and cron
+        # schedule live there, and no HTTP request may destroy them; `register`
+        # brings the agent back against the same home.
+        self.registry.remove(agent.name)
+        return resource.to_json()
 
 
 def build_handler(api: LocalCloudApi, token: str) -> type[BaseHTTPRequestHandler]:
@@ -248,6 +283,9 @@ def build_handler(api: LocalCloudApi, token: str) -> type[BaseHTTPRequestHandler
     return Handler
 
 
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+
+
 def serve(registry: Registry, root: Any, host: str, port: int) -> int:
     token = os.environ.get("AGENT_MGR_SERVE_TOKEN", "").strip()
     if not token:
@@ -255,6 +293,17 @@ def serve(registry: Registry, root: Any, host: str, port: int) -> int:
             ErrorCode.INVALID_ARGUMENT,
             "AGENT_MGR_SERVE_TOKEN is unset",
             "these routes start and stop containers; set a bearer token before serving",
+        )
+    # A bearer is not enough to earn a public bind. These routes start and stop
+    # containers on this host, and `0.0.0.0` puts them in front of every device
+    # on the network -- including one that only has to guess a token. Reaching
+    # them from elsewhere is what SSH forwarding is for; an explicit opt-out
+    # exists so the refusal is a decision rather than a wall.
+    if host not in LOOPBACK_HOSTS and os.environ.get("AGENT_MGR_SERVE_PUBLIC") != "1":
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"refusing to bind {host}: these routes start and stop containers",
+            "forward the loopback port over SSH, or set AGENT_MGR_SERVE_PUBLIC=1 to accept the exposure",
         )
     handler = build_handler(LocalCloudApi(registry, root), token)
     with ThreadingHTTPServer((host, port), handler) as httpd:

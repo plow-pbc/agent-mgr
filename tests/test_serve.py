@@ -15,6 +15,8 @@ from collections.abc import Iterator
 from http.server import ThreadingHTTPServer
 
 import pytest
+from pathlib import Path
+from types import SimpleNamespace
 from agent_mgr.cloud_models import CloudAgentResource
 from agent_mgr.registry import Registry
 from agent_mgr.serve import LocalCloudApi, build_handler
@@ -24,43 +26,37 @@ TOKEN = "serve-token"
 
 
 class _Api(LocalCloudApi):
-    """The registry half is real; docker is not. Compose is what these tests
-    must not reach: a container per case is not a contract, it is a fixture that
-    fails on a laptop with no daemon."""
+    """Real routing, real request parsing, real guards -- only docker and the
+    descriptor are stubbed. A fake that overrode the handlers themselves would
+    assert the fake: the provider gate and the chat comparison live in those
+    methods, and every probe this file answers is about them.
+    """
 
     def __init__(self, registry: Registry, resources: dict[str, dict[str, object]]) -> None:
         super().__init__(registry, ROOT)
         self.resources = resources
         self.started: list[str] = []
         self.stopped: list[str] = []
+        self.home_chats: tuple[str, ...] = ("cht_home",)
+
+    def _agent(self, agent_id: str):  # type: ignore[override]
+        from agent_mgr.serve import ApiError
+
+        if agent_id not in self.resources:
+            raise ApiError(404, "Cloud agent not found")
+        return SimpleNamespace(name=agent_id, container=f"hermes-{agent_id}", home=Path("/nowhere"))
+
+    def _resource(self, agent, *, deleted: bool = False):  # type: ignore[override]
+        payload = dict(self.resources[agent.name])
+        if deleted:
+            payload |= {"status": None, "failure_code": None}
+        return SimpleNamespace(to_json=lambda: payload)
+
+    def _guarded(self, agent, argv, failure: str) -> None:  # type: ignore[override]
+        (self.started if argv[0] == "up" else self.stopped).append(agent.name)
 
     def list(self) -> list[dict[str, object]]:  # type: ignore[override]
         return list(self.resources.values())
-
-    def get(self, agent_id: str) -> dict[str, object]:  # type: ignore[override]
-        from agent_mgr.serve import ApiError
-
-        if agent_id not in self.resources:
-            raise ApiError(404, "Cloud agent not found")
-        return self.resources[agent_id]
-
-    def create(self, payload: object) -> dict[str, object]:  # type: ignore[override]
-        from agent_mgr.cloud_models import CreateCloudAgentRequest
-        from agent_mgr.serve import ApiError
-
-        request = CreateCloudAgentRequest.from_json(payload)
-        if request.name not in self.resources:
-            raise ApiError(400, f"{request.name} is not registered on this host.")
-        self.started.append(request.name)
-        return self.resources[request.name]
-
-    def delete(self, agent_id: str) -> dict[str, object]:  # type: ignore[override]
-        from agent_mgr.serve import ApiError
-
-        if agent_id not in self.resources:
-            raise ApiError(404, "Cloud agent not found")
-        self.stopped.append(agent_id)
-        return self.resources[agent_id] | {"status": None, "failure_code": None}
 
 
 def _resource(name: str) -> dict[str, object]:
@@ -76,7 +72,11 @@ def _resource(name: str) -> dict[str, object]:
 
 @pytest.fixture
 def api(tmp_path) -> _Api:
-    return _Api(Registry(tmp_path / "agents"), {"life": _resource("life")})
+    registry = Registry(tmp_path / "agents")
+    repo = tmp_path / "life-repo"
+    repo.mkdir()
+    registry.add("life", repo)
+    return _Api(registry, {"life": _resource("life")})
 
 
 @pytest.fixture
@@ -214,3 +214,54 @@ def test_serving_without_a_token_is_refused(run) -> None:
 
     assert result.returncode != 0
     assert "AGENT_MGR_SERVE_TOKEN is unset" in result.stderr
+
+
+def test_create_refuses_a_provider_that_is_not_this_host(base: str) -> None:
+    """A request naming exe must not quietly start a container here: the caller
+    would believe it provisioned a tenant and never learn otherwise."""
+    status, body = _call(
+        base,
+        "POST",
+        "/v1/agents/cloud",
+        {"name": "life", "provider": "exe:hermes", "chat_uids": ["cht_home"]},
+    )
+
+    assert status == 400
+    assert "belongs to another provider" in body["detail"]
+
+
+def test_delete_drops_the_registry_row_it_reported_deleted(base: str, api: _Api) -> None:
+    """Answering with a deleted resource while leaving a row the next GET
+    resolves reports a deletion that did not happen."""
+    assert [entry.name for entry in api.registry.entries()] == ["life"]
+
+    status, _ = _call(base, "DELETE", "/v1/agents/cloud/life")
+
+    assert status == 200
+    assert api.stopped == ["life"]
+    assert [entry.name for entry in api.registry.entries()] == []
+
+
+def test_updating_chats_to_the_set_it_already_has_is_not_a_write(
+    base: str, api: _Api, monkeypatch
+) -> None:
+    """An idempotent caller PUTs its desired state on every reconcile; failing a
+    request that asks for what is already true breaks it against a host that
+    already matches."""
+    monkeypatch.setattr("agent_mgr.serve._dotenv_chats", lambda agent: ("cht_home",))
+
+    same, _ = _call(base, "PUT", "/v1/agents/cloud/life/chats", {"chat_uids": ["cht_home"]})
+    other, body = _call(base, "PUT", "/v1/agents/cloud/life/chats", {"chat_uids": ["cht_x"]})
+
+    assert same == 200
+    assert other == 409
+    assert "activate" in body["detail"]
+
+
+def test_a_public_bind_is_refused_without_an_explicit_opt_out(run) -> None:
+    """A bearer does not earn a public bind: 0.0.0.0 puts container start/stop
+    in front of every device on the network, one guess away."""
+    result = run("serve", "0.0.0.0", env={"AGENT_MGR_SERVE_TOKEN": "tok"})
+
+    assert result.returncode != 0
+    assert "refusing to bind 0.0.0.0" in result.stderr

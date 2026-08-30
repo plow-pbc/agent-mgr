@@ -129,6 +129,13 @@ def require_own_home(agent: ResolvedAgent, registry: Registry) -> None:
     for entry in registry.entries():
         if entry.name == agent.name:
             continue
+        if entry.is_cloud:
+            # A cloud row names an exe tenant, not a directory on this host, so
+            # it can never claim `own`. Sending it through local resolution
+            # produced a guaranteed failure, and the veto below then read that
+            # as "someone might hold this home" -- one registered cloud agent
+            # made every ownership-checked local command refuse.
+            continue
         try:
             other = resolve_agent(entry.name, registry, ROOT)
         except AgentMgrError as error:

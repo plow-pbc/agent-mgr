@@ -75,7 +75,7 @@ CLOUD_UNSUPPORTED = {
         "exe has no restart: it would delete and re-create the agent, minting a new "
         "credential and stranding its chat"
     ),
-    "logs": "exe publishes no log surface; read the agent's status with 'agent-mgr get <name>'",
+    "logs": "exe publishes no log surface; read the agent's status with 'agent-mgr cloud-get <name>'",
 }
 NATIVE_JSON_OPERATIONS = (
     frozenset({"ls", "register", "register-cloud", "unregister", "new", "resolve"})
@@ -204,7 +204,11 @@ def _cloud_agent_id(name: str, registry: Registry) -> str:
 
 
 def _cloud_lifecycle(
-    operation: str, entry: RegistryEntry, args: list[str], json_output: bool
+    operation: str,
+    entry: RegistryEntry,
+    args: list[str],
+    json_output: bool,
+    registry: Registry,
 ) -> int:
     """The shared lifecycle verbs, against an exe agent.
 
@@ -219,6 +223,9 @@ def _cloud_lifecycle(
         )
     client = _cloud()
     if operation == "up":
+        # Reports, never creates. A tenant is minted with a credential and a
+        # chat grant that `up <name>` carries none of, so creating one here
+        # would invent both -- `cloud-create` is where that request belongs.
         return _cloud_result(operation, client.get(entry.location), json_output)
     if operation == "down":
         try:
@@ -232,6 +239,12 @@ def _cloud_lifecycle(
                     "'agent-mgr cloud-list' before retrying",
                 ) from None
             raise
+        # exe's DELETE destroys the tenant, so the id in this row now resolves
+        # to nothing. Keeping it made `down` look like a local `down` -- a
+        # stoppable thing you can bring back up -- when the next `up` could only
+        # GET a deleted agent. The row goes with the tenant; `register-cloud`
+        # names a new one.
+        registry.remove(entry.name)
         return _cloud_result(operation, resource, json_output)
     if operation == "chats":
         resource = client.get(entry.location)
@@ -463,7 +476,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                     f"{operation} runs against a checkout, and {entry.name} is a cloud agent",
                     "exe provisions credentials on first boot; there is nothing to run here",
                 )
-            return _cloud_lifecycle(operation, entry, args, json_output)
+            return _cloud_lifecycle(operation, entry, args, json_output, registry)
         agent = resolve_agent(args[0], registry, ROOT)
         return {
             "cron-sync": cron_sync,
@@ -487,7 +500,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         _need(args, 1, f"agent-mgr {operation} <name>")
         entry = registry.entry(args[0])
         if entry.is_cloud:
-            return _cloud_lifecycle(operation, entry, args, json_output)
+            return _cloud_lifecycle(operation, entry, args, json_output, registry)
         agent = resolve_agent(args[0], registry, ROOT)
         resolve_guard(agent, registry)
         command = {

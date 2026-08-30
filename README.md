@@ -77,8 +77,21 @@ agent-mgr --json cloud-delete AGENT_ID
 Create normally returns `status: "provisioning"`. Callers should poll
 `cloud-get` until the agent reaches `running`, `failed`, or `teardown`. Retry
 creation after `failed`; repeat deletion after `teardown`. agent-mgr never
-contacts exe.dev or handles tenant credentials. Local Compose commands remain
-separate from the cloud-control commands.
+contacts exe.dev or handles tenant credentials.
+
+`up`, `down` and `chats` are not separate any more: a row registered with
+`register-cloud <name> <agent-id>` answers them against its exe agent, so the
+verb names a target rather than a substrate. `restart` and `logs` refuse a
+cloud agent by name -- an exe restart would delete and re-create the tenant,
+minting a new credential and stranding its chat, and exe publishes no log
+surface -- because a verb that quietly means something different per target is
+worse than one that says it cannot.
+
+`agent-mgr serve [host] [port]` answers the same `/v1/agents/cloud` routes
+against local containers, so a client written for Plow drives this host without
+knowing the difference. It requires `AGENT_MGR_SERVE_TOKEN` and binds loopback:
+the routes start and stop containers, and a bearer alone does not earn a public
+bind (`AGENT_MGR_SERVE_PUBLIC=1` accepts that exposure deliberately).
 
 ## Why it exists
 
