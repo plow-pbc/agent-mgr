@@ -4,6 +4,7 @@ Every fact here is measured rather than assumed, and every one of them is
 invisible in the output when it breaks — the run exits 0 and the archives still
 exist and still look like backups.
 """
+
 import os
 import re
 import subprocess
@@ -38,26 +39,35 @@ def run_documented_cron(home, sandbox, extra_path=None):
     closed everywhere protects nothing; one its own argument satisfies protects
     nothing either."""
     home, sandbox = Path(home).resolve(), Path(sandbox).resolve()
-    assert home.is_relative_to(sandbox) and home != sandbox, \
+    assert home.is_relative_to(sandbox) and home != sandbox, (
         f"refusing to run a documented `rm -rf` with HOME={home}, outside {sandbox}"
-    assert home != Path.home().resolve(), \
+    )
+    assert home != Path.home().resolve(), (
         f"refusing to run a documented `rm -rf` against the real home {home}"
-    line = next(l for l in HOWTO.read_text().splitlines()
-                if l.lstrip().startswith("0 4 * * *") and "agent-mgr backup-homes" in l)
+    )
+    line = next(
+        l
+        for l in HOWTO.read_text().splitlines()
+        if l.lstrip().startswith("0 4 * * *") and "agent-mgr backup-homes" in l
+    )
     # The group and its redirect are the whole point of the entry: without them
     # only the prune's output is logged, and every diagnostic comes from the
     # backup. The `&&` is the other half — retention must run only after the
     # backup it prunes for succeeded — and both halves must name one destination.
-    assert re.search(
-        r"\{\s+\S*agent-mgr backup-homes (\S+) && \S*agent-mgr prune-backups \1 ", line) \
-        and "; } >>" in line, \
-        f"the entry no longer groups a gated backup-and-prune into the log: {line}"
+    assert (
+        re.search(r"\{\s+\S*agent-mgr backup-homes (\S+) && \S*agent-mgr prune-backups \1 ", line)
+        and "; } >>" in line
+    ), f"the entry no longer groups a gated backup-and-prune into the log: {line}"
     return subprocess.run(
         ["sh", "-c", line.split(None, 5)[5].replace("~/.local/bin/agent-mgr", str(CLI))],
-        capture_output=True, text=True,
-        env={"HOME": str(home), "AGENT_MGR_REGISTRY": str(home / "registry"),
-             "PATH": f"{extra_path}:{os.environ['PATH']}" if extra_path
-                     else os.environ["PATH"]})
+        capture_output=True,
+        text=True,
+        env={
+            "HOME": str(home),
+            "AGENT_MGR_REGISTRY": str(home / "registry"),
+            "PATH": f"{extra_path}:{os.environ['PATH']}" if extra_path else os.environ["PATH"],
+        },
+    )
 
 
 @pytest.fixture
@@ -92,15 +102,20 @@ def spawn(home_root, dest, extra_path=None):
     # Through the CLI, not the library file: `agent-mgr backup-homes` is the only
     # installed entry point, so every assertion below crosses the dispatch arm —
     # a dropped arm, a lost "$@", or a swallowed exit status fails the suite.
-    return subprocess.Popen([str(CLI), "backup-homes", str(dest)],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-                            preexec_fn=lambda: os.umask(0o022),
-                            env={"HOME": str(home_root),
-                                 "AGENT_MGR_REGISTRY": str(home_root / "registry"),
-                                 # The suite poisons PATH with its own docker
-                                 # stub and refuses any env not carrying it.
-                                 "PATH": f"{extra_path}:{os.environ['PATH']}"
-                                         if extra_path else os.environ["PATH"]})
+    return subprocess.Popen(
+        [str(CLI), "backup-homes", str(dest)],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        preexec_fn=lambda: os.umask(0o022),
+        env={
+            "HOME": str(home_root),
+            "AGENT_MGR_REGISTRY": str(home_root / "registry"),
+            # The suite poisons PATH with its own docker
+            # stub and refuses any env not carrying it.
+            "PATH": f"{extra_path}:{os.environ['PATH']}" if extra_path else os.environ["PATH"],
+        },
+    )
 
 
 def run(home_root, dest, extra_path=None):
@@ -153,6 +168,7 @@ def test_a_run_that_matches_no_home_fails_instead_of_reporting_success(tmp_path,
     r = run(root, dest)
     assert r.returncode != 0
     assert "no homes matched" in r.stderr
+
 
 def test_each_run_gets_its_own_directory(home, dest):
     """The run directory carries a UTC timestamp *and* the pid, so no two runs
@@ -253,30 +269,47 @@ def tar_shim(directory, message, only_for=None):
     directory.mkdir(exist_ok=True)
     guard = f'case "$home" in *{only_for}) ;; *) : > "$out"; exit 0;; esac\n' if only_for else ""
     (directory / "tar").write_text(
-        "#!/bin/sh\nprev=; out=; home=\nfor a in \"$@\"; do\n"
+        '#!/bin/sh\nprev=; out=; home=\nfor a in "$@"; do\n'
         '  [ "$prev" = -czf ] && out="$a"\n  [ "$prev" = -C ] && home="$a"\n  prev="$a"\ndone\n'
         + guard
         + '[ -n "$out" ] && : > "$out"\n'
-        + f'[ -n "{message}" ] && printf \'%s\\n\' "{message}" >&2\nexit 1\n')
+        + f'[ -n "{message}" ] && printf \'%s\\n\' "{message}" >&2\nexit 1\n'
+    )
     (directory / "tar").chmod(0o755)
     return str(directory)
 
 
-@pytest.mark.parametrize("message,tolerated", [
-    ("tar: ./sessions.db: file changed as we read it", True),
-    ("tar: ./kanban.db-wal: File removed before we read it", True),
-    ("tar: ./auth.json: File removed before we read it", False),
-    ("tar: ./sessions.db-journal: File removed before we read it", True),
-    ("tar: ./app.log: File shrank by 4096 bytes; padding with zeros", True),
-    ("tar: ./sessions.db: file changed as we read it\ntar: ./app.log: File shrank by 8 bytes; padding with zeros", True),
-    ("tar: Can't open 'auth.json': Permission denied", False),
-    ("tar: ./x: Cannot stat: No such file or directory", False),
-    ("", False),
-], ids=["read-race", "wal-removed", "credential-removed", "journal-removed", "shrank",
-        "race-and-shrank", "unreadable-member", "unstattable",
-        "no-diagnostic-at-all"])
+@pytest.mark.parametrize(
+    "message,tolerated",
+    [
+        ("tar: ./sessions.db: file changed as we read it", True),
+        ("tar: ./kanban.db-wal: File removed before we read it", True),
+        ("tar: ./auth.json: File removed before we read it", False),
+        ("tar: ./sessions.db-journal: File removed before we read it", True),
+        ("tar: ./app.log: File shrank by 4096 bytes; padding with zeros", True),
+        (
+            "tar: ./sessions.db: file changed as we read it\ntar: ./app.log: File shrank by 8 bytes; padding with zeros",
+            True,
+        ),
+        ("tar: Can't open 'auth.json': Permission denied", False),
+        ("tar: ./x: Cannot stat: No such file or directory", False),
+        ("", False),
+    ],
+    ids=[
+        "read-race",
+        "wal-removed",
+        "credential-removed",
+        "journal-removed",
+        "shrank",
+        "race-and-shrank",
+        "unreadable-member",
+        "unstattable",
+        "no-diagnostic-at-all",
+    ],
+)
 def test_tar_status_1_is_judged_by_its_message_not_its_number(
-        tmp_path, home, dest, message, tolerated):
+    tmp_path, home, dest, message, tolerated
+):
     """`tar` exits 1 for all four and they are opposite outcomes: the first two
     leave an archive missing something that was being rewritten anyway, the last
     two leave one missing a file that was simply never read — `auth.json` being
@@ -315,13 +348,13 @@ def test_one_failing_home_does_not_cost_the_others_their_night(tmp_path, dest):
         (root / name).mkdir(parents=True)
         (root / name / ".env").write_text("x\n")
 
-    shim = tar_shim(tmp_path / "bin", "tar: Cannot open: Permission denied",
-                    only_for="alpha")
+    shim = tar_shim(tmp_path / "bin", "tar: Cannot open: Permission denied", only_for="alpha")
 
     r = run(root, dest, extra_path=shim)
     assert r.returncode != 0, "a home that could not be archived must fail the run"
-    assert [p.name for p in dest.glob("backup-homes/*/*.tar.gz")] == ["hermes-omega.tar.gz"], \
+    assert [p.name for p in dest.glob("backup-homes/*/*.tar.gz")] == ["hermes-omega.tar.gz"], (
         "the healthy home lost its night to the broken one"
+    )
 
 
 @pytest.mark.parametrize("case", ["a home fails", "the destination is missing"])
@@ -344,8 +377,7 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
     if case == "a home fails":
         (root / "agent-backups").mkdir()
         (root / "agent-backups").chmod(0o700)
-        shim = tar_shim(tmp_path / "bin", "tar: Cannot open: Permission denied",
-                        only_for="alpha")
+        shim = tar_shim(tmp_path / "bin", "tar: Cannot open: Permission denied", only_for="alpha")
 
     r = run_documented_cron(root, tmp_path, extra_path=shim)
 
@@ -354,11 +386,11 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
     if case == "a home fails":
         assert "tar failed on" in log, f"the backup half never reached the log: {log!r}"
         assert "one or more homes were not archived" in log, log
-        assert [p.name for p in (root / "agent-backups").glob("backup-homes/*/*.tar.gz")] == \
-            ["hermes-omega.tar.gz"], "the healthy home lost its night to the broken one"
+        assert [p.name for p in (root / "agent-backups").glob("backup-homes/*/*.tar.gz")] == [
+            "hermes-omega.tar.gz"
+        ], "the healthy home lost its night to the broken one"
     else:
-        assert "does not exist" in log, \
-            f"the unmounted-destination night left no trace: {log!r}"
+        assert "does not exist" in log, f"the unmounted-destination night left no trace: {log!r}"
         assert not (root / "agent-backups").exists(), "it created the destination"
 
 
@@ -373,11 +405,14 @@ def test_prune_takes_runs_and_nothing_beside_them(tmp_path, home, dest):
     runs = dest / "backup-homes"
     aged_run = next(p for p in runs.iterdir() if p.is_dir())  # not the marker file
 
-    mine = {"photos": "dir", "photos-2019.tar.gz": "file",
-            "20240101T010101Z-1": "dir"}  # even run-shaped, it is outside the child
+    mine = {
+        "photos": "dir",
+        "photos-2019.tar.gz": "file",
+        "20240101T010101Z-1": "dir",
+    }  # even run-shaped, it is outside the child
     for name, kind in mine.items():
         (dest / name).mkdir() if kind == "dir" else (dest / name).write_text("x\n")
-    stray = runs / "note-to-self.txt"   # not a run; -type d leaves it alone
+    stray = runs / "note-to-self.txt"  # not a run; -type d leaves it alone
     stray.write_text("why is this here\n")
     boundary = runs / "20240101T010101Z-2"  # exactly at the window's edge
     boundary.mkdir()
@@ -396,15 +431,20 @@ def test_prune_takes_runs_and_nothing_beside_them(tmp_path, home, dest):
     # boundary, which is *supposed* to be deleted.
     fresh_run = next(p for p in runs.iterdir() if p.name not in known)
 
-    link = tmp_path / "link"           # the symlinked destination the docs invite
+    link = tmp_path / "link"  # the symlinked destination the docs invite
     link.symlink_to(dest)
-    assert subprocess.run([str(CLI), "prune-backups", str(link), "14"],
-                          capture_output=True, text=True).returncode == 0
+    assert (
+        subprocess.run(
+            [str(CLI), "prune-backups", str(link), "14"], capture_output=True, text=True
+        ).returncode
+        == 0
+    )
 
     assert not aged_run.exists(), "it kept the run it was meant to prune"
     assert fresh_run.exists(), "it took a run inside the retention window"
-    assert {p.name for p in dest.iterdir()} == set(mine) | {"backup-homes"}, \
+    assert {p.name for p in dest.iterdir()} == set(mine) | {"backup-homes"}, (
         "it reached outside its own child"
+    )
     assert stray.exists(), "it deleted a file that is not a run"
     # `! -mtime -14` takes a run at exactly fourteen days; `-mtime +14` would
     # keep it, which is a fifteenth daily archive under a documented fourteen.
@@ -441,12 +481,12 @@ def test_a_runs_child_this_command_did_not_create_is_refused(tmp_path, home, des
     expected = "is a symlink" if shape == "symlink" else "carries no marker"
     r = run(home, dest)
     assert r.returncode != 0 and expected in r.stderr, r.stderr
-    p = subprocess.run([str(CLI), "prune-backups", str(dest), "14"],
-                       capture_output=True, text=True)
+    p = subprocess.run([str(CLI), "prune-backups", str(dest), "14"], capture_output=True, text=True)
     assert p.returncode != 0 and expected in p.stderr, p.stderr
     if shape == "symlink":
-        assert "touch" not in r.stderr and "touch" not in p.stderr, \
+        assert "touch" not in r.stderr and "touch" not in p.stderr, (
             "it offered an adoption that cannot work for a link"
+        )
     assert (target / "photos").exists(), "it deleted what it did not create"
     # Refused BEFORE touching it, which is the only ordering that makes the
     # refusal safe — and the only thing the exit status cannot show. Put the
@@ -465,8 +505,7 @@ def test_prune_refuses_a_retention_argument_it_cannot_trust(tmp_path, home, dest
     before = {p.name for p in (dest / "backup-homes").iterdir()}
     assert before, "fixture sanity: there is a run to lose"
 
-    r = subprocess.run([str(CLI), "prune-backups", str(dest), days],
-                       capture_output=True, text=True)
+    r = subprocess.run([str(CLI), "prune-backups", str(dest), days], capture_output=True, text=True)
     assert r.returncode != 0, r.stdout
     assert "days must be" in r.stderr, r.stderr
     assert {p.name for p in (dest / "backup-homes").iterdir()} == before
@@ -477,10 +516,13 @@ def test_prune_refuses_a_destination_it_has_never_written_to(tmp_path):
     the wrong answer: the caller is the cron's `&&`, and a silent success there
     reads as a completed retention. The message names the mount case because
     that is the one where the directory's absence is a symptom, not the fact."""
-    r = subprocess.run([str(CLI), "prune-backups", str(tmp_path / "nope")],
-                       capture_output=True, text=True)
+    r = subprocess.run(
+        [str(CLI), "prune-backups", str(tmp_path / "nope")], capture_output=True, text=True
+    )
     assert r.returncode != 0
     assert "no runs" in r.stderr and "not mounted" in r.stderr, r.stderr
+
+
 def test_a_child_from_before_the_marker_is_adopted_by_the_documented_touch(tmp_path, home, dest):
     """A `backup-homes/` an earlier version of this command wrote carries no
     marker, so both halves refuse it — correctly, since they cannot tell it from
@@ -493,10 +535,15 @@ def test_a_child_from_before_the_marker_is_adopted_by_the_documented_touch(tmp_p
     os.utime(runs / "20240101T010101Z-1", (old, old))
 
     assert run(home, dest).returncode != 0
-    (runs / ".written-by-backup-homes").touch()   # the documented adoption
+    (runs / ".written-by-backup-homes").touch()  # the documented adoption
 
     assert run(home, dest).returncode == 0, "adoption did not restore the backup half"
-    assert subprocess.run([str(CLI), "prune-backups", str(dest), "14"],
-                          capture_output=True, text=True).returncode == 0
-    assert not (runs / "20240101T010101Z-1").exists(), \
+    assert (
+        subprocess.run(
+            [str(CLI), "prune-backups", str(dest), "14"], capture_output=True, text=True
+        ).returncode
+        == 0
+    )
+    assert not (runs / "20240101T010101Z-1").exists(), (
         "the adopted run set is still outside retention"
+    )

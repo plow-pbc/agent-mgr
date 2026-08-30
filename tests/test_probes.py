@@ -16,11 +16,13 @@ def _bin(tmp_path, name, **kw):
 def _with_latch(tmp_path, name, uid="dev_123", tok="tok_abc"):
     # Canonical `KEY=value`, the one spelling this tool writes and reads.
     (tmp_path / "home" / f".hermes-{name}" / ".env").write_text(
-        f"DOMO_DEVICE_UID={uid}\nDOMO_MCP_TOKEN={tok}\n")
+        f"DOMO_DEVICE_UID={uid}\nDOMO_MCP_TOKEN={tok}\n"
+    )
 
 
-NO_LATCH_CONFIG = ("model:\n  provider: openai-codex\nmcp_servers:\n  hostex:\n"
-                   "    url: https://example.invalid\n")
+NO_LATCH_CONFIG = (
+    "model:\n  provider: openai-codex\nmcp_servers:\n  hostex:\n    url: https://example.invalid\n"
+)
 
 
 def test_check_latch_skips_when_the_config_declares_no_latch_server(run, instance, tmp_path):
@@ -40,7 +42,8 @@ def test_a_leftover_credential_does_not_make_an_agent_look_latch_enabled(run, in
     run("register", "str", str(instance("str", config=NO_LATCH_CONFIG)))
     run("restore", "str")
     (tmp_path / "home" / ".hermes-str" / ".env").write_text(
-        "DOMO_DEVICE_UID=dev_stale\nDOMO_MCP_TOKEN=tok_revoked\n")
+        "DOMO_DEVICE_UID=dev_stale\nDOMO_MCP_TOKEN=tok_revoked\n"
+    )
     r = run("check-latch", "str", env=_bin(tmp_path, "str", exec_output="401"))
     assert r.returncode == 0, r.stderr
     assert "no latch configured" in r.stdout
@@ -87,19 +90,26 @@ def test_the_token_is_never_printed_in_full(run, instance, tmp_path):
 @pytest.mark.parametrize(
     "dotenv,expected",
     [
-        ("DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=supersecrettokenvalue\n",
-         "supersecrettokenvalue"),
+        (
+            "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=supersecrettokenvalue\n",
+            "supersecrettokenvalue",
+        ),
         # Two canonical declarations plus a bare `=`-less line. Appending at the
         # bottom is how a duplicate happens, and the gateway takes the LAST --
         # it assigns as it reads. Probing the first would report REVOKED for a
         # live credential. The bare line used to match the key under -F= and
         # hand back its own name, which the relay 401s the same way.
-        ("DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=stale_first\n"
-         "DOMO_MCP_TOKEN=live_last\nDOMO_MCP_TOKEN\n", "live_last"),
+        (
+            "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=stale_first\n"
+            "DOMO_MCP_TOKEN=live_last\nDOMO_MCP_TOKEN\n",
+            "live_last",
+        ),
     ],
     ids=["ordinary", "duplicate-and-bare"],
 )
-def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance, tmp_path, dotenv, expected):
+def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(
+    run, instance, tmp_path, dotenv, expected
+):
     """Two properties of one probe, so one setup.
 
     The credential must not reach argv: passed as `-H "Authorization: Bearer
@@ -133,13 +143,16 @@ def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
     run("restore", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
-        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=\n")
+        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=\n"
+    )
     r = run("check-latch", "property", env=_bin(tmp_path, "property"))
     assert r.returncode != 0
     assert "DOMO_MCP_TOKEN is empty" in r.stderr
 
 
-def test_check_latch_will_not_answer_from_the_host_when_the_gateway_is_down(run, instance, tmp_path):
+def test_check_latch_will_not_answer_from_the_host_when_the_gateway_is_down(
+    run, instance, tmp_path
+):
     """A host answer is exactly the evidence entering the namespace exists to
     stop accepting."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
@@ -153,23 +166,32 @@ def test_check_latch_will_not_answer_from_the_host_when_the_gateway_is_down(run,
 def _connectors_bin(tmp_path, name="rowan", *, script_present=True, gmail="ok", slack="ok"):
     """A docker whose `exec` answers the script-presence test and each probe."""
     import os
+
     b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name)
     (b / "docker").write_text(
-        (b / "docker").read_text().replace(
+        (b / "docker")
+        .read_text()
+        .replace(
             "esac",
             '  *"test -f /opt/data/skills/plow-connectors/plow_connector.py"*)\n'
-            f'    exit {0 if script_present else 1} ;;\n'
-            f'  *gmail*) echo \'{gmail}\'; exit {0 if gmail != "FAIL" else 1} ;;\n'
-            f'  *slack*) echo \'{slack}\'; exit {0 if slack != "FAIL" else 1} ;;\n'
-            "esac", 1))
+            f"    exit {0 if script_present else 1} ;;\n"
+            f"  *gmail*) echo '{gmail}'; exit {0 if gmail != 'FAIL' else 1} ;;\n"
+            f"  *slack*) echo '{slack}'; exit {0 if slack != 'FAIL' else 1} ;;\n"
+            "esac",
+            1,
+        )
+    )
     (b / "docker").chmod(0o755)
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
 def test_check_connectors_reports_each_connector(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
-    r = run("check-connectors", "rowan",
-            env=_connectors_bin(tmp_path, gmail="connected:true", slack="connected:false"))
+    r = run(
+        "check-connectors",
+        "rowan",
+        env=_connectors_bin(tmp_path, gmail="connected:true", slack="connected:false"),
+    )
     assert r.returncode == 0, r.stderr
     assert "gmail: connected:true" in r.stdout
     # connected:false is a real answer, not a failure -- it means the connector
@@ -186,7 +208,9 @@ def test_a_connector_whose_probe_cannot_run_makes_the_command_fail(run, instance
     assert "probe did not run" in r.stderr
 
 
-def test_a_missing_connector_skill_is_named_rather_than_reported_per_connector(run, instance, tmp_path):
+def test_a_missing_connector_skill_is_named_rather_than_reported_per_connector(
+    run, instance, tmp_path
+):
     """Without the presence check every connector reports the same generic 'no
     such file', which is the least informative way to say 'not installed'."""
     run("register", "rowan", str(instance("rowan")))
@@ -201,17 +225,18 @@ def test_the_scaffold_and_the_docs_agree_on_what_declares_latch(run, tmp_path):
     than the dotenv -- so the docs must not tell a no-Mac agent to leave DOMO_*
     blank. That combination is a declared latch with no credential, which fails."""
     import pathlib
+
     root = pathlib.Path(__file__).resolve().parent.parent
     run("new", "acme", str(tmp_path / "acme-hermes-agent"))
     cfg = (tmp_path / "acme-hermes-agent" / "config.yaml").read_text()
     assert "latch:" in cfg
     assert "deletes it" in cfg or "delete" in cfg.lower(), (
-        "the scaffolded config must say how to opt out")
+        "the scaffolded config must say how to opt out"
+    )
     for doc in ("templates/env.example", "docs/HOWTO.md"):
         text = (root / doc).read_text()
         assert "Leave both blank" not in text, f"{doc} still promises blank means unconfigured"
-        assert "latch:` block" in text and "delet" in text, (
-            f"{doc} does not say how to opt out")
+        assert "latch:` block" in text and "delet" in text, f"{doc} does not say how to opt out"
 
 
 def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
@@ -224,6 +249,7 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     root = pathlib.Path(__file__).resolve().parent.parent
     sys.path.insert(0, str(root))
     from agent_mgr.descriptor import OPTIONAL_PATH_KEYS
+
     # The TABLE, not the file: a hook mentioned only in prose or an example block
     # would satisfy a whole-README grep while the row the contract lives in stays
     # missing -- which is the way a third hook would realistically land.
@@ -237,12 +263,14 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     # cannot be written.
     for hook in sorted(OPTIONAL_PATH_KEYS):
         assert f"`{hook}`" in rows, (
-            f"{hook} is a declared repo path but the agent-repo table does not name it")
+            f"{hook} is a declared repo path but the agent-repo table does not name it"
+        )
         # The descriptor is where an author actually meets the hook: AGENT_PRE_TRANSITION
         # reached the resolver while this template still documented one hook, so a
         # scaffolded repo could not discover the veto it is entitled to.
         assert hook in descriptor, (
-            f"{hook} is a declared hook but templates/agent.env does not document it")
+            f"{hook} is a declared hook but templates/agent.env does not document it"
+        )
 
 
 def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, instance, tmp_path):
@@ -252,7 +280,8 @@ def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, ins
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
     run("restore", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
-        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=   \n")
+        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=   \n"
+    )
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
     assert r.returncode != 0
     assert "DOMO_MCP_TOKEN is empty" in r.stderr
@@ -267,14 +296,14 @@ def test_a_swapped_dotenv_cannot_send_a_sibling_token_into_the_container(run, in
     dotenv.unlink()
     dotenv.symlink_to(secret)
     log = tmp_path / "docker.log"
-    r = run("check-latch", "property",
-            env=_bin(tmp_path, "property", log=log, exec_output="200"))
+    r = run("check-latch", "property", env=_bin(tmp_path, "property", log=log, exec_output="200"))
     assert r.returncode != 0
     assert not log.exists() or "tok_sibling" not in log.read_text()
 
 
 def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credential(
-        run, instance, tmp_path):
+    run, instance, tmp_path
+):
     """A dotenv check-latch cannot READ is not a dotenv with no credential in it.
     Swallowing the errno reported "DOMO_MCP_TOKEN is empty ... mint the pair",
     which sends the operator to mint a replacement and revoke a live one over a
@@ -318,8 +347,7 @@ def test_no_doc_hardcodes_the_conventional_dotenv_path():
     stronger signal and the one that cannot be satisfied by a matching string.
     """
     offenders = []
-    for rel in ("README.md", "docs/HOWTO.md", "templates/agent.env",
-                "templates/compose.yml"):
+    for rel in ("README.md", "docs/HOWTO.md", "templates/agent.env", "templates/compose.yml"):
         for n, line in enumerate((ROOT / rel).read_text().splitlines(), 1):
             if ".hermes-<name>/.env" in line or ".hermes-rowan/.env" in line:
                 offenders.append(f"{rel}:{n}")
@@ -331,20 +359,25 @@ def test_no_doc_hardcodes_the_conventional_dotenv_path():
 
 # --- chats / set-home ---------------------------------------------------------
 
+
 def _chats_response(*uids_and_names):
     """The /v1/chats body the fake curl serves, with the HTTP code on the line
     the real probe appends via `-w '\n%{http_code}'`. Quoted, because the fake
     docker interpolates exec_output into an unquoted `echo`."""
     import json
     from conftest import shlex_quote
-    data = [{
-        "uid": uid,
-        "display_name": name,
-        "participants": [
-            {"type": "agent", "line": {"uid": "ln_p2", "provider_key": "+16505550100"}},
-            {"type": "member", "display_name": "Sam"},
-        ],
-    } for uid, name in uids_and_names]
+
+    data = [
+        {
+            "uid": uid,
+            "display_name": name,
+            "participants": [
+                {"type": "agent", "line": {"uid": "ln_p2", "provider_key": "+16505550100"}},
+                {"type": "member", "display_name": "Sam"},
+            ],
+        }
+        for uid, name in uids_and_names
+    ]
     return shlex_quote(json.dumps({"data": data}) + "\n200")
 
 
@@ -354,23 +387,33 @@ def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
     run("restore", "property")
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
     env_file.write_text(
-        f"HOSTEX_TOKEN=keepme\nPLOW_AGENT_TOKEN=tok_plow\nPLOW_HOME_CHANNEL={home_uid}\n")
+        f"HOSTEX_TOKEN=keepme\nPLOW_AGENT_TOKEN=tok_plow\nPLOW_HOME_CHANNEL={home_uid}\n"
+    )
     return env_file
 
 
 def test_chats_marks_the_home_and_keeps_the_token_off_argv(run, instance, tmp_path):
     _with_plow(run, instance, tmp_path)
     log = tmp_path / "docker.log"
-    r = run("chats", "property", env=_bin(
-        tmp_path, "property", log=log,
-        exec_output=_chats_response(("cht_old_dm", None), ("cht_group", "STR Owners"))))
+    r = run(
+        "chats",
+        "property",
+        env=_bin(
+            tmp_path,
+            "property",
+            log=log,
+            exec_output=_chats_response(("cht_old_dm", None), ("cht_group", "STR Owners")),
+        ),
+    )
     assert r.returncode == 0, r.stderr
     marked = [l for l in r.stdout.splitlines() if l.startswith("*")]
     assert len(marked) == 1 and "cht_old_dm" in marked[0]
     assert "STR Owners" in r.stdout and "ln_p2" in r.stdout
     # Same contract as check-latch: the credential rides stdin, never argv.
     assert "tok_plow" not in log.read_text()
-    assert 'header = "Authorization: Bearer tok_plow"' in (tmp_path / "docker.log.stdin").read_text()
+    assert (
+        'header = "Authorization: Bearer tok_plow"' in (tmp_path / "docker.log.stdin").read_text()
+    )
 
 
 def test_set_home_refuses_a_malformed_uid_before_touching_docker(run, instance, tmp_path):
@@ -386,8 +429,12 @@ def test_set_home_refuses_a_uid_the_token_cannot_see(run, instance, tmp_path):
     _with_plow(run, instance, tmp_path)
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
     before = env_file.read_text()
-    r = run("set-home", "property", "cht_not_mine", env=_bin(
-        tmp_path, "property", exec_output=_chats_response(("cht_old_dm", None))))
+    r = run(
+        "set-home",
+        "property",
+        "cht_not_mine",
+        env=_bin(tmp_path, "property", exec_output=_chats_response(("cht_old_dm", None))),
+    )
     assert r.returncode != 0
     assert "not among this token's chats" in r.stderr
     assert env_file.read_text() == before
@@ -397,9 +444,16 @@ def test_set_home_writes_the_home_and_carries_every_other_key_through(run, insta
     """The single-key upsert-env invocation, through the production path -- every
     other success-path caller drives the two-key DOMO pair."""
     _with_plow(run, instance, tmp_path, home_uid="cht_new_dm")
-    r = run("set-home", "property", "cht_old_dm", env=_bin(
-        tmp_path, "property",
-        exec_output=_chats_response(("cht_old_dm", None), ("cht_new_dm", None))))
+    r = run(
+        "set-home",
+        "property",
+        "cht_old_dm",
+        env=_bin(
+            tmp_path,
+            "property",
+            exec_output=_chats_response(("cht_old_dm", None), ("cht_new_dm", None)),
+        ),
+    )
     assert r.returncode == 0, r.stderr
     lines = (tmp_path / "home" / ".hermes-property" / ".env").read_text().splitlines()
     assert "PLOW_HOME_CHANNEL=cht_old_dm" in lines
@@ -412,15 +466,22 @@ def test_set_home_writes_the_home_and_carries_every_other_key_through(run, insta
 
 
 @pytest.mark.parametrize("command, extra", [("chats", ()), ("set-home", ("cht_old_dm",))])
-def test_a_dead_token_dies_with_its_own_message_not_a_traceback(run, instance, tmp_path, command, extra):
+def test_a_dead_token_dies_with_its_own_message_not_a_traceback(
+    run, instance, tmp_path, command, extra
+):
     """The fetch's die must survive to the operator. Piped into the Python
     check it only exits a subshell -- empty stdin then raises a traceback and,
     for set-home, the not-among-chats diagnosis blames a uid typo for a dead
     token. That piped form reads as equivalent, which is how it shipped once."""
     from conftest import shlex_quote
+
     _with_plow(run, instance, tmp_path)
-    r = run(command, "property", *extra, env=_bin(
-        tmp_path, "property", exec_output=shlex_quote('{"detail":"bad token"}\n401')))
+    r = run(
+        command,
+        "property",
+        *extra,
+        env=_bin(tmp_path, "property", exec_output=shlex_quote('{"detail":"bad token"}\n401')),
+    )
     assert r.returncode != 0
     assert "may be dead" in r.stderr
     assert "Traceback" not in r.stderr
@@ -432,8 +493,13 @@ def test_a_schema_break_is_not_reported_as_a_uid_typo(run, instance, tmp_path):
     shell `|| die` it borrowed the not-among-chats diagnosis, sending the
     operator to re-check a uid that was never the problem."""
     from conftest import shlex_quote
+
     _with_plow(run, instance, tmp_path)
-    r = run("set-home", "property", "cht_old_dm", env=_bin(
-        tmp_path, "property", exec_output=shlex_quote('{"chats":[]}\n200')))
+    r = run(
+        "set-home",
+        "property",
+        "cht_old_dm",
+        env=_bin(tmp_path, "property", exec_output=shlex_quote('{"chats":[]}\n200')),
+    )
     assert r.returncode != 0
     assert "not among this token's chats" not in r.stderr

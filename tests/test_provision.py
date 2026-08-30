@@ -114,22 +114,11 @@ def test_provision_mints_against_the_line_and_writes_the_dotenv(
     # a group home would put the owner's private deliveries in front of members.
     assert "PLOW_HOME_CHANNEL=cht_home" in lines
     assert "PLOW_CHAT_CHAT_UID=cht_home" in lines
-
-
-def test_the_home_is_read_with_the_new_grant_not_the_account_token(
-    run, instance, plow: _Plow
-) -> None:
-    """Asking as the AGENT is the same question the gateway asks on its first
-    connection; asking as the account would answer for chats the grant cannot
-    reach, and the agent would arrive silent on a home it cannot read."""
-    _restored(run, instance)
-    plow.chats = [_chat("cht_home", 1)]
-
-    assert run("provision", "rowan", "ln_p3", env=plow.environment).returncode == 0
-
+    # Read as the AGENT, not the account: that is the question the gateway asks
+    # on its first connection, so a grant reaching nothing fails here rather
+    # than arriving as an agent that starts, looks healthy and answers nothing.
     listing = [request for request in plow.requests if request[0] == "GET"]
-    assert listing, "provision never read the chat listing"
-    assert listing[0][2] == f"Bearer {TOKEN}"
+    assert listing and listing[0][2] == f"Bearer {TOKEN}"
 
 
 def test_provision_refuses_an_agent_that_already_holds_a_credential(
@@ -167,17 +156,22 @@ def test_a_grant_reaching_no_chat_is_an_error_not_a_silent_agent(
     run, instance, tmp_path, plow: _Plow
 ) -> None:
     """An empty listing means the credential would arrive at an agent with no
-    home -- it would start, look healthy, and answer nothing."""
+    home -- it would start, look healthy, and answer nothing. It still fails
+    loudly, but the token stays: the mint is one-time, and discarding it here
+    would leave the operator with nothing to recover from."""
     _restored(run, instance)
     plow.chats = []
     dotenv = tmp_path / "home" / ".hermes-rowan" / ".env"
-    before = dotenv.read_text()
 
     result = run("provision", "rowan", "ln_p3", env=plow.environment)
 
     assert result.returncode != 0
     assert "reaches no chat" in result.stderr
-    assert dotenv.read_text() == before
+    lines = dotenv.read_text().splitlines()
+    assert f"PLOW_AGENT_TOKEN={TOKEN}" in lines
+    # Present but empty is what `restore` seeds; what must not happen is a home
+    # invented from a listing that named none.
+    assert "PLOW_HOME_CHANNEL=" in lines
 
 
 def test_provision_refuses_before_restore_has_run(run, instance, plow: _Plow) -> None:
@@ -224,8 +218,13 @@ def test_two_one_to_one_chats_on_a_line_refuse_rather_than_guess(
 
     assert result.returncode != 0
     assert "ambiguous" in result.stderr
+    # The mint is one-time, so the token must already be on disk before the
+    # home is decided: refusing after it was received and before it was written
+    # destroys a credential nobody can get back, and `set-home` -- the recovery
+    # this very message names -- needs it persisted to be possible at all.
     dotenv = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_AGENT_TOKEN=" not in dotenv or "PLOW_AGENT_TOKEN=\n" in dotenv
+    assert f"PLOW_AGENT_TOKEN={TOKEN}" in dotenv.splitlines()
+    assert "set-home" in result.stderr
 
 
 def test_a_failed_reload_does_not_read_as_a_failed_mint(

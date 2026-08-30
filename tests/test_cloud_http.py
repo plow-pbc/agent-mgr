@@ -386,9 +386,10 @@ def test_loopback_transport_bypasses_an_ambient_http_proxy(
     target_requests: list[tuple[str, str | None]] = []
     proxy_requests: list[tuple[str, str | None]] = []
 
-    with _running_server(_recording_handler(target_requests)) as target, _running_server(
-        _recording_handler(proxy_requests)
-    ) as proxy:
+    with (
+        _running_server(_recording_handler(target_requests)) as target,
+        _running_server(_recording_handler(proxy_requests)) as proxy,
+    ):
         for variable in (
             "HTTP_PROXY",
             "http_proxy",

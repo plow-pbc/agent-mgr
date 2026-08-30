@@ -212,18 +212,31 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     token = minted.get("token")
     if not isinstance(token, str) or not token:
         raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned no token")
-    home = _home_chat_on_line(transport.base_url, token, line_uid)
+    # The token lands BEFORE the home is resolved, and that order is the whole
+    # point: the mint is one-time, so anything that raises between receiving it
+    # and writing it destroys a credential nobody can get back. Home discovery
+    # is exactly such a step -- it refuses an ambiguous line -- and the recovery
+    # it names (`set-home`) needs this token persisted and a gateway running to
+    # be possible at all. Write first, then decide the home.
     upsert(
         agent,
-        [
-            "PLOW_AGENT_TOKEN",
-            "PLOW_HOME_CHANNEL",
-            "PLOW_API_BASE",
-            "PLOW_CHAT_TOKEN",
-            "PLOW_CHAT_CHAT_UID",
-            "PLOW_CHAT_BASE_URL",
-        ],
-        [token, home, transport.base_url, token, home, transport.base_url],
+        ["PLOW_AGENT_TOKEN", "PLOW_API_BASE", "PLOW_CHAT_TOKEN", "PLOW_CHAT_BASE_URL"],
+        [token, transport.base_url, token, transport.base_url],
+    )
+    try:
+        home = _home_chat_on_line(transport.base_url, token, line_uid)
+    except AgentMgrError as error:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"{agent.name}'s credential IS written -- do not re-run provision, the mint is "
+            f"spent. Its home is not set: {error.message}. Name it with "
+            f"'agent-mgr set-home {agent.name} <cht_...>'.",
+            f"agent-mgr set-home {agent.name} <cht_...>",
+        ) from None
+    upsert(
+        agent,
+        ["PLOW_HOME_CHANNEL", "PLOW_CHAT_CHAT_UID"],
+        [home, home],
     )
     # The mint is one-time and the credential is now on disk, so a failed
     # reload must not read as a failed provision: the retry would find the
