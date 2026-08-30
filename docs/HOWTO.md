@@ -32,6 +32,20 @@ agent-mgr cron-sync errands   # only if its agent.env names a cron spec
 agent-mgr sign-in errands     # device-code OAuth; hand the URL to whoever owns it
 ```
 
+**There are two ways to get that credential, and only one needs a person.**
+
+`agent-mgr provision <name> <line-uid>` mints it server-side against a line this
+account already holds a live chat on, the way cloud provisioning does — no code,
+no phone, nothing to text. Use it whenever the agent is going on a number the
+account already owns; `agent-mgr chats <name>` on any existing agent names the
+line uids. It refuses if the line carries more than one one-to-one chat, because
+the home would be ambiguous and picking wrong sends this owner's private output
+into somebody else's thread — pass `set-home` afterwards in that case.
+
+`activate` is the other way, and it is the one for a NEW line: it is the only
+path that can bind a number the account does not have yet, because the binding
+is the text itself.
+
 `activate` is the step only a person can finish. `POST /v1/auth/activate` carries
 no credential — the account binding is *whichever phone texts the code back*. So
 the code must be sent from the handset that should own the agent. A code texted

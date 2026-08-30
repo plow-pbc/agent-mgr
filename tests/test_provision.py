@@ -208,3 +208,50 @@ def test_help_lists_provision(run) -> None:
     assert result.returncode == 0
     assert "provision" in result.stdout
     assert os.linesep is not None
+
+
+def test_two_one_to_one_chats_on_a_line_refuse_rather_than_guess(
+    run, instance, tmp_path, plow: _Plow
+) -> None:
+    """A line carries one 1:1 per person who has texted that number. Breaking
+    the tie by API order could pick ANOTHER CONTACT'S DM as home and deliver
+    this owner's cron output and private replies into it -- and nothing in the
+    listing says which one is theirs, so guessing is the bug."""
+    _restored(run, instance)
+    plow.chats = [_chat("cht_someone", 1), _chat("cht_owner", 1)]
+
+    result = run("provision", "rowan", "ln_p3", env=plow.environment)
+
+    assert result.returncode != 0
+    assert "ambiguous" in result.stderr
+    dotenv = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+    assert "PLOW_AGENT_TOKEN=" not in dotenv or "PLOW_AGENT_TOKEN=\n" in dotenv
+
+
+def test_a_failed_reload_does_not_read_as_a_failed_mint(
+    run, instance, tmp_path, plow: _Plow, monkeypatch
+) -> None:
+    """The mint is one-time and already on disk. Reporting the reload failure as
+    a failed provision sends the operator to unregister a home whose only
+    problem is a container that did not restart -- and the retry would refuse
+    anyway, because the credential is there."""
+    _restored(run, instance)
+    plow.chats = [_chat("cht_home", 1)]
+    broken = tmp_path / "brokenbin"
+    broken.mkdir()
+    # `docker` that always fails, so the post-write reload is what breaks.
+    (broken / "docker").write_text("#!/bin/sh\nexit 1\n")
+    (broken / "docker").chmod(0o755)
+
+    result = run(
+        "provision",
+        "rowan",
+        "ln_p3",
+        env=plow.environment | {"PATH": f"{broken}:{os.environ['PATH']}"},
+    )
+
+    dotenv = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+    if result.returncode != 0:
+        assert "credential IS written" in result.stderr
+        assert "do not re-run provision" in result.stderr
+    assert f"PLOW_AGENT_TOKEN={TOKEN}" in dotenv.splitlines()

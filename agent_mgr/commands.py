@@ -213,10 +213,9 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     if not isinstance(token, str) or not token:
         raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned no token")
     home = _home_chat_on_line(transport.base_url, token, line_uid)
-    result = subprocess.run(
+    upsert(
+        agent,
         [
-            str(ROOT / "lib" / "upsert-env"),
-            str(agent.home),
             "PLOW_AGENT_TOKEN",
             "PLOW_HOME_CHANNEL",
             "PLOW_API_BASE",
@@ -224,16 +223,25 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
             "PLOW_CHAT_CHAT_UID",
             "PLOW_CHAT_BASE_URL",
         ],
-        input=f"{token}\n{home}\n{transport.base_url}\n{token}\n{home}\n{transport.base_url}\n",
-        text=True,
-        check=False,
+        [token, home, transport.base_url, token, home, transport.base_url],
     )
-    if result.returncode:
+    # The mint is one-time and the credential is now on disk, so a failed
+    # reload must not read as a failed provision: the retry would find the
+    # token, refuse as "already holds a credential", and send the operator to
+    # unregister a home whose only problem is a container that did not restart.
+    try:
+        reload_if_running(agent, registry, "the credential just minted")
+    except AgentMgrError as error:
+        # In the message, not only the remediation: plain-text output prints the
+        # message alone, and "do not re-run this" is exactly the sentence an
+        # operator must see before they try again on a spent mint.
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
-            f"refusing to publish {agent.name}'s minted credential -- see above. Nothing was written.",
-        )
-    reload_if_running(agent, registry, "the credential just minted")
+            f"{agent.name}'s credential IS written -- do not re-run provision, the mint is "
+            f"spent. The gateway did not reload ({error.message}); "
+            f"restart it with 'agent-mgr restart {agent.name}'.",
+            f"agent-mgr restart {agent.name}",
+        ) from None
     return 0
 
 
@@ -265,8 +273,21 @@ def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
             return 0
         return sum(1 for p in participants if isinstance(p, dict) and p.get("type") == "member")
 
-    best = min(rows, key=members)
-    uid = best.get("uid") if isinstance(best, dict) else None
+    ones = [row for row in rows if members(row) == 1]
+    # A line can carry several one-to-one chats -- one per person who has texted
+    # that number. `min()` broke that tie by whatever order the API happened to
+    # return, so provisioning could silently pick ANOTHER CONTACT'S DM as the
+    # home and deliver this owner's cron output and private replies into it.
+    # There is nothing in the listing that says which of them is the owner's, so
+    # the honest answer is to refuse and make the caller name it.
+    if len(ones) != 1:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"{line_uid} carries {len(ones)} one-to-one chats, so the home is ambiguous",
+            "name it explicitly with 'agent-mgr set-home <name> <cht_...>' after provisioning, "
+            "or provision against a line that serves one person",
+        )
+    uid = ones[0].get("uid") if isinstance(ones[0], dict) else None
     if not isinstance(uid, str) or not uid:
         raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "chat listing carried no uid")
     return uid

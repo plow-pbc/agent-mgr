@@ -276,6 +276,12 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 "check-latch",
             ):
                 print(f"  agent-mgr {next_command} {name}")
+            # The canonical list named `activate` alone, so an owner following it
+            # could not discover the path that needs no text at all.
+            print(
+                f"\n  on a line this account already holds, replace activate with:\n"
+                f"  agent-mgr provision {name} <line-uid>   # no code, no phone"
+            )
         return 0
     if operation == "resolve":
         if not args:
