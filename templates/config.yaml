@@ -2,15 +2,10 @@
 # choice for this deployment. Keys equal to the image's own defaults are
 # deliberately absent, so the pinned image supplies its current defaults rather
 # than a frozen snapshot of them.
-# One session per group chat, shared by every participant. The image's default
-# (true) keys each group session per SENDER, splitting one visible iMessage
-# thread into per-person agent contexts — a member's question and the owner's
-# follow-up land in different sessions and the reply answers the wrong context
-# into the shared thread (life-assistant incident, 2026-08-30). The plow-chat
-# plugin's `config.extra["group_sessions_per_user"] = False` does NOT cover
-# this: the gateway's session store reads only this gateway-level key. Present
-# here despite the "absent keys mean image defaults" rule above because the
-# image default is the wrong choice for a shared phone line, deliberately.
+# One session per group chat, shared by every participant. Present despite the
+# "absent keys mean image defaults" rule above: the image default (true) splits
+# a group thread into per-sender sessions, and the plow-chat plugin's
+# config.extra flag never reaches the gateway session store.
 group_sessions_per_user: false
 model:
   default: gpt-5.5
