@@ -394,7 +394,7 @@ PLUGIN_TARBALL = {
 }
 
 # The fleet skills every agent gets, at the paths the canonical copies keep in
-# plow-pbc/plow's hosted-agent seed. Restore fetches them unconditionally, so
+# plow-pbc/plow's hosted-agent seed. Deploy fetches them unconditionally, so
 # the default `gh` serves them the way it serves the plugin -- otherwise every
 # plain `run("deploy", ...)` in the suite would fail on a fetch it never asked
 # about. One tarball carries both trees: the real fetch is a whole-repo
