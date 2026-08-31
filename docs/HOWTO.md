@@ -49,7 +49,7 @@ agent-mgr register bob ~/services/life-assistant-hermes-agent
 Then, for either case (`<name>` is whichever you just registered):
 
 ```sh
-agent-mgr deploy <name>     # the whole deploy: home, config, plugin, skills, deploy hook
+agent-mgr deploy <name>      # the whole deploy: home, config, plugin, skills, deploy hook
 agent-mgr activate <name>    # prints a code — text it from THAT agent's phone
 agent-mgr up <name>          # start the container
 agent-mgr cron-sync <name>   # only if its agent.env names a cron spec
