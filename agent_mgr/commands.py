@@ -292,11 +292,18 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     # is exactly such a step -- it refuses an ambiguous line -- and the recovery
     # it names (`set-home`) needs this token persisted and a gateway running to
     # be possible at all. Write first, then decide the home.
-    upsert(
-        agent,
-        ["PLOW_AGENT_TOKEN", "PLOW_API_BASE", "PLOW_CHAT_TOKEN", "PLOW_CHAT_BASE_URL"],
-        [token, transport.base_url, token, transport.base_url],
-    )
+    try:
+        upsert(
+            agent,
+            ["PLOW_AGENT_TOKEN", "PLOW_API_BASE", "PLOW_CHAT_TOKEN", "PLOW_CHAT_BASE_URL"],
+            [token, transport.base_url, token, transport.base_url],
+        )
+    except AgentMgrError as error:
+        # The write is the other side of the same one-time boundary: the mint
+        # HAS committed by now, so a dotenv that cannot be written strands the
+        # credential exactly the way an unreadable response does -- and "nothing
+        # was written" is the sentence that invites the second mint.
+        raise _ambiguous_mint(agent, error.code, error.message) from error
     try:
         home = _home_chat_on_line(transport.base_url, token, line_uid)
     except HomeNotSelected as error:

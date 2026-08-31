@@ -354,3 +354,24 @@ def test_an_unreadable_mint_response_does_not_read_as_a_failed_mint(
     # Present but EMPTY is what `restore` seeds; what must not be here is a
     # token, since none was usable.
     assert "PLOW_AGENT_TOKEN=" in dotenv.read_text().splitlines()
+
+
+def test_a_dotenv_that_cannot_be_written_strands_the_mint(
+    run, instance, tmp_path, credential_api: CredentialAPI
+) -> None:
+    """The write is the other side of the one-time boundary. By then the mint
+    HAS committed, so "nothing was written" is the sentence that invites the
+    second mint -- the exact condition the ambiguous-response path warns about.
+    """
+    _restored(run, instance)
+    credential_api.chats = [_chat("cht_home", 1)]
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.chmod(0o500)
+    try:
+        result = run("provision", "rowan", "ln_p3", env=credential_api.environment)
+    finally:
+        home.chmod(0o700)
+
+    assert result.returncode != 0
+    assert "MAY have committed" in result.stderr
+    assert "revoke" in result.stderr

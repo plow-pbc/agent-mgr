@@ -360,7 +360,6 @@ class CredentialAPI:
         # one that wants an unusable credential sets the token.
         self.mint_status = 200
         self.token = MINTED_TOKEN
-        self.name = "agent-mgr:rowan"
         # What `GET /v1/chats` lists. A single chat read by uid keeps answering
         # the participant roster, which is the other GET on this server.
         self.chats: list[dict[str, object]] = []
@@ -377,9 +376,7 @@ class CredentialAPI:
                 if self.command == "POST":
                     status = owner.mint_status
                     payload: object = (
-                        {"token": owner.token, "name": owner.name}
-                        if status == 200
-                        else {"detail": "Line not found"}
+                        {"token": owner.token} if status == 200 else {"detail": "Line not found"}
                     )
                 elif self.command == "GET" and self.path.rstrip("/").endswith("/chats"):
                     payload = {"data": owner.chats, "has_more": False}
