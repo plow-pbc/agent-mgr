@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import shutil
 import stat
@@ -6,7 +7,7 @@ import subprocess
 import sys
 
 import pytest
-from conftest import ROOT, LATCH_CONFIG, fake_docker
+from conftest import ROOT, LATCH_CONFIG, fake_curl, fake_docker
 
 
 def _fake_docker(tmp_path, name="rowan"):
@@ -67,7 +68,9 @@ def test_sign_in_refuses_before_restore_has_run(run, instance):
     assert "restore" in r.stderr
 
 
-@pytest.mark.parametrize("command", ["activate", "set-latch", "migrate-plugin-env"])
+@pytest.mark.parametrize(
+    "command", ["activate", "scope-chat-credential", "set-latch", "migrate-plugin-env"]
+)
 @pytest.mark.parametrize(
     "descriptor",
     ["AGENT_HOME=/etc\n", "AGENT_HOME=/tmp/.hermes-property\n"],
@@ -408,3 +411,121 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     # interpolated the value would put it in a terminal and a scrollback.
     assert "tok_xyz" not in r.stderr
     assert "tok_xyz" not in r.stdout
+
+
+@pytest.mark.parametrize(
+    ("preexisting", "expected_home"),
+    [
+        ("", "cht_fresh"),
+        ("PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n", "cht_existing"),
+        ("PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n", "cht_legacy"),
+    ],
+)
+def test_activate_narrows_bootstrap_to_line_granted_canonical_credential(
+    run, instance, tmp_path, credential_api, preexisting, expected_home
+):
+    """The frozen upstream activation remains the phone bind; agent-mgr only
+    narrows its broad result through Plow's existing key endpoint."""
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    home = tmp_path / "home" / ".hermes-rowan"
+    if preexisting:
+        (home / ".env").write_text(preexisting)
+    installer = """#!/usr/bin/env bash
+set -euo pipefail
+while [ $# -gt 0 ]; do
+  case "$1" in --data-dir) home="$2"; shift 2 ;; *) shift ;; esac
+done
+printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE_URL=__BASE__\n' >> "$home/.env"
+""".replace("__BASE__", credential_api.base_url)
+    activation = tmp_path / "activation"
+    activation.mkdir()
+    b = fake_curl(activation, body=installer)
+
+    r = run(
+        "activate",
+        "rowan",
+        env={
+            "PATH": f"{b}:{os.environ['PATH']}",
+        },
+    )
+
+    assert r.returncode == 0, r.stderr
+    dotenv = (home / ".env").read_text()
+    assert f"PLOW_HOME_CHANNEL={expected_home}" in dotenv
+    assert "PLOW_AGENT_TOKEN=plow_fresh" in dotenv
+    assert f"PLOW_CHAT_CHAT_UID={expected_home}" in dotenv
+    assert "PLOW_CHAT_TOKEN=plow_fresh" in dotenv
+    assert credential_api.requests[0][0:2] == ("GET", f"/v1/chats/{expected_home}")
+    assert all(request[3] == "Bearer plow_fresh" for request in credential_api.requests)
+    request = credential_api.requests[1][2]
+    assert request == {
+        "name": "agent-mgr:rowan",
+        "scopes": ["chats:use", "llm:chat"],
+        "chat_uids": ["line:ln_elm"],
+    }
+
+
+def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
+    run, instance, tmp_path, credential_api
+):
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    home = tmp_path / "home" / ".hermes-rowan"
+    (home / ".env").write_text(
+        "PLOW_CHAT_CHAT_UID=cht_home\n"
+        "PLOW_CHAT_TOKEN=plow_bootstrap\n"
+        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
+    )
+    docker_bin, _ = _fake_docker(tmp_path)
+    b = tmp_path / "credential-api-bin"
+    b.mkdir()
+    (b / "docker").symlink_to(docker_bin / "docker")
+
+    r = run(
+        "scope-chat-credential",
+        "rowan",
+        env={
+            "PATH": f"{b}:{os.environ['PATH']}",
+        },
+    )
+
+    assert r.returncode == 0, r.stderr
+    dotenv = (home / ".env").read_text()
+    assert "PLOW_HOME_CHANNEL=cht_home" in dotenv
+    assert "PLOW_AGENT_TOKEN=plow_bootstrap" in dotenv
+    assert credential_api.requests[1][2]["chat_uids"] == ["line:ln_elm"]
+
+
+def test_scope_chat_credential_finishes_an_interrupted_activation_publication(
+    run, instance, tmp_path, credential_api
+):
+    run("register", "rowan", str(instance("rowan")))
+    run("restore", "rowan")
+    home = tmp_path / "home" / ".hermes-rowan"
+    (home / ".env").write_text(
+        "PLOW_HOME_CHANNEL=cht_existing\n"
+        "PLOW_AGENT_TOKEN=plow_stale\n"
+        "PLOW_CHAT_CHAT_UID=cht_fresh_dm\n"
+        "PLOW_CHAT_TOKEN=plow_fresh\n"
+        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
+    )
+    docker_bin, _ = _fake_docker(tmp_path)
+    b = tmp_path / "credential-recovery-bin"
+    b.mkdir()
+    (b / "docker").symlink_to(docker_bin / "docker")
+
+    r = run(
+        "scope-chat-credential",
+        "rowan",
+        env={"PATH": f"{b}:{os.environ['PATH']}"},
+    )
+
+    assert r.returncode == 0, r.stderr
+    lines = (home / ".env").read_text().splitlines()
+    assert "PLOW_HOME_CHANNEL=cht_existing" in lines
+    assert "PLOW_CHAT_CHAT_UID=cht_existing" in lines
+    assert "PLOW_AGENT_TOKEN=plow_fresh" in lines
+    assert "PLOW_CHAT_TOKEN=plow_fresh" in lines
+    assert credential_api.requests[0][1] == "/v1/chats/cht_existing"
+    assert all(request[3] == "Bearer plow_fresh" for request in credential_api.requests)

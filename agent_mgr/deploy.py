@@ -41,6 +41,21 @@ def migrate_plugin_env(agent: ResolvedAgent, sync: bool = False) -> None:
         )
 
 
+def publish_activation_env(agent: ResolvedAgent, remembered_home: str = "") -> None:
+    """Atomically pair an activation's fresh legacy token with its durable home."""
+    result = subprocess.run(
+        [str(ROOT / "lib" / "upsert-env"), str(agent.home), "--publish-activation"],
+        input=f"{remembered_home}\n",
+        text=True,
+        check=False,
+    )
+    if result.returncode:
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"refusing to publish {agent.name}'s activation credential -- see above. Nothing was written.",
+        )
+
+
 def install_plugin(
     agent: ResolvedAgent,
     landed: str = "Legacy dotenv names may have been migrated; this agent's config and skills are untouched.",

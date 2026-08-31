@@ -1,3 +1,6 @@
+import yaml
+
+
 def test_new_scaffolds_an_instance_repo_and_registers_it(run, tmp_path):
     target = tmp_path / "acme-hermes-agent"
     r = run("new", "acme", str(target))
@@ -7,13 +10,20 @@ def test_new_scaffolds_an_instance_repo_and_registers_it(run, tmp_path):
     assert "acme" in run("ls").stdout
 
 
-def test_the_scaffolded_config_wires_both_plow_chat_and_latch(run, tmp_path):
-    """Both are baseline, so a new agent is ready to configure, not ready to be
-    wired."""
-    run("new", "acme", str(tmp_path / "acme-hermes-agent"))
-    cfg = (tmp_path / "acme-hermes-agent" / "config.yaml").read_text()
-    assert "plow-chat-platform" in cfg
-    assert "latch:" in cfg and "DOMO_DEVICE_UID" in cfg
+def test_the_scaffolded_config_has_baseline_integrations_and_group_scope(run, tmp_path):
+    """Plow Chat and Latch are baseline, so a new agent is ready to configure,
+    not ready to be wired. Group sessions are shared per chat: the image
+    default (group_sessions_per_user: true) keys them per sender, splitting one
+    visible iMessage thread into per-person agent contexts — the 2026-08-30
+    life-assistant incident. The plow-chat plugin's config.extra flag never
+    reaches the gateway session store, so the template's gateway-level key is
+    what actually holds the line."""
+    target = tmp_path / "acme-hermes-agent"
+    run("new", "acme", str(target))
+    text = (target / "config.yaml").read_text()
+    assert "plow-chat-platform" in text
+    assert "latch:" in text and "DOMO_DEVICE_UID" in text
+    assert yaml.safe_load(text)["group_sessions_per_user"] is False
 
 
 def test_new_does_not_create_the_home_that_restore_owns(run, tmp_path):
