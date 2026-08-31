@@ -386,15 +386,6 @@ def _live(instance, run, tmp_path):
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
-def test_the_old_key_dies_instead_of_dropping_the_guard(run, instance, tmp_path):
-    """AGENT_CONFIRM_TRANSITIONS was renamed. Ignoring it would strip a live
-    agent's guard on the very next command; the rename is named instead."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_CONFIRM_TRANSITIONS=1\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode != 0
-    assert "AGENT_LIVE" in r.stderr
-
-
 def _run_tty(argv, reply, registry, tmp_path, env_path, timeout=None):
     """agent-mgr on a real pty: [ -t 0 ] is the branch these tests exercise."""
     import pty

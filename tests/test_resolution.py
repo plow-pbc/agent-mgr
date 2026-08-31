@@ -520,16 +520,23 @@ def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
         assert "empty value for" in r.stderr
 
 
-def test_the_retired_restore_hook_key_is_refused_by_name(run, instance):
-    """AGENT_RESTORE_HOOK must fail loudly, not pass through silently.
+@pytest.mark.parametrize("line, replacement", [
+    ("AGENT_RESTORE_HOOK=h.sh", "AGENT_DEPLOY_HOOK"),
+    ("AGENT_RESTORE_HOOK=", "AGENT_DEPLOY_HOOK"),
+    ("AGENT_CONFIRM_TRANSITIONS=1", "AGENT_LIVE"),
+    ("AGENT_CONFIRM_TRANSITIONS=", "AGENT_LIVE"),
+], ids=["deploy-hook", "deploy-hook-empty", "live-guard", "live-guard-empty"])
+def test_a_retired_key_is_refused_by_name(run, instance, line, replacement):
+    """A retired key must fail loudly, not pass through silently.
 
     Unknown keys become hook environment, so without the tombstone a stale
-    descriptor written for the old name would resolve fine while its deploy
-    hook silently never ran again."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_RESTORE_HOOK=h.sh\n")))
+    descriptor written for the old name would resolve fine while the renamed
+    behavior (the deploy hook, a live agent's guard) silently stopped
+    applying. Empty assignments die too -- the key's presence is the bug."""
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
     r = run("resolve", "rowan")
     assert r.returncode != 0
-    assert "AGENT_RESTORE_HOOK is now AGENT_DEPLOY_HOOK" in r.stderr
+    assert f"is now {replacement}" in r.stderr
 
 
 def test_the_dotenv_follows_a_declared_home(run, instance, tmp_path):
