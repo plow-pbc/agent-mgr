@@ -533,12 +533,35 @@ def test_a_recorded_failure_outranks_what_docker_reports(tmp_path, monkeypatch) 
     agent = SimpleNamespace(name="life", container="hermes-life", home=Path("/nowhere"))
     monkeypatch.setattr(serve_module, "_dotenv_chats", lambda a: ("cht_home",))
     monkeypatch.setattr(serve_module, "_status", lambda a: (serve_module.CloudStatus.RUNNING, None))
+    # Not ours: a reused project mounting another agent's home is exactly the
+    # case `compose ps` cannot tell apart, and the recorded failure must win.
+    monkeypatch.setattr(serve_module, "_container_is_ours", lambda a: False)
     api._failed["life"] = serve_module.FailureCode.SETUP_FAILED
 
     payload = api._resource(agent).to_json()
 
     assert payload["status"] == "failed"
     assert payload["failure_code"] == "setup_failed"
+
+
+def test_a_repaired_container_clears_a_recorded_failure(tmp_path, monkeypatch) -> None:
+    """A container brought back by hand, or by a later successful create, must
+    not stay FAILED forever because an earlier pull failed."""
+    import agent_mgr.serve as serve_module
+
+    registry = Registry(tmp_path / "agents")
+    api = serve_module.LocalCloudApi(registry, ROOT)
+    agent = SimpleNamespace(name="life", container="hermes-life", home=Path("/nowhere"))
+    monkeypatch.setattr(serve_module, "_dotenv_chats", lambda a: ("cht_home",))
+    monkeypatch.setattr(serve_module, "_status", lambda a: (serve_module.CloudStatus.RUNNING, None))
+    monkeypatch.setattr(serve_module, "_container_is_ours", lambda a: True)
+    api._failed["life"] = serve_module.FailureCode.SETUP_FAILED
+
+    payload = api._resource(agent).to_json()
+
+    assert payload["status"] == "running"
+    assert payload["failure_code"] is None
+    assert "life" not in api._failed
 
 
 def test_the_control_bearer_does_not_reach_agent_hooks(monkeypatch) -> None:

@@ -175,6 +175,20 @@ def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
     raise ApiError(502, f"{agent.name}'s home chat does not identify exactly one agent line")
 
 
+def _container_is_ours(agent: ResolvedAgent) -> bool:
+    """Whether the container Compose found is this agent's own.
+
+    GET and list trusted `compose ps` alone, so a reused project mounting
+    another agent's home read as this one RUNNING -- the same confusion the
+    admission check refuses at create time, arriving through a read instead.
+    """
+    try:
+        require_container_ours(agent)
+    except AgentMgrError:
+        return False
+    return True
+
+
 def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
     """Docker's answer, mapped onto the four public statuses.
 
@@ -186,6 +200,11 @@ def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
     if running.returncode:
         return CloudStatus.FAILED, FailureCode.PROVIDER_UNREACHABLE
     if running.stdout.strip():
+        # Identity, not just presence: a reused project can put another agent's
+        # container here, and reporting it RUNNING would answer for a home this
+        # agent does not own.
+        if not _container_is_ours(agent):
+            return CloudStatus.FAILED, FailureCode.VALIDATION_FAILED
         return CloudStatus.RUNNING, None
     existing = compose(agent, ["ps", "--all", "--quiet", "hermes"], capture=True)
     if existing.returncode:
@@ -231,11 +250,18 @@ class LocalCloudApi:
         with self._lock:
             recorded = self._failed.get(agent.name)
             starting = agent.name in self._starting
-        if not deleted and recorded is not None:
-            # A recorded failure outranks `compose ps`. It used to be suppressed
-            # whenever docker reported RUNNING -- which is exactly the case a
-            # foreign container in a reused project produces.
-            status, failure = CloudStatus.FAILED, recorded
+        if not deleted and recorded is not None and not starting:
+            # A recorded failure outranks `compose ps` while nothing is running:
+            # suppressing it whenever docker said RUNNING reported a foreign
+            # container in a reused project as this agent, healthy. But a
+            # container that has since been repaired -- brought up by hand, or
+            # by a later successful create -- must not stay FAILED forever, so
+            # a RUNNING container whose identity we own clears the record.
+            if status is CloudStatus.RUNNING and _container_is_ours(agent):
+                with self._lock:
+                    self._failed.pop(agent.name, None)
+            else:
+                status, failure = CloudStatus.FAILED, recorded
         elif not deleted and starting and status is not CloudStatus.RUNNING:
             status, failure = CloudStatus.PROVISIONING, None
         return CloudAgentResource(
@@ -267,16 +293,6 @@ class LocalCloudApi:
 
     def create(self, payload: object) -> dict[str, JsonValue]:
         request = CreateCloudAgentRequest.from_json(payload)
-        try:
-            self.registry.entry(request.name)
-        except AgentMgrError:
-            raise ApiError(
-                400,
-                f"{request.name} is not registered on this host. exe unpacks an image; a "
-                f"local agent needs a checkout -- run 'agent-mgr register {request.name} <dir>' "
-                "first, then repeat this request.",
-            ) from None
-        agent = self._agent(request.name)
         # `provider` is not decoration: a request naming exe must not quietly
         # start a container here, or a caller that thinks it provisioned a cloud
         # tenant gets a local one and never learns the difference.
@@ -301,14 +317,31 @@ class LocalCloudApi:
         # whole decision, from the checks through the reservation, is one
         # critical section now; the slow part is the price of not racing.
         with self._lock:
+            # Registration AND descriptor resolution happen here, not before.
+            # Resolving first let a POST pause, a DELETE remove the row and
+            # clear `_deleting`, and this request then resume with a stale
+            # descriptor and start a gateway nothing on this host registers.
+            try:
+                self.registry.entry(request.name)
+            except AgentMgrError:
+                raise ApiError(
+                    400,
+                    f"{request.name} is not registered on this host. exe unpacks an image; a "
+                    f"local agent needs a checkout -- run 'agent-mgr register {request.name} "
+                    "<dir>' first, then repeat this request.",
+                ) from None
+            agent = self._agent(request.name)
             if agent.name in self._deleting:
                 raise ApiError(409, f"{agent.name} is being deleted; retry once it settles")
             try:
                 held = _agent_line(agent)
             except LineUnknown:
-                # Not credentialed yet. The line still has to be RECORDED, or
-                # POST answers 202 having ignored `line_uid` entirely -- the
-                # caller would believe it selected a number it did not.
+                # Not credentialed yet -- a registered checkout whose `restore`
+                # has not run has no dotenv at all. The line still has to be
+                # RECORDED, or POST answers 202 having ignored `line_uid`
+                # entirely and the caller believes it selected a number it did
+                # not. Projection must not then read that absent file: the
+                # requested line is what `_created_grant` answers with.
                 held = ()
             if held and (request.line_uid,) != held:
                 raise ApiError(
