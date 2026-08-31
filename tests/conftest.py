@@ -393,22 +393,35 @@ PLUGIN_TARBALL = {
         "def register(ctx):\n    pass\n",
 }
 
-# The fleet skills every agent gets, at the paths the canonical copies keep in
-# plow-pbc/plow's hosted-agent seed. Deploy fetches them unconditionally, so
-# the default `gh` serves them the way it serves the plugin -- otherwise every
+# The fleet skills every agent gets, at the paths the public mirror keeps in
+# plow-pbc/hermes-plow-chat. Deploy fetches them unconditionally, so the
+# default `gh` serves them the way it serves the plugin -- otherwise every
 # plain `run("deploy", ...)` in the suite would fail on a fetch it never asked
 # about. One tarball carries both trees: the real fetch is a whole-repo
 # snapshot fetch-tree extracts a src subtree from.
-FLEET_SEED = "cloud-agents/hermes/image/seed/skills"
+FLEET_SEED = "seed-skills"
 FLEET_SKILL_SRC = f"{FLEET_SEED}/productivity/google-workspace"
 FLEET_SKILL_TARBALL = {
-    f"plow-pbc-plow-abc1234/{FLEET_SKILL_SRC}/SKILL.md":
+    f"plow-pbc-repo-abc1234/{FLEET_SKILL_SRC}/SKILL.md":
         "---\nname: google-workspace\n---\n# google-workspace\n",
-    f"plow-pbc-plow-abc1234/{FLEET_SEED}/growth/plow-invite/SKILL.md":
+    f"plow-pbc-repo-abc1234/{FLEET_SEED}/growth/plow-invite/SKILL.md":
         "---\nname: plow-invite\n---\n# plow-invite\n",
-    f"plow-pbc-plow-abc1234/{FLEET_SEED}/growth/plow-invite/scripts/mint_invite.py":
+    f"plow-pbc-repo-abc1234/{FLEET_SEED}/growth/plow-invite/scripts/mint_invite.py":
         "#!/usr/bin/env python3\n",
 }
+
+
+def fleet_revision():
+    """The SHA the fleet skills are pinned to, read from the real stack.json.
+
+    The plugin and the fleet skills now live in the SAME repo, so the fake `gh`
+    can no longer tell them apart by repo the way the real argv let it. It
+    dispatches on this revision instead -- which is the only thing that differs
+    in `gh api repos/<repo>/tarball/<ref>`, and so is what a real GitHub
+    distinguishes them by too.
+    """
+    stack = json.loads((ROOT / "runtime" / "stack.json").read_text())
+    return stack["artifacts"]["plow_invite_skill"]["revision"]
 
 
 def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
@@ -424,11 +437,11 @@ def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
     (b / "gh").write_text(
         "#!/usr/bin/env bash\n"
         "case \"$*\" in\n"
+        # The fleet SHA first: it is in hermes-plow-chat too, so the broader
+        # repo pattern below would otherwise swallow it and serve the plugin
+        # tarball, failing fetch-tree's manifest name check confusingly.
+        f"  *tarball/{fleet_revision()}*) cat {fleet_tgz} ;;\n"
         f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
-        # Matches the repo alone, so a test adding a DIFFERENT skill sourced
-        # from plow-pbc/plow would be served this tarball and fail fetch-tree's
-        # name check confusingly -- give such a test its own dispatching gh.
-        f"  *repos/plow-pbc/plow/tarball*) cat {fleet_tgz} ;;\n"
         f"  *) {other} ;;\n"
         "esac\n"
     )
