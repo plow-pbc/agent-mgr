@@ -142,12 +142,14 @@ def _no_real_docker_on_path(tmp_path_factory):
                 raise AssertionError(
                     "this env carries no PATH, so the child would fall back to "
                     "the shell's own default and find the operator's docker. "
-                    "Pass os.environ['PATH'] to inherit the suite's stub.")
+                    "Pass os.environ['PATH'] to inherit the suite's stub."
+                )
             assert _docker_the_suite_owns(path), (
                 f"this env resolves docker to {shutil.which('docker', path=path)}, "
                 "which the suite did not create; build PATH as "
                 "f\"{mybin}:{os.environ['PATH']}\" so the stub still wins, or "
-                "use conftest.allow_real_docker()")
+                "use conftest.allow_real_docker()"
+            )
         return real_popen(*a, **kw)
 
     subprocess.Popen = guarded_popen
@@ -176,6 +178,7 @@ def registry(tmp_path):
 @pytest.fixture
 def run(registry, tmp_path):
     """Invoke the real agent-mgr CLI with an isolated registry and HOME."""
+
     def _run(*args, env=None, check=False, input=None):
         e = dict(os.environ)
         e["AGENT_MGR_REGISTRY"] = str(registry)
@@ -217,10 +220,24 @@ def instance(tmp_path):
     return _instance
 
 
-def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
-                name="rowan", running=True, exec_output=None, log=None, mount=None,
-                exists=None, all_cids=(), mounts=None, image=None, build=False,
-                pull_policy=None):
+def fake_docker(
+    tmp_path,
+    *,
+    home,
+    container="hermes-<name>",
+    project="hermes-<name>",
+    name="rowan",
+    running=True,
+    exec_output=None,
+    log=None,
+    mount=None,
+    exists=None,
+    all_cids=(),
+    mounts=None,
+    image=None,
+    build=False,
+    pull_policy=None,
+):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -278,12 +295,16 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # seam was blind to, so a test can now set them independently.
         f'  *"ps -a --quiet"*) {"printf '%s\\n' " + " ".join(all_cids) if all_cids else ("echo deadbeef" if (running if exists is None else exists) else ":")} ;;',
         f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',
-        (f'  *inspect*) case "$*" in ' + " ".join(
-            f'*{c}*) echo {m} ;;' for c, m in (mounts or {}).items())
-         + f' *) echo {home} ;; esac ;;') if mounts else f'  *inspect*) echo {home} ;;',
+        (
+            f'  *inspect*) case "$*" in '
+            + " ".join(f"*{c}*) echo {m} ;;" for c, m in (mounts or {}).items())
+            + f" *) echo {home} ;; esac ;;"
+        )
+        if mounts
+        else f"  *inspect*) echo {home} ;;",
     ]
     if exec_output is not None:
-        parts.append(f'  *exec*) echo {exec_output} ;;')
+        parts.append(f"  *exec*) echo {exec_output} ;;")
     parts += ["esac", "exit 0", ""]
     (b / "docker").write_text("\n".join(x for x in parts if x))
     (b / "docker").chmod(0o755)
@@ -292,6 +313,7 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
 
 def shlex_quote(s):
     import shlex
+
     return shlex.quote(s)
 
 
@@ -319,9 +341,29 @@ def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
     return b
 
 
+# The token a mint answers with.
+MINTED_TOKEN = "plow_minted_tok"
+
+
 class CredentialAPI:
+    """The Plow calls the credential commands make, and what they sent.
+
+    One server for all of them: `narrow-chat-credential` reads a chat and PUTs a
+    grant, `provision` POSTs a mint and lists chats. Two near-copies of a
+    localhost server, a bearer recorder and a lifecycle drift the moment one of
+    those contracts moves.
+    """
+
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, object | None, str | None]] = []
+        # What a mint answers. A test that wants the failure sets the status;
+        # one that wants an unusable credential sets the token.
+        self.mint_status = 200
+        self.token = MINTED_TOKEN
+        self.name = "agent-mgr:rowan"
+        # What `GET /v1/chats` lists. A single chat read by uid keeps answering
+        # the participant roster, which is the other GET on this server.
+        self.chats: list[dict[str, object]] = []
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -331,18 +373,28 @@ class CredentialAPI:
                 owner.requests.append(
                     (self.command, self.path, body, self.headers.get("Authorization"))
                 )
-                payload: object = (
-                    {"participants": [{"type": "agent", "line": {"uid": "ln_elm"}}]}
-                    if self.command == "GET"
-                    else {"chat_uids": ["line:ln_elm"]}
-                )
-                self.send_response(200)
+                status = 200
+                if self.command == "POST":
+                    status = owner.mint_status
+                    payload: object = (
+                        {"token": owner.token, "name": owner.name}
+                        if status == 200
+                        else {"detail": "Line not found"}
+                    )
+                elif self.command == "GET" and self.path.rstrip("/").endswith("/chats"):
+                    payload = {"data": owner.chats, "has_more": False}
+                elif self.command == "GET":
+                    payload = {"participants": [{"type": "agent", "line": {"uid": "ln_elm"}}]}
+                else:
+                    payload = {"chat_uids": ["line:ln_elm"]}
+                self.send_response(status)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()
                 self.wfile.write(json.dumps(payload).encode())
 
             do_GET = _handle
             do_PUT = _handle
+            do_POST = _handle
 
             def log_message(self, format: str, *args: object) -> None:
                 return None
@@ -353,6 +405,11 @@ class CredentialAPI:
     @property
     def base_url(self) -> str:
         return f"http://127.0.0.1:{self.server.server_port}"
+
+    @property
+    def environment(self) -> dict[str, str]:
+        """The ACCOUNT credentials, which is what makes a mint possible at all."""
+        return {"PLOW_API_BASE": self.base_url, "PLOW_API_TOKEN": "account-token"}
 
 
 @pytest.fixture
@@ -365,8 +422,6 @@ def credential_api() -> Iterator[CredentialAPI]:
         server.server.shutdown()
         server.server.server_close()
         server.thread.join()
-
-
 
 
 def write_tarball(path, members):
@@ -387,10 +442,8 @@ def write_tarball(path, members):
 # The plugin every agent gets. Two files, and the manifest's `name:` line is what
 # fetch-tree checks -- so this is a real fixture of the real contract, not a stub.
 PLUGIN_TARBALL = {
-    "plow-pbc-repo-abc1234/plow-chat-platform/plugin.yaml":
-        "name: plow-chat-platform\nkind: platform\n",
-    "plow-pbc-repo-abc1234/plow-chat-platform/__init__.py":
-        "def register(ctx):\n    pass\n",
+    "plow-pbc-repo-abc1234/plow-chat-platform/plugin.yaml": "name: plow-chat-platform\nkind: platform\n",
+    "plow-pbc-repo-abc1234/plow-chat-platform/__init__.py": "def register(ctx):\n    pass\n",
 }
 
 # The fleet skills every agent gets, at the paths the canonical copies keep in
@@ -402,12 +455,9 @@ PLUGIN_TARBALL = {
 FLEET_SEED = "cloud-agents/hermes/image/seed/skills"
 FLEET_SKILL_SRC = f"{FLEET_SEED}/productivity/google-workspace"
 FLEET_SKILL_TARBALL = {
-    f"plow-pbc-plow-abc1234/{FLEET_SKILL_SRC}/SKILL.md":
-        "---\nname: google-workspace\n---\n# google-workspace\n",
-    f"plow-pbc-plow-abc1234/{FLEET_SEED}/growth/plow-invite/SKILL.md":
-        "---\nname: plow-invite\n---\n# plow-invite\n",
-    f"plow-pbc-plow-abc1234/{FLEET_SEED}/growth/plow-invite/scripts/mint_invite.py":
-        "#!/usr/bin/env python3\n",
+    f"plow-pbc-plow-abc1234/{FLEET_SKILL_SRC}/SKILL.md": "---\nname: google-workspace\n---\n# google-workspace\n",
+    f"plow-pbc-plow-abc1234/{FLEET_SEED}/growth/plow-invite/SKILL.md": "---\nname: plow-invite\n---\n# plow-invite\n",
+    f"plow-pbc-plow-abc1234/{FLEET_SEED}/growth/plow-invite/scripts/mint_invite.py": "#!/usr/bin/env python3\n",
 }
 
 
@@ -420,10 +470,10 @@ def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
     Dispatching on the argv is what the real `gh api repos/<repo>/tarball/<ref>`
     does anyway.
     """
-    other = f'cat {skill_tgz}' if skill_tgz else 'echo "no fake for: $*" >&2; exit 1'
+    other = f"cat {skill_tgz}" if skill_tgz else 'echo "no fake for: $*" >&2; exit 1'
     (b / "gh").write_text(
         "#!/usr/bin/env bash\n"
-        "case \"$*\" in\n"
+        'case "$*" in\n'
         f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
         # Matches the repo alone, so a test adding a DIFFERENT skill sourced
         # from plow-pbc/plow would be served this tarball and fail fetch-tree's
@@ -477,6 +527,7 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
     write_tarball(plugin_tgz, PLUGIN_TARBALL)
     # All three, because a skill test restores before it adds, and restore
     # installs the plugin and the fleet skill through this same installer.
-    install_gh_dispatching(b, plugin_tgz=plugin_tgz,
-                           fleet_tgz=_write_fleet_tgz(tmp_path), skill_tgz=skill_tgz)
+    install_gh_dispatching(
+        b, plugin_tgz=plugin_tgz, fleet_tgz=_write_fleet_tgz(tmp_path), skill_tgz=skill_tgz
+    )
     return b

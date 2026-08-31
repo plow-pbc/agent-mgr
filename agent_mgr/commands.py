@@ -175,6 +175,31 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
     return 0
 
 
+def _ambiguous_mint(agent: ResolvedAgent, code: ErrorCode, what: str) -> AgentMgrError:
+    """A mint whose outcome cannot be read off the response.
+
+    Nothing is written locally in these cases, which reads as "it failed" and
+    invites a retry -- but the POST commits server-side before its answer comes
+    back, so the key may exist on the account with no local record that it was
+    ever issued, and a second mint strands it there. `cloud-create` says the
+    same thing about its own 202 for the same reason.
+
+    The recovery is in the MESSAGE, not only in `remediation`: the delegated
+    `--json` path re-wraps errors and keeps the message, so a remediation alone
+    would not reach the operator who most needs it.
+    """
+    recovery = (
+        f"list 'GET /v1/api-keys' for a key named 'agent-mgr:{agent.name}' and revoke it with "
+        "'DELETE /v1/api-keys/<id>' before retrying -- retrying blind strands whichever one you "
+        "do not hold"
+    )
+    return AgentMgrError(
+        code,
+        f"{what} -- the mint MAY have committed, so do not retry blind. Recovery: {recovery}.",
+        recovery,
+    )
+
+
 class HomeNotSelected(AgentMgrError):
     """The credential is written but no home could be chosen from the line.
 
@@ -226,17 +251,27 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
             "re-minting strands the live one; unregister and restore a fresh home to replace it",
         )
     transport = HttpCloudTransport.from_environment(os.environ)
-    minted = transport.request(
-        "POST", "/v1/relay/agents", {"name": f"agent-mgr:{agent.name}", "line_uid": line_uid}
-    )
+    try:
+        minted = transport.request(
+            "POST", "/v1/relay/agents", {"name": f"agent-mgr:{agent.name}", "line_uid": line_uid}
+        )
+    except AgentMgrError as error:
+        # A lost or unreadable answer does not mean the mint did not happen --
+        # the POST commits server-side before the response comes back. Saying
+        # "it failed" invites a retry, and a second mint strands the first on an
+        # account nobody is watching. `cloud-create` says the same thing about
+        # its own 202 for the same reason.
+        if error.code in {ErrorCode.INVALID_RESPONSE, ErrorCode.REMOTE_UNREACHABLE}:
+            raise _ambiguous_mint(agent, error.code, error.message) from None
+        raise
     if not isinstance(minted, dict):
-        raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned invalid JSON")
+        raise _ambiguous_mint(agent, ErrorCode.INVALID_RESPONSE, "relay mint returned invalid JSON")
     token = minted.get("token")
     # `.strip()` because `upsert-env` stores the stripped value: a token that is
     # only whitespace passed a bare truthiness check and `validate_token`, then
     # the write refused it as empty -- after the one-time mint was spent.
     if not isinstance(token, str) or not token.strip():
-        raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned no token")
+        raise _ambiguous_mint(agent, ErrorCode.INVALID_RESPONSE, "relay mint returned no token")
     # The transport's own rule, applied to the MINTED token before it is
     # written. A bespoke CR/LF check here accepted control and non-ASCII
     # characters the transport refuses, so the token was persisted and only
@@ -246,10 +281,10 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     try:
         validate_token(token, "the minted token")
     except AgentMgrError as error:
-        raise AgentMgrError(
+        raise _ambiguous_mint(
+            agent,
             ErrorCode.INVALID_RESPONSE,
             f"relay mint returned an unusable token: {error.message}",
-            "nothing was written; report this response to Plow rather than retrying",
         ) from None
     # The token lands BEFORE the home is resolved, and that order is the whole
     # point: the mint is one-time, so anything that raises between receiving it

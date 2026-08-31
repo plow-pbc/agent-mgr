@@ -44,8 +44,11 @@ you**, so it needs
 `PLOW_API_BASE` and `PLOW_API_TOKEN` in the environment, the same pair the
 `cloud-*` commands use — that is the whole reason it can skip the text, and
 without them it refuses before minting anything. Use it whenever the agent is going on a number the
-account already owns; `agent-mgr chats <name>` on any existing agent names the
-line uids. It refuses if the line carries more than one one-to-one chat, because
+account already owns. `agent-mgr chats <name>` names line uids only for the line
+THAT agent is scoped to -- it authenticates with the agent's own line-scoped
+token, so it cannot see a different one. For a line no agent holds yet, read the
+uid from the account: `GET /v1/chats` with your `PLOW_API_TOKEN` lists every
+chat you own and each one's `participants[].line.uid`. It refuses if the line carries more than one one-to-one chat, because
 the home would be ambiguous and picking wrong sends this owner's private output
 into somebody else's thread — pass `set-home` afterwards in that case.
 
