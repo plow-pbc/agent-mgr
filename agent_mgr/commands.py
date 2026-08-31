@@ -318,9 +318,15 @@ def latch_pair_from_json(first_line: str) -> tuple[str, str]:
                 ) from None
             blob += line
     servers = data.get("mcpServers") if isinstance(data, dict) else None
+    rows = list(servers.values()) if isinstance(servers, dict) else []
     matches = [
-        (m.group(1), server.get("headers", {}).get("Authorization", ""))
-        for server in (servers or {}).values()
+        (
+            m.group(1),
+            str(headers.get("Authorization", ""))
+            if isinstance(headers := server.get("headers"), dict)
+            else "",
+        )
+        for server in rows
         if isinstance(server, dict)
         if (m := re.search(r"/devices/([^/]+)/mcp", str(server.get("url", ""))))
     ]

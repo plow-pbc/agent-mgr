@@ -271,8 +271,16 @@ def test_set_latch_accepts_the_json_latch_shows(run, instance, tmp_path):
         (_latch_json(url="https://api.plow.co/v1/other"), "no devices/<uid>/mcp URL"),
         # Parses, but the header is not the Bearer form the relay mints.
         (_latch_json(auth="Basic abc"), "no 'Bearer' Authorization"),
+        # Valid JSON in a shape this never mints -- each wrong layer must land
+        # on the clean diagnosis, not an AttributeError traceback.
+        ('{"mcpServers": ["not-a-dict"]}\n', "no devices/<uid>/mcp URL"),
+        (
+            '{"mcpServers": {"plow": {"url": '
+            '"https://api.plow.co/v1/relay/devices/dev_abc/mcp", "headers": []}}}\n',
+            "no 'Bearer' Authorization",
+        ),
     ],
-    ids=["truncated", "no-device-url", "no-bearer"],
+    ids=["truncated", "no-device-url", "no-bearer", "servers-not-a-dict", "headers-not-a-dict"],
 )
 def test_set_latch_refuses_json_it_cannot_take_a_pair_from(
     run, instance, tmp_path, stdin, diagnosis
