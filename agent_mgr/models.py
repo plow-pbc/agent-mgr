@@ -65,7 +65,6 @@ class ResolvedAgent:
             "AGENT_IMAGE": self.image,
             "AGENT_CONFIG": str(self.config),
             "AGENT_LIVE": "1" if self.live else "0",
-            "AGENT_CONFIRM_TRANSITIONS": "",
             "AGENT_DEPLOY_HOOK": str(self.deploy_hook or ""),
             "AGENT_PRE_TRANSITION": str(self.pre_transition_hook or ""),
             "AGENT_CRON_SPEC": str(self.cron_spec or ""),

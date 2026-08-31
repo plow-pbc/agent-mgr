@@ -22,13 +22,19 @@ OWNED_KEYS = frozenset(
         "AGENT_IMAGE",
         "AGENT_CONFIG",
         "AGENT_LIVE",
-        "AGENT_CONFIRM_TRANSITIONS",
         "AGENT_DEPLOY_HOOK",
         "AGENT_PRE_TRANSITION",
         "AGENT_CRON_SPEC",
     }
 )
 OPTIONAL_PATH_KEYS = frozenset({"AGENT_DEPLOY_HOOK", "AGENT_PRE_TRANSITION", "AGENT_CRON_SPEC"})
+# Retired keys die by name: unknown keys pass through as hook environment, so a
+# stale descriptor would otherwise resolve fine while the renamed behavior
+# (a live agent's guard, its deploy hook) silently stopped applying.
+RENAMED_KEYS = {
+    "AGENT_CONFIRM_TRANSITIONS": "AGENT_LIVE",
+    "AGENT_RESTORE_HOOK": "AGENT_DEPLOY_HOOK",
+}
 KEY = re.compile(r"^[A-Za-z0-9_]+$")
 
 
@@ -85,12 +91,11 @@ def parse_descriptor(file: Path) -> ParsedDescriptor:
     values: dict[str, str] = {}
     hooks: list[str] = []
     for number, key, value in _assignments(text, file):
-        if key == "AGENT_RESTORE_HOOK":
-            # A retired name passed through silently would become hook
-            # environment and the deploy hook would silently stop running.
+        replacement = RENAMED_KEYS.get(key)
+        if replacement:
             raise AgentMgrError(
                 ErrorCode.INVALID_DESCRIPTOR,
-                f"{file}: line {number}: AGENT_RESTORE_HOOK is now AGENT_DEPLOY_HOOK -- rename it",
+                f"{file}: line {number}: {key} is now {replacement} -- rename it",
             )
         if key in OWNED_KEYS:
             if not value and key not in OPTIONAL_PATH_KEYS:
@@ -132,12 +137,6 @@ def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
         )
     parsed = parse_descriptor(descriptor)
     values = parsed.values
-    if values.get("AGENT_CONFIRM_TRANSITIONS"):
-        raise AgentMgrError(
-            ErrorCode.INVALID_DESCRIPTOR,
-            f"{name} declares AGENT_CONFIRM_TRANSITIONS, which is now AGENT_LIVE -- "
-            "rename it in agent.env",
-        )
     home = Path(values.get("AGENT_HOME", str(Path.home() / f".hermes-{name}"))).absolute()
     timezone = values.get("AGENT_TZ")
     dotenv = home / ".env"
