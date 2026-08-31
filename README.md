@@ -114,8 +114,9 @@ The test for where something belongs: **would a second agent want this?**
 - the Plow Chat plugin — yes, every agent → **common**, pinned by SHA
 - a fleet skill — yes, every agent → **common**, one pin per tree in
   `runtime/stack.json` (the `google_workspace_skill`
-  redirect and the `plow-invite` referral, both sourced from plow-pbc/plow's
-  hosted-agent seed; `deploy` installs and `install-skill` re-installs each —
+  redirect and the `plow-invite` referral, both mirrored into
+  `hermes-plow-chat`'s `seed-skills/` from plow-pbc/plow's hosted-agent seed;
+  `deploy` installs and `install-skill` re-installs each —
   except an agent whose own `skills.tsv` pins that destination, where the
   instance pin is authoritative and both skip it)
 - a skill two agents share — pinned by SHA from upstream, installed by `add-skill`
@@ -289,13 +290,12 @@ is ignored, including one `agent-mgr` owns.
 | [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **`sha256:` digest** |
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, at `artifacts.plow_chat_plugin` in `runtime/stack.json` |
 | the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, at `artifacts.plow_chat_activation` |
-| [`plow-pbc/plow`](https://github.com/plow-pbc/plow) | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, at `artifacts.google_workspace_skill` |
-| the same repo | the fleet `plow-invite` skill — the delight-triggered referral, one source shared with the hosted-agent image (its seed carries the matching twin pointer) | a **40-char SHA**, at `artifacts.plow_invite_skill` |
+| the same repo, at `seed-skills/` | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, at `artifacts.google_workspace_skill` |
+| the same repo, at `seed-skills/` | the fleet `plow-invite` skill — the delight-triggered referral, mirrored from the hosted-agent image's seed (which carries the matching twin pointer) | a **40-char SHA**, at `artifacts.plow_invite_skill` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
-All five pins are exact on purpose — a `sha256:` digest for the image, a
-40-char SHA for each of the two things taken from `hermes-plow-chat` and for
-each fleet skill taken from `plow-pbc/plow`. A tag or a
+All five pins are exact on purpose — a `sha256:` digest for the image, and a
+40-char SHA for each of the four things taken from `hermes-plow-chat`. A tag or a
 branch re-resolves on the next pull, which silently changes a large unreviewed
 surface under a running agent that holds live credentials — and for the plugin,
 one that holds the chat token.
@@ -307,9 +307,12 @@ exists only before it. A single shared ref would send the plugin's post-strip
 SHA at the activate URL and 404 — on `activate`, the one command that is a
 one-time irreversible spend. `tests/test_install.py` pins the pairing.
 
-**Of the `hermes-plow-chat` pair, only `artifacts.plow_chat_plugin` may be
-bumped** (`artifacts.google_workspace_skill` moves freely — it names a
-different repo and nothing pairs with it).
+**Of the four `hermes-plow-chat` pins, `artifacts.plow_chat_plugin` and the
+two fleet skills may be bumped; `artifacts.plow_chat_activation` may not.** The
+fleet skills used to be exempt from this paragraph because they named a
+different repo — they no longer do, so read it as applying to them too: they
+move freely, but they move within the same history as the frozen activation
+pin, and must never be collapsed onto it.
 `artifacts.plow_chat_activation` is frozen at a pre-strip commit and must not be
 bumped forward at all — not to `HEAD`, not to any later SHA. That is the
 realistic slip rather than the collapse above: someone reaching for "latest in

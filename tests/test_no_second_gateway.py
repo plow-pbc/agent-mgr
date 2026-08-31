@@ -38,6 +38,22 @@ def _invokes_compose_run(line):
     return bool(INVOCATION.search(QUOTED.sub("", line)))
 
 
+def _logged_compose_run(calls):
+    """Whether a recorded docker argv actually ran `compose ... run`.
+
+    On the ARGV LOG, not on source text -- so it splits into arguments instead
+    of regex-matching the line. A logged argv carries absolute paths, and a
+    checkout living under any directory named `run` (…/mypeople/run/eng, a
+    Conductor workspace, a CI scratch dir) put the word inside a path argument,
+    where `\brun\b` matched it and failed the suite on a rival gateway that
+    was never started. A path is one argument and never equals `run`.
+    """
+    return any(
+        "compose" in (args := line.split()) and "run" in args
+        for line in calls.splitlines()
+    )
+
+
 def test_no_source_file_invokes_compose_run():
     offenders = []
     for p in SOURCES:
@@ -56,6 +72,19 @@ def test_that_check_is_not_vacuous():
     assert not _invokes_compose_run(
         """        *) die "refusing 'compose run' without --entrypoint" ;;""")
     assert not _invokes_compose_run('        # docker compose run would start a rival')
+
+
+def test_the_argv_log_check_is_not_vacuous():
+    """Both directions, because this guard failed open AND closed before.
+
+    The last line is the regression: a checkout under a directory named `run`
+    made the old line-regex report a rival gateway that never started.
+    """
+    assert _logged_compose_run("compose -p hermes-rowan run --rm hermes chat -q\n")
+    assert _logged_compose_run("config\ncompose --env-file x run --rm hermes\n")
+    assert not _logged_compose_run("compose -p hermes-rowan exec -T hermes chat -q\n")
+    assert not _logged_compose_run(
+        "compose -p hermes-rowan -f /home/me/run/eng/agent.env exec -T hermes chat -q\n")
 
 
 def _fake_docker(tmp_path, home, container="hermes-rowan", running=True):
@@ -85,7 +114,7 @@ def test_the_agent_subcommand_runs_a_turn_through_exec(run, instance, tmp_path):
     assert "exec" in calls
     assert "chat -q" in calls
     assert "what is on today?" in calls
-    assert re.search(r"\bcompose\b.*\brun\b", calls) is None, "a rival gateway was started"
+    assert not _logged_compose_run(calls), "a rival gateway was started"
 
 
 def test_the_turn_runs_as_the_host_user_not_as_root(run, instance, tmp_path):

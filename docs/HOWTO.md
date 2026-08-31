@@ -301,8 +301,9 @@ thing changed:
   `google-workspace` copy. A destination the agent's own `skills.tsv` pins is
   authoritative and skipped — bump that row and re-run `deploy` instead.
 
-**Two SHA pins exist and only one may move** — before bumping either, read
-*What this builds on* in the [README](../README.md), which owns that rule.
+**Four SHA pins exist in one repo and one of them may never move** — before
+bumping any, read *What this builds on* in the [README](../README.md), which
+owns that rule.
 
 ## Running a one-off container
 
