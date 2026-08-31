@@ -90,8 +90,14 @@ surface -- because a verb that quietly means something different per target is
 worse than one that says it cannot.
 
 `agent-mgr serve [host] [port]` answers the same `/v1/agents/cloud` routes
-against local containers, so a client written for Plow drives this host without
-knowing the difference. It requires `AGENT_MGR_SERVE_TOKEN`, and binds loopback
+against local containers: the wire shape, the statuses and the polling loop are
+Plow's, so a client written for Plow parses and drives them unchanged. One thing
+it cannot do is mint a credential -- Plow issues those, and this host is not
+Plow. So CREATE STARTS an agent, it does not provision one: the checkout must
+already be registered, restored and activated, and its line comes from the
+credential that activation wrote. A registered agent that holds no credential is
+409 with the two commands that fix it, rather than a 202 promising a line
+nothing assigned. It requires `AGENT_MGR_SERVE_TOKEN`, and binds loopback
 or this machine's own tailnet address -- nothing else. The routes start and stop
 containers over plain HTTP with a replayable bearer, so a LAN or wildcard bind
 hands an on-path peer a container control plane; a tailnet is the one exception,

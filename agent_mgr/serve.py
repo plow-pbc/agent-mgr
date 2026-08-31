@@ -227,7 +227,7 @@ def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
         # provider being unreachable.
         owner = _ownership(agent)
         if owner is not Ownership.OURS:
-            return CloudStatus.FAILED, _failure_for(owner, FailureCode.SETUP_FAILED)
+            return CloudStatus.FAILED, _failure_for(owner)
         return CloudStatus.RUNNING, None
     existing = compose(agent, ["ps", "--all", "--quiet", "hermes"], capture=True)
     if existing.returncode:
@@ -237,11 +237,11 @@ def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
         # a reused project mounting a sibling's home is not this agent's setup
         # that failed, and telling its operator to look at their own provision
         # points them away from the descriptor that is actually wrong.
-        return CloudStatus.FAILED, _failure_for(_ownership(agent), FailureCode.SETUP_FAILED)
+        return CloudStatus.FAILED, _failure_for(_ownership(agent))
     return CloudStatus.PROVISIONING, None
 
 
-def _failure_for(owner: Ownership, ours: FailureCode) -> FailureCode:
+def _failure_for(owner: Ownership) -> FailureCode:
     """What a container that is not ours failed at, kept in one place.
 
     A foreign mount is a descriptor that does not validate; a docker that cannot
@@ -252,7 +252,7 @@ def _failure_for(owner: Ownership, ours: FailureCode) -> FailureCode:
         return FailureCode.VALIDATION_FAILED
     if owner is Ownership.UNKNOWN:
         return FailureCode.PROVIDER_UNREACHABLE
-    return ours
+    return FailureCode.SETUP_FAILED
 
 
 class LocalCloudApi:
