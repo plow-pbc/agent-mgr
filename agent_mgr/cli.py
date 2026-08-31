@@ -50,7 +50,6 @@ from .local import (
 )
 from .models import JsonValue, RegistryEntry
 from .registry import Registry
-from .serve import serve
 
 ROOT = Path(__file__).resolve().parent.parent
 JSON_SCHEMA_VERSION = 1
@@ -81,9 +80,7 @@ NATIVE_JSON_OPERATIONS = (
     frozenset({"ls", "register", "register-cloud", "unregister", "new", "resolve"})
     | CLOUD_OPERATIONS
 )
-# `serve` joins them: it runs until interrupted, so the --json capture adapter
-# would sit on a child that never exits.
-UNBOUNDED_JSON_OPERATIONS = frozenset({"logs", "compose", "serve"})
+UNBOUNDED_JSON_OPERATIONS = frozenset({"logs", "compose"})
 
 
 def _emit(operation: str, result: dict[str, JsonValue]) -> None:
@@ -158,7 +155,6 @@ def _usage(stream: TextIO = sys.stdout) -> None:
   check-connectors | migrate-plugin-env
   backup-homes | prune-backups
   up | down | restart | logs | agent | compose | resolve-guard
-  serve [host] [port]   Plow's /v1/agents/cloud API, against local containers
   cloud-create | cloud-list | cloud-get | cloud-set-line | cloud-delete
 
   A cloud agent registered with register-cloud answers the same lifecycle verbs
@@ -574,17 +570,6 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 require_container_ours(agent)
             return compose(agent, command).returncode
         return transition(agent, command)
-    if operation == "serve":
-        if len(args) > 2:
-            raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, "usage: agent-mgr serve [host] [port]")
-        host = args[0] if args else "127.0.0.1"
-        try:
-            port = int(args[1]) if len(args) == 2 else 8765
-        except ValueError:
-            raise AgentMgrError(
-                ErrorCode.INVALID_ARGUMENT, f"port must be a number: {args[1]}"
-            ) from None
-        return serve(registry, ROOT, host, port)
     if operation in {"-h", "--help", "help"}:
         _usage()
         return 0
