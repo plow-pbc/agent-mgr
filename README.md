@@ -48,14 +48,16 @@ agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
 agent-mgr check-latch errands
 ```
 
-Every command accepts `--json`. Reads return typed domain objects; operational
+Every command accepts `--json` except the three whose output has no end --
+`logs`, `compose` and `serve`, which run until interrupted. Reads return typed
+domain objects; operational
 commands return a versioned envelope with exit status and captured output.
 Errors use stable codes, so automation never has to parse terminal prose:
 
 Machine consumers should always request JSON explicitly. Operational JSON
 detaches terminal stdin: pipe input (for example, `credential-helper | agent-mgr
 --json set-latch errands`), and set `AGENT_TRANSITION_ACK=1` for an intentional
-live transition. `logs` and `compose` reject JSON because they can stream forever.
+live transition. `logs`, `compose` and `serve` reject JSON because they can stream forever.
 
 ## Cloud agents
 
@@ -86,6 +88,17 @@ cloud agent by name -- an exe restart would delete and re-create the tenant,
 minting a new credential and stranding its chat, and exe publishes no log
 surface -- because a verb that quietly means something different per target is
 worse than one that says it cannot.
+
+`agent-mgr serve [host] [port]` answers the same `/v1/agents/cloud` routes
+against local containers, so a client written for Plow drives this host without
+knowing the difference. It requires `AGENT_MGR_SERVE_TOKEN`, and binds loopback or this machine's own
+tailnet address -- nothing else. The routes start and stop containers over plain
+HTTP with a replayable bearer, so a LAN or wildcard bind hands an on-path peer a
+container control plane; a tailnet is the one exception, because WireGuard
+between two authenticated peers leaves no on-path position to replay from. The
+address is asked of `tailscale` rather than matched on `100.64/10`, which is
+shared CGNAT and not Tailscale's alone. Anywhere else, forward the port:
+`ssh -L <port>:127.0.0.1:<port> <host>`.
 
 ## Why it exists
 
