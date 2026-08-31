@@ -68,10 +68,11 @@ agent-mgr set-latch errands           # prompts for DOMO_DEVICE_UID, then DOMO_M
 agent-mgr check-latch errands         # "latch reachable ... (HTTP 200)"
 ```
 
-Tearing a test agent down is `down`, `unregister`, then delete its
-`~/.hermes-<name>` home yourself — neither command touches it, and the
-nightly backup globs `~/.hermes*`, so a dead test home would be archived
-forever.
+Tearing a test agent down: capture the home first — `agent-mgr resolve
+<name>` prints `AGENT_HOME`, and after `unregister` nothing will resolve
+it — then `down`, `unregister`, and delete that directory yourself.
+Neither command touches it, and the nightly backup globs `~/.hermes*`, so
+a dead test home would be archived forever.
 
 Every command accepts `--json`. Reads return typed domain objects; operational
 commands return a versioned envelope with exit status and captured output.
