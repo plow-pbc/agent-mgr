@@ -165,6 +165,26 @@ def _usage(stream: TextIO = sys.stdout) -> None:
     )
 
 
+def _cloud_unsupported(operation: str, args: list[str], registry: Registry) -> str | None:
+    """The refusal a CLOUD agent owes for this verb, if it is one and it does.
+
+    Consulted before the generic unbounded-output gate so `--json logs <cloud>`
+    is told the truth -- exe publishes no log surface -- instead of being sent
+    to a retry that refuses for a different reason.
+    """
+    if operation not in CLOUD_UNSUPPORTED or not args:
+        return None
+    try:
+        entry = registry.entry(args[0])
+    except AgentMgrError:
+        return None
+    if not entry.is_cloud:
+        return None
+    return (
+        f"{operation} is not available for cloud agent {entry.name}: {CLOUD_UNSUPPORTED[operation]}"
+    )
+
+
 def _cloud() -> CloudClient:
     return CloudClient(HttpCloudTransport.from_environment(os.environ))
 
@@ -608,12 +628,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             False,
         )
     if json_output and operation in UNBOUNDED_JSON_OPERATIONS:
+        # The generic gate says "run it without --json", which is sound for a
+        # local agent and a lie for a cloud one: `logs` has no exe equivalent,
+        # so that retry is guaranteed to refuse. Answer with the reason the verb
+        # cannot work at all rather than sending the operator around a loop.
+        unsupported = _cloud_unsupported(operation, args, Registry.from_environment())
         return _fail(
             operation,
             AgentMgrError(
                 ErrorCode.INVALID_ARGUMENT,
-                f"{operation} is unavailable with --json because it can produce unbounded output",
-                "run it without --json",
+                unsupported
+                or f"{operation} is unavailable with --json because it can produce unbounded output",
+                "" if unsupported else "run it without --json",
                 2,
             ),
             True,

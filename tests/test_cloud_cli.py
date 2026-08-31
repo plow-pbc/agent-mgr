@@ -354,3 +354,16 @@ def test_a_two_field_registry_row_still_reads_as_local(run, registry, tmp_path) 
     assert result.returncode == 0
     assert "legacy" in result.stdout
     assert "local" in result.stdout
+
+
+def test_json_logs_on_a_cloud_agent_says_why_not_retry_without_json(run) -> None:
+    """The generic unbounded-output gate says "run it without --json", which is
+    sound for a local agent and a lie for a cloud one: exe publishes no log
+    surface, so that retry is guaranteed to refuse for a different reason."""
+    assert run("register-cloud", "mary", "abc123").returncode == 0
+
+    result = run("--json", "logs", "mary")
+
+    assert result.returncode != 0
+    assert "no log surface" in result.stdout + result.stderr
+    assert "run it without --json" not in result.stdout + result.stderr

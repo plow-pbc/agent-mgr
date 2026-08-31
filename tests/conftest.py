@@ -389,8 +389,6 @@ def credential_api() -> Iterator[CredentialAPI]:
         server.thread.join()
 
 
-
-
 def write_tarball(path, members):
     """A real .tgz laid out the way GitHub wraps one: <owner>-<repo>-<sha>/..."""
     import io
