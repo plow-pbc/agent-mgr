@@ -78,16 +78,16 @@ def test_an_override_cannot_re_project_the_stack_at_all(run, instance):
 
 
 def _retargeting(instance, run, name, tmp_path, config=None):
-    """Registered and restored, then handed a docker that resolves someone
+    """Registered and deployed, then handed a docker that resolves someone
     else's home.
 
-    The restore runs against an AGREEING docker first: `restore` now consults
+    The deploy runs against an AGREEING docker first: `deploy` now consults
     resolve-guard before it writes, so a retargeting fake would refuse the setup
     rather than the command under test."""
     repo = instance(name) if config is None else instance(name, config=config)
     run("register", name, str(repo))
     ok = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name)
-    run("restore", name, env={"PATH": f"{ok}:{os.environ['PATH']}"})
+    run("deploy", name, env={"PATH": f"{ok}:{os.environ['PATH']}"})
     b = fake_docker(tmp_path, home=tmp_path / ".hermes-SOMEONE-ELSE", name=name)
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
@@ -136,12 +136,12 @@ def _sibling_home(instance, run, name, tmp_path):
     return repo
 
 
-def test_restore_will_not_write_into_a_siblings_home(run, instance, tmp_path):
+def test_deploy_will_not_write_into_a_siblings_home(run, instance, tmp_path):
     """resolve-guard proves Compose agrees with the descriptor, which a copied
-    descriptor naming a sibling's home satisfies perfectly. restore never goes
+    descriptor naming a sibling's home satisfies perfectly. deploy never goes
     near Compose, so only the ownership check catches it."""
     _sibling_home(instance, run, "property", tmp_path)
-    r = run("restore", "property")
+    r = run("deploy", "property")
     assert r.returncode != 0
     assert "not property's own home" in r.stderr
 
@@ -176,7 +176,7 @@ def test_the_legacy_bare_home_is_still_allowed_when_declared(run, instance, spel
     parser records the fact; these rows are why that has to hold for every
     spelling it accepts, not just the bare one."""
     run("register", "str", str(instance("str", descriptor=f"{spelling}\n")))
-    r = run("restore", "str")
+    r = run("deploy", "str")
     assert r.returncode == 0, r.stderr
 def test_two_agents_may_not_share_a_home(run, instance, tmp_path):
     """The check that actually closes the legacy exception. A descriptor copied
@@ -197,7 +197,7 @@ def test_the_agent_that_declared_it_first_still_works(run, instance, tmp_path):
     (tmp_path / "home" / ".hermes").mkdir(parents=True, exist_ok=True)
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
     run("register", "rowan", str(instance("rowan")))
-    assert run("restore", "str").returncode == 0
+    assert run("deploy", "str").returncode == 0
 
 
 def test_sign_in_will_not_mint_into_a_siblings_home(run, instance, tmp_path):
@@ -217,7 +217,7 @@ def test_a_siblings_single_quoted_home_still_collides(run, instance, tmp_path):
     through. One resolver now, so both spellings resolve identically."""
     run("register", "str", str(instance("str", descriptor="AGENT_HOME='$HOME/.hermes'\n")))
     run("register", "rowan", str(instance("rowan", descriptor='AGENT_HOME="$HOME/.hermes"\n')))
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode != 0, "a second agent claimed a home a sibling already declares"
     assert "str is already registered there" in r.stderr
 
@@ -234,7 +234,7 @@ def test_an_unresolvable_sibling_does_not_open_the_legacy_home(run, instance, tm
     run("register", "str", str(str_repo))
     shutil.rmtree(str_repo)
     run("register", "copycat", str(instance("copycat", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    r = run("restore", "copycat")
+    r = run("deploy", "copycat")
     assert r.returncode != 0, "a copycat claimed a live agent's home through a stale row"
     assert "could not be resolved" in r.stderr
     assert "could not resolve str" in r.stderr, "the skipped row was not named"
@@ -260,7 +260,7 @@ def test_the_refusal_carries_the_real_reason_and_the_right_remedy(run, instance,
     (bad / "agent.env").mkdir()
     run("register", "bad", str(bad))
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    r = run("restore", "str")
+    r = run("deploy", "str")
     assert r.returncode != 0
     assert "could not resolve bad" in r.stderr, "the skipped sibling was not named"
     assert "Fix the file named above if the agent is still there" in r.stderr, (
@@ -277,7 +277,7 @@ def test_two_conventional_homes_aliasing_one_directory_collide(run, instance, tm
     (home / ".hermes-copycat").symlink_to(target)
     run("register", "rowan", str(instance("rowan")))
     run("register", "copycat", str(instance("copycat")))
-    r = run("restore", "copycat")
+    r = run("deploy", "copycat")
     assert r.returncode != 0, "two conventional names reached one directory undetected"
     assert "rowan is already registered there" in r.stderr
 
@@ -301,13 +301,13 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     shutil.rmtree(dead)
     run("register", name, str(instance(name, descriptor=descriptor)))
 
-    r = run("restore", name)
+    r = run("deploy", name)
     assert r.returncode != 0, "an incomplete collision set was trusted"
     assert "cannot prove no one else claims that home" in r.stderr
     assert "could not resolve dead" in r.stderr, "the skipped row was not named"
 
     assert run("unregister", "dead").returncode == 0
-    assert run("restore", name).returncode == 0, "unregister did not clear it"
+    assert run("deploy", name).returncode == 0, "unregister did not clear it"
 
 
 @pytest.mark.parametrize(("kw", "refused", "why", "expect"), [
@@ -364,15 +364,15 @@ def test_the_image_rule_reads_what_compose_resolved(
         assert r.returncode == 0, f"refused a legitimate image ({why}): {r.stderr}"
 
 
-def test_restore_refuses_a_bad_image_before_it_writes_anything(run, instance, tmp_path):
+def test_deploy_refuses_a_bad_image_before_it_writes_anything(run, instance, tmp_path):
     """A deploy must enforce the image rule before installing anything."""
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     image="nousresearch/hermes-agent:latest")
-    r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("deploy", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert "neither a digest nor built here" in r.stderr
-    # The whole home, not just config.yaml -- which is the FOURTH thing restore
+    # The whole home, not just config.yaml -- which is the FOURTH thing deploy
     # writes, after the mkdir, the .env skeleton and the plugin install. A test
     # named "before it writes anything" has to mean it.
     assert not (tmp_path / "home" / ".hermes-rowan").exists(), (

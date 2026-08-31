@@ -26,10 +26,10 @@ def test_the_scaffolded_config_has_baseline_integrations_and_group_scope(run, tm
     assert yaml.safe_load(text)["group_sessions_per_user"] is False
 
 
-def test_new_does_not_create_the_home_that_restore_owns(run, tmp_path):
+def test_new_does_not_create_the_home_that_deploy_owns(run, tmp_path):
     """install-plugin and activate gate on the home existing as their "run
-    restore first" check. Pre-creating it lets activate spend a one-time
-    activation into a home restore has never prepared."""
+    deploy first" check. Pre-creating it lets activate spend a one-time
+    activation into a home deploy has never prepared."""
     r = run("new", "acme", str(tmp_path / "acme-hermes-agent"))
     assert not (tmp_path / "home" / ".hermes-acme").exists()
     assert str(tmp_path / "home" / ".hermes-acme") in r.stdout, "the banner must still report it"
@@ -61,9 +61,9 @@ def test_new_refuses_a_directory_holding_only_a_config(run, tmp_path):
 
 def test_new_prints_the_bring_up_sequence(run, tmp_path):
     r = run("new", "acme", str(tmp_path / "acme-hermes-agent"))
-    # No install-plugin: restore does it, and listing it as a separate step is
-    # the workflow re-running the installer over the config restore just laid down.
-    for step in ("restore", "activate", "up", "sign-in", "check-latch"):
+    # No install-plugin: deploy does it, and listing it as a separate step is
+    # the workflow re-running the installer over the config deploy just laid down.
+    for step in ("deploy", "activate", "up", "sign-in", "check-latch"):
         assert step in r.stdout
     assert "install-plugin" not in r.stdout
 

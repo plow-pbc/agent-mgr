@@ -88,7 +88,7 @@ def test_load_spec_expands_deliver_from_env(var):
     # set. Both token generations, so the rename cannot re-admit either.
     ("plow_chat:${PLOW_CHAT_TOKEN}", {"PLOW_CHAT_TOKEN": "tok"}, "PLOW_CHAT_TOKEN"),
     ("plow_chat:${PLOW_AGENT_TOKEN}", {"PLOW_AGENT_TOKEN": "tok"}, "PLOW_AGENT_TOKEN"),
-    # restore writes PLOW_HOME_CHANNEL= empty until activate runs; "plow_chat:"
+    # deploy writes PLOW_HOME_CHANNEL= empty until activate runs; "plow_chat:"
     # is the silent-drop target this field exists to close.
     ("plow_chat:${CHAT_UID}", {"CHAT_UID": ""}, "empty"),
     ("plow_chat:${CHAT_UID}", {"CHAT_UID": "  "}, "empty"),

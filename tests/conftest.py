@@ -181,7 +181,7 @@ def run(registry, tmp_path):
         e["AGENT_MGR_REGISTRY"] = str(registry)
         e["HOME"] = str(tmp_path / "home")
         (tmp_path / "home").mkdir(exist_ok=True)
-        # restore installs the plugin through the same fetch-tree the skills
+        # deploy installs the plugin through the same fetch-tree the skills
         # use, and activate curls the activation script from an earlier SHA of
         # that same repo -- so both a hermetic `gh` and a hermetic `curl` are on
         # PATH for every invocation unless a test overrides PATH deliberately.
@@ -298,7 +298,7 @@ def shlex_quote(s):
 def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
     """A `curl -o <path>` that writes a no-op plugin installer.
 
-    restore installs the plugin, so the real path curls upstream. Stubbing curl
+    deploy installs the plugin, so the real path curls upstream. Stubbing curl
     keeps the suite hermetic while still exercising agent-mgr's own fetch,
     ref-validation and `bash <installer>` steps.
     """
@@ -394,9 +394,9 @@ PLUGIN_TARBALL = {
 }
 
 # The fleet skills every agent gets, at the paths the canonical copies keep in
-# plow-pbc/plow's hosted-agent seed. Restore fetches them unconditionally, so
+# plow-pbc/plow's hosted-agent seed. Deploy fetches them unconditionally, so
 # the default `gh` serves them the way it serves the plugin -- otherwise every
-# plain `run("restore", ...)` in the suite would fail on a fetch it never asked
+# plain `run("deploy", ...)` in the suite would fail on a fetch it never asked
 # about. One tarball carries both trees: the real fetch is a whole-repo
 # snapshot fetch-tree extracts a src subtree from.
 FLEET_SEED = "cloud-agents/hermes/image/seed/skills"
@@ -414,7 +414,7 @@ FLEET_SKILL_TARBALL = {
 def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
     """A `gh` that answers by repo, because one invocation can need either.
 
-    A skill test restores first -- which installs the plugin and the fleet
+    A skill test deploys first -- which installs the plugin and the fleet
     skill -- and then adds a skill, so a `gh` that served one tarball to all
     would fail whichever came second on fetch-tree's manifest name check.
     Dispatching on the argv is what the real `gh api repos/<repo>/tarball/<ref>`
@@ -442,7 +442,7 @@ def _write_fleet_tgz(tmp_path):
 
 
 def install_fake_gh(tmp_path, b):
-    """The default: a `gh` that serves what every restore fetches and nothing else.
+    """The default: a `gh` that serves what every deploy fetches and nothing else.
 
     Never overwrites one already there. This runs inside `run()`, so it fires on
     every invocation -- including the ones a skill test set up with a richer,
@@ -475,7 +475,7 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
     write_tarball(skill_tgz, members)
     plugin_tgz = tmp_path / "plugin.tgz"
     write_tarball(plugin_tgz, PLUGIN_TARBALL)
-    # All three, because a skill test restores before it adds, and restore
+    # All three, because a skill test deploys before it adds, and deploy
     # installs the plugin and the fleet skill through this same installer.
     install_gh_dispatching(b, plugin_tgz=plugin_tgz,
                            fleet_tgz=_write_fleet_tgz(tmp_path), skill_tgz=skill_tgz)

@@ -28,7 +28,7 @@ class ResolvedAgent:
     image: str
     config: Path
     live: bool
-    restore_hook: Path | None
+    deploy_hook: Path | None
     pre_transition_hook: Path | None
     cron_spec: Path | None
     descriptor: Path
@@ -47,7 +47,7 @@ class ResolvedAgent:
             "config": str(self.config),
             "live": self.live,
             "transition_confirmation_required": self.live,
-            "restore_hook": str(self.restore_hook) if self.restore_hook else None,
+            "deploy_hook": str(self.deploy_hook) if self.deploy_hook else None,
             "pre_transition_hook": (
                 str(self.pre_transition_hook) if self.pre_transition_hook else None
             ),
@@ -65,8 +65,7 @@ class ResolvedAgent:
             "AGENT_IMAGE": self.image,
             "AGENT_CONFIG": str(self.config),
             "AGENT_LIVE": "1" if self.live else "0",
-            "AGENT_CONFIRM_TRANSITIONS": "",
-            "AGENT_RESTORE_HOOK": str(self.restore_hook or ""),
+            "AGENT_DEPLOY_HOOK": str(self.deploy_hook or ""),
             "AGENT_PRE_TRANSITION": str(self.pre_transition_hook or ""),
             "AGENT_CRON_SPEC": str(self.cron_spec or ""),
             "AGENT_DESCRIPTOR": str(self.descriptor),

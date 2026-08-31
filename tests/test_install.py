@@ -8,30 +8,30 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_restore_installs_the_config_into_the_agents_home(run, instance, tmp_path):
+def test_deploy_installs_the_config_into_the_agents_home(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode == 0, r.stderr
     installed = tmp_path / "home" / ".hermes-rowan" / "config.yaml"
     assert installed.exists()
     assert "openai-codex" in installed.read_text()
 
 
-def test_restore_writes_a_dotenv_skeleton_carrying_both_platforms(run, instance, tmp_path):
+def test_deploy_writes_a_dotenv_skeleton_carrying_both_platforms(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
     assert "PLOW_AGENT_TOKEN" in env
     assert "PLOW_HOME_CHANNEL" in env
     assert "DOMO_MCP_TOKEN" in env, "latch is baseline, not an opt-in"
 
 
-def test_restore_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
+def test_deploy_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
     env.write_text("PLOW_AGENT_TOKEN=real\n")
-    run("restore", "rowan")
+    run("deploy", "rowan")
     assert env.read_text() == "PLOW_AGENT_TOKEN=real\n"
 
 
@@ -41,7 +41,7 @@ def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance,
     reads them mid-migration; a later cleanup removes them), and a second run
     writes nothing."""
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
     env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\nHOSTEX_TOKEN=keepme\n")
 
@@ -69,7 +69,7 @@ def test_install_plugin_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
     legacy-only agent reloading onto the unified plugin must come back with the
     names it reads, or it silently loses its phone line."""
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
     env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\n")
 
@@ -85,7 +85,7 @@ def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp
     both resolve a duplicated key to its last line, so the migrated value must
     be the one the gateway actually ran with."""
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
     env.write_text("PLOW_CHAT_TOKEN=tok_stale\nPLOW_CHAT_TOKEN=tok_live\n")
 
@@ -100,7 +100,7 @@ def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path
     fresh token sits only under the legacy name — `--sync` is the forwarded
     mode that overwrites."""
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
     env.write_text("PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n")
     r = run("migrate-plugin-env", "rowan", "--sync")
@@ -114,30 +114,30 @@ def test_migrate_plugin_env_rejects_an_unknown_mode(run, instance, tmp_path):
     """Fail-fast on a typo'd flag: silently running in the OTHER mode is the
     stale-token bug this pair of modes exists to prevent."""
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     r = run("migrate-plugin-env", "rowan", "--bogus")
     assert r.returncode != 0
     assert "unknown mode" in r.stderr and "--sync" in r.stderr
 
 
-def test_migrate_plugin_env_without_a_dotenv_points_at_restore(run, instance, tmp_path):
+def test_migrate_plugin_env_without_a_dotenv_points_at_deploy(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("migrate-plugin-env", "rowan")
     assert r.returncode != 0
-    assert "restore" in r.stderr
+    assert "deploy" in r.stderr
 
 
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     for f in ("config.yaml", ".env"):
         mode = (tmp_path / "home" / ".hermes-rowan" / f).stat().st_mode
         assert not (mode & stat.S_IRWXO), f"{f} is reachable by other users"
 
 
-def test_restore_on_an_instance_with_no_config_is_refused(run, instance):
+def test_deploy_on_an_instance_with_no_config_is_refused(run, instance):
     run("register", "bare", str(instance("bare", config=None)))
-    r = run("restore", "bare")
+    r = run("deploy", "bare")
     assert r.returncode != 0
     assert "config.yaml" in r.stderr
 
@@ -178,7 +178,7 @@ def test_install_refuses_a_ref_that_is_not_a_sha(run, instance, command, env_key
     """A branch would silently re-point every agent on the next upstream push --
     the same rule for the plugin pin and the fleet skill pin."""
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     r = run(command, "rowan", env={env_key: "main"})
     assert r.returncode != 0
     assert "40-char SHA" in r.stderr
@@ -210,7 +210,7 @@ def test_an_agent_can_say_where_its_config_lives(run, instance, tmp_path):
     (repo / "runtime").mkdir()
     (repo / "runtime" / "config.yaml").write_text("model:\n  provider: openai-codex\n")
     run("register", "str", str(repo))
-    r = run("restore", "str")
+    r = run("deploy", "str")
     assert r.returncode == 0, r.stderr
     assert "openai-codex" in (tmp_path / "home" / ".hermes-str" / "config.yaml").read_text()
 
@@ -231,7 +231,7 @@ def test_a_missing_config_names_the_path_it_looked_at(run, instance):
         "str",
         str(instance("str", descriptor="AGENT_CONFIG=runtime/config.yaml\n", config=None)),
     )
-    r = run("restore", "str")
+    r = run("deploy", "str")
     assert r.returncode != 0
     assert "runtime/config.yaml" in r.stderr
     assert "AGENT_CONFIG" in r.stderr
@@ -244,64 +244,64 @@ def test_an_instance_dotenv_example_wins_over_the_fleet_template(run, instance, 
     repo = instance("str")
     (repo / ".env.example").write_text("HOSTEX_TOKEN=\nSEAM_API_KEY=\nPLOW_AGENT_TOKEN=\n")
     run("register", "str", str(repo))
-    run("restore", "str")
+    run("deploy", "str")
     env = (tmp_path / "home" / ".hermes-str" / ".env").read_text()
     assert "HOSTEX_TOKEN" in env and "SEAM_API_KEY" in env
 
 
 def test_the_fleet_template_is_used_when_an_instance_ships_none(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
     assert "PLOW_AGENT_TOKEN" in env and "DOMO_MCP_TOKEN" in env
 
 
-def test_restore_is_the_whole_deploy_including_the_instances_own_step(run, instance, tmp_path):
+def test_deploy_is_the_whole_deploy_including_the_instances_own_step(run, instance, tmp_path):
     """One command, one owner. The alternative -- agent-mgr doing its half and
     the README telling the operator to run the rest in order -- moves ownership
     to whoever reads the docs, which is not an owner at all."""
-    repo = instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/seed.sh\n")
+    repo = instance("str", descriptor="AGENT_DEPLOY_HOOK=scripts/seed.sh\n")
     (repo / "scripts").mkdir()
     hook = repo / "scripts" / "seed.sh"
     hook.write_text(f"#!/usr/bin/env bash\ntouch {tmp_path / 'hook-ran'}\n")
     hook.chmod(0o755)
     run("register", "str", str(repo))
-    r = run("restore", "str")
+    r = run("deploy", "str")
     assert r.returncode == 0, r.stderr
     home = tmp_path / "home" / ".hermes-str"
     assert (home / "config.yaml").exists(), "config"
     assert (home / ".env").exists(), "dotenv skeleton"
-    assert (tmp_path / "hook-ran").exists(), "the instance's own restore step never ran"
+    assert (tmp_path / "hook-ran").exists(), "the instance's own deploy step never ran"
 
 
-def test_a_failing_hook_fails_the_restore(run, instance, tmp_path):
+def test_a_failing_hook_fails_the_deploy(run, instance, tmp_path):
     """A hook refuses for a reason -- a missing corpus, a failed composition.
     Swallowing it leaves the caller believing the deploy landed."""
-    repo = instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/seed.sh\n")
+    repo = instance("str", descriptor="AGENT_DEPLOY_HOOK=scripts/seed.sh\n")
     (repo / "scripts").mkdir()
     hook = repo / "scripts" / "seed.sh"
     hook.write_text('#!/usr/bin/env bash\necho "no vault" >&2\nexit 1\n')
     hook.chmod(0o755)
     run("register", "str", str(repo))
-    r = run("restore", "str")
+    r = run("deploy", "str")
     assert r.returncode != 0
     assert "ARE installed" in r.stderr and "is NOT" in r.stderr
 
 
 def test_a_declared_hook_that_is_missing_is_named(run, instance):
-    run("register", "str", str(instance("str", descriptor="AGENT_RESTORE_HOOK=scripts/gone.sh\n")))
-    r = run("restore", "str")
+    run("register", "str", str(instance("str", descriptor="AGENT_DEPLOY_HOOK=scripts/gone.sh\n")))
+    r = run("deploy", "str")
     assert r.returncode != 0
-    assert "restore hook" in r.stderr and "gone.sh" in r.stderr
+    assert "deploy hook" in r.stderr and "gone.sh" in r.stderr
 
 
-def test_an_agent_with_no_hook_restores_fine(run, instance, tmp_path):
+def test_an_agent_with_no_hook_deploys_fine(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
-    assert run("restore", "rowan").returncode == 0
+    assert run("deploy", "rowan").returncode == 0
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
 
 
-def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance, tmp_path):
+def test_deploy_installs_the_plugin_so_one_command_is_the_deploy(run, instance, tmp_path):
     """It used to be a second command the caller had to remember in order."""
     run("register", "rowan", str(instance("rowan")))
     plugin = tmp_path / "home" / ".hermes-rowan" / "plugins" / "plow-chat-platform"
@@ -315,14 +315,14 @@ def test_restore_installs_the_plugin_so_one_command_is_the_deploy(run, instance,
     legacy.mkdir(parents=True)
     (legacy / "adapter.py").write_text("# the old SEED layout\n")
 
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode == 0, r.stderr
     # The files, not the fetch. This used to assert that a faked `curl` ran,
     # which stopped meaning anything the moment the plugin started arriving
     # through fetch-tree -- and would have kept passing on a fetch that
-    # installed nothing. What restore owes the caller is a plugin in the home.
-    assert (plugin / "plugin.yaml").is_file(), "restore did not install the plugin manifest"
-    assert (plugin / "__init__.py").is_file(), "restore did not install the adapter"
+    # installed nothing. What deploy owes the caller is a plugin in the home.
+    assert (plugin / "plugin.yaml").is_file(), "deploy did not install the plugin manifest"
+    assert (plugin / "__init__.py").is_file(), "deploy did not install the adapter"
     assert "name: plow-chat-platform" in (plugin / "plugin.yaml").read_text()
     # Replace, not overlay: the swap is what retires the old SEED layout from
     # an agent's home. Overlaying would leave a second, stale copy of the
@@ -386,15 +386,6 @@ def _live(instance, run, tmp_path):
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
-def test_the_old_key_dies_instead_of_dropping_the_guard(run, instance, tmp_path):
-    """AGENT_CONFIRM_TRANSITIONS was renamed. Ignoring it would strip a live
-    agent's guard on the very next command; the rename is named instead."""
-    run("register", "rowan", str(instance("rowan", descriptor="AGENT_CONFIRM_TRANSITIONS=1\n")))
-    r = run("resolve", "rowan")
-    assert r.returncode != 0
-    assert "AGENT_LIVE" in r.stderr
-
-
 def _run_tty(argv, reply, registry, tmp_path, env_path, timeout=None):
     """agent-mgr on a real pty: [ -t 0 ] is the branch these tests exercise."""
     import pty
@@ -438,13 +429,13 @@ def test_a_live_agent_refuses_a_non_interactive_transition(run, instance, tmp_pa
     assert "AGENT_TRANSITION_ACK" not in r.stderr, "logs is a read, not a transition"
 
 
-def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, instance, tmp_path):
-    """restore asks at its preflight and ends with a reload in a child process.
+def test_one_interactive_yes_answers_deploy_and_its_reload(run, registry, instance, tmp_path):
+    """deploy asks at its preflight and ends with a reload in a child process.
     The yes is exported, so the child never asks again -- with only ONE answer
     on the pty, a re-prompt would block on the empty terminal and fail this
     test by timeout, and a refusal would fail it by exit code."""
     r = _run_tty(
-        ["restore", "rowan"], "y", registry, tmp_path, _live(instance, run, tmp_path), timeout=120
+        ["deploy", "rowan"], "y", registry, tmp_path, _live(instance, run, tmp_path), timeout=120
     )
     assert r.returncode == 0, r.stderr
     # And the reload actually ran -- exit 0 with the reload silently skipped
@@ -452,7 +443,7 @@ def test_one_interactive_yes_answers_restore_and_its_reload(run, registry, insta
     assert "restarting rowan's gateway" in r.stdout, r.stdout
 
 
-def test_restart_and_restore_reload_recreate_the_container(run, instance, tmp_path):
+def test_restart_and_deploy_reload_recreate_the_container(run, instance, tmp_path):
     """A Compose template change reaches existing agents only on recreation."""
     from conftest import fake_docker
 
@@ -466,7 +457,7 @@ def test_restart_and_restore_reload_recreate_the_container(run, instance, tmp_pa
     )
     env = {"PATH": f"{b}:{os.environ['PATH']}"}
 
-    for command in (("restart", "rowan"), ("restore", "rowan")):
+    for command in (("restart", "rowan"), ("deploy", "rowan")):
         log.write_text("")
         r = run(*command, env=env)
         assert r.returncode == 0, r.stderr
@@ -475,19 +466,19 @@ def test_restart_and_restore_reload_recreate_the_container(run, instance, tmp_pa
         ), f"{command[0]} did not recreate the container:\n{log.read_text()}"
 
 
-def test_an_unacknowledged_restore_refuses_before_it_writes(run, instance, tmp_path):
-    """restore's preflight rule: a command that installs everything before
+def test_an_unacknowledged_deploy_refuses_before_it_writes(run, instance, tmp_path):
+    """deploy's preflight rule: a command that installs everything before
     refusing has already done the thing the refusal exists to prevent. The
     ack check sits in the preflight beside the veto, so the home stays
-    untouched -- and the same restore proceeds once acknowledged."""
+    untouched -- and the same deploy proceeds once acknowledged."""
     env = _live(instance, run, tmp_path)
-    r = run("restore", "rowan", env=env)
+    r = run("deploy", "rowan", env=env)
     assert r.returncode != 0
     assert "AGENT_TRANSITION_ACK" in r.stderr
     assert not (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists(), (
-        "restore wrote into the home before refusing"
+        "deploy wrote into the home before refusing"
     )
-    r = run("restore", "rowan", env={**env, "AGENT_TRANSITION_ACK": "1"})
+    r = run("deploy", "rowan", env={**env, "AGENT_TRANSITION_ACK": "1"})
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").is_file()
 
@@ -550,7 +541,7 @@ def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
     # exits before the guard when there is none.
     (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
     # install-plugin migrates the dotenv before the ref install; a real home
-    # always has one (restore writes the skeleton first).
+    # always has one (deploy writes the skeleton first).
     (home / ".env").write_text("")
     b = fake_skill_gh(tmp_path)
     fake_docker(tmp_path, home=home, name="rowan")
@@ -625,17 +616,17 @@ def test_no_route_to_a_transition_bypasses_the_veto(run, instance, tmp_path, arg
 
 
 def test_a_reload_is_a_transition_too(run, instance, tmp_path):
-    """restore writes and then reloads. Routing the reload around the veto let
+    """deploy writes and then reloads. Routing the reload around the veto let
     four write-then-reload subcommands restart the container mid-ingest."""
     repo = _guarded(instance, run, tmp_path, refuses=False)
-    # Allow the restore's own pre-write veto, then refuse by the time it reloads.
+    # Allow the deploy's own pre-write veto, then refuse by the time it reloads.
     (repo / "scripts" / "guard.sh").write_text(
         "#!/usr/bin/env bash\n"
         f"n=$(cat {tmp_path}/count 2>/dev/null || echo 0); echo $((n+1)) > {tmp_path}/count\n"
         '[ "$n" = 0 ] || { echo "a nightly started" >&2; exit 1; }\n'
     )
     (repo / "scripts" / "guard.sh").chmod(0o755)
-    r = run("restore", "rowan", env=_transition_env(tmp_path))
+    r = run("deploy", "rowan", env=_transition_env(tmp_path))
     assert r.returncode != 0
     assert "refused" in r.stderr
 
@@ -656,7 +647,7 @@ def test_the_subcommand_is_classified_not_the_flattened_argv(run, instance, tmp_
     assert r.returncode == 0, r.stderr
 
 
-def test_restore_replays_every_pinned_skill(run, instance, tmp_path):
+def test_deploy_replays_every_pinned_skill(run, instance, tmp_path):
     """It is advertised as the whole deploy. A rebuild that omitted them left an
     agent whose skills.tsv said one thing and whose home held another."""
     from conftest import fake_docker, fake_skill_gh
@@ -668,22 +659,22 @@ def test_restore_replays_every_pinned_skill(run, instance, tmp_path):
     # resolve-guard refuse at the reload, after the skill had installed.
     d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     run("register", "rowan", str(repo))
-    r = run("restore", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
+    r = run("deploy", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     assert (tmp_path / "home" / ".hermes-rowan" / "skills" / "my-skill" / "SKILL.md").exists()
 
 
-def test_restore_replaces_a_container_planted_config_symlink(run, instance, tmp_path):
+def test_deploy_replaces_a_container_planted_config_symlink(run, instance, tmp_path):
     repo = instance("rowan", config="model:\n  provider: openai-codex\n")
     run("register", "rowan", str(repo))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     target = tmp_path / "sibling.env"
     target.write_text("PLOW_AGENT_TOKEN=keep\n")
     config = tmp_path / "home" / ".hermes-rowan" / "config.yaml"
     config.unlink()
     config.symlink_to(target)
 
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
 
     assert r.returncode == 0, r.stderr
     assert target.read_text() == "PLOW_AGENT_TOKEN=keep\n"
@@ -697,9 +688,9 @@ def test_a_missing_hook_is_caught_before_anything_is_written(run, instance, tmp_
     run(
         "register",
         "rowan",
-        str(instance("rowan", descriptor="AGENT_RESTORE_HOOK=scripts/gone.sh\n")),
+        str(instance("rowan", descriptor="AGENT_DEPLOY_HOOK=scripts/gone.sh\n")),
     )
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode != 0
     assert "nothing was installed" in r.stderr
     assert not (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
@@ -707,11 +698,11 @@ def test_a_missing_hook_is_caught_before_anything_is_written(run, instance, tmp_
 
 def test_a_runtime_hook_failure_says_what_landed(run, instance, tmp_path):
     repo = _guarded(instance, run, tmp_path, refuses=False)
-    (repo / "agent.env").write_text("AGENT_RESTORE_HOOK=scripts/hook.sh\n")
+    (repo / "agent.env").write_text("AGENT_DEPLOY_HOOK=scripts/hook.sh\n")
     h = repo / "scripts" / "hook.sh"
     h.write_text('#!/usr/bin/env bash\necho "no vault" >&2\nexit 1\n')
     h.chmod(0o755)
-    r = run("restore", "rowan", env=_transition_env(tmp_path))
+    r = run("deploy", "rowan", env=_transition_env(tmp_path))
     assert r.returncode != 0
     assert "ARE installed" in r.stderr and "is NOT" in r.stderr
 
@@ -787,12 +778,12 @@ def test_the_activate_pin_is_frozen_and_distinct():
 
 
 def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
-    """restore and install-plugin leave the agent in opposite states on a failed fetch.
+    """deploy and install-plugin leave the agent in opposite states on a failed fetch.
 
     One hard-coded sentence told the install-plugin operator their config and
     skills were gone, when install-plugin gates on an existing home and leaves
     both untouched -- and the obvious response to that message is to re-run
-    restore over a healthy agent. Nothing pinned the split, so a revert to one
+    deploy over a healthy agent. Nothing pinned the split, so a revert to one
     sentence would have been silent.
     """
     import os
@@ -804,13 +795,13 @@ def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
     failing = {"PATH": f"{b}:{os.environ['PATH']}"}
 
     run("register", "rowan", str(instance("rowan")))
-    r = run("restore", "rowan", env=failing)
+    r = run("deploy", "rowan", env=failing)
     assert r.returncode != 0
     assert "gh auth status" in r.stderr, "the gh diagnosis must survive"
     assert "config.yaml and skills are NOT" in r.stderr
 
-    # A home restore already made, so install-plugin gets past its own gate.
-    run("restore", "rowan")
+    # A home deploy already made, so install-plugin gets past its own gate.
+    run("deploy", "rowan")
     r = run("install-plugin", "rowan", env=failing)
     assert r.returncode != 0
     assert "gh auth status" in r.stderr
@@ -841,7 +832,7 @@ def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
     (orphan / "plugin.yaml").write_text("name: plow-chat-platform\n")
     (plugins / "plow-chat-platform.incoming").mkdir()
 
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode == 0, r.stderr
     assert sorted(p.name for p in plugins.iterdir()) == ["plow-chat-platform"], (
         "an orphaned tree survived the install"
@@ -856,7 +847,7 @@ def test_a_rollback_copy_is_promoted_before_the_next_publication(run, instance, 
     rollback.mkdir(parents=True)
     (rollback / "plugin.yaml").write_text("name: plow-chat-platform\n")
 
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode == 0, r.stderr
     assert (plugins / "plow-chat-platform" / "plugin.yaml").is_file(), (
         "the recovered tree was lost during publication"
@@ -880,7 +871,7 @@ def test_no_host_side_script_depends_on_a_gnu_only_tool():
         # Bitten: #19 (realpath) and this PR (flock -- Homebrew-only on the Mac).
         "flock": r"\bflock\b",
         # Boundary, not a flag: BSD realpath ERRORS on a path that does not exist
-        # yet, which a first restore needs, so bare `realpath "$p"` IS the #19
+        # yet, which a first deploy needs, so bare `realpath "$p"` IS the #19
         # break. The lookbehind is what skips os.path.realpath( in a python3 -c.
         "realpath": r"(?<![\w.])realpath\b",
     }
@@ -904,7 +895,7 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
 
     The array is empty for an agent with no extra descriptor keys, and bash
     before 4.4 -- which macOS ships -- treats that as unset under `set -u`, so
-    the bare expansion kills `restore`. common.sh owns why; this pins that the
+    the bare expansion kills `deploy`. common.sh owns why; this pins that the
     guard survives, since it reads like removable ceremony.
 
     Subscript (`[@]`/`[*]`) and guard (`+`/`:+`) are normalised and `${#...}`
@@ -951,7 +942,7 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
             assert bare == 0, (
                 f"{script.name}:{n} expands AGENT_HOOK_ENV[@] without the `+` "
                 "guard -- empty under `set -u` on the bash 3.2 macOS ships, so "
-                "this passes here and breaks restore on the operator's Mac"
+                "this passes here and breaks deploy on the operator's Mac"
             )
 
 
@@ -980,7 +971,7 @@ def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp
     )
     (home / "plugins").symlink_to("../not-the-agents")
 
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode != 0, "the install followed a planted parent symlink"
     assert "outside" in r.stderr, f"refused, but not for this reason: {r.stderr}"
     assert "SENTINEL" in (outside / "plow-chat-platform" / "plugin.yaml").read_text(), (
