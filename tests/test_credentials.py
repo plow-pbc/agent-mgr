@@ -232,6 +232,63 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
     assert "xyz" not in r.stderr
 
 
+def _latch_json(uid="dev_abc", auth="Bearer tok_xyz", url=None):
+    server = {
+        "type": "http",
+        "url": f"https://api.plow.co/v1/relay/devices/{uid}/mcp" if url is None else url,
+        "headers": {"Authorization": auth},
+    }
+    return json.dumps({"mcpServers": {"plow": server}}, indent=2) + "\n"
+
+
+def test_set_latch_accepts_the_json_latch_shows(run, instance, tmp_path):
+    """Latch's "create a static credential" hands the operator one JSON blob.
+    Pasting it whole is one prompt and zero hand-extraction -- the shape the
+    pair actually arrives in."""
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("restore", "rowan")
+    b, _ = _fake_docker(tmp_path)
+    r = run(
+        "set-latch", "rowan", input=_latch_json(), env={"PATH": f"{b}:{os.environ['PATH']}"}
+    )
+    assert r.returncode == 0, r.stderr
+    body = (tmp_path / "home" / ".hermes-rowan" / ".env").read_bytes()
+    assert b"DOMO_DEVICE_UID=dev_abc" in body.split(b"\n")
+    assert b"DOMO_MCP_TOKEN=tok_xyz" in body.split(b"\n")
+    # The blob carries the live token; neither stream may repeat any of it back.
+    assert "tok_xyz" not in r.stdout + r.stderr
+    assert "xyz" not in r.stdout + r.stderr
+    # The one prompt names where the blob comes from.
+    assert "static credential" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "stdin,diagnosis",
+    [
+        # Opens like JSON, ends before it parses -- a partial paste.
+        ('{\n  "mcpServers": {\n', "not valid JSON"),
+        # Parses, but carries no relay-device URL to take a UID from.
+        (_latch_json(url="https://api.plow.co/v1/other"), "no devices/<uid>/mcp URL"),
+        # Parses, but the header is not the Bearer form the relay mints.
+        (_latch_json(auth="Basic abc"), "no 'Bearer' Authorization"),
+    ],
+    ids=["truncated", "no-device-url", "no-bearer"],
+)
+def test_set_latch_refuses_json_it_cannot_take_a_pair_from(
+    run, instance, tmp_path, stdin, diagnosis
+):
+    """A blob that half-parses must refuse loudly, not write a fragment the
+    gateway later 401s on."""
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("restore", "rowan")
+    r = run("set-latch", "rowan", input=stdin)
+    assert r.returncode != 0
+    assert diagnosis in r.stderr
+    body = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+    assert "dev_abc" not in body
+    assert "tok_xyz" not in body
+
+
 def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance):
     """A pair written for an agent with no latch is a credential no gateway ever
     reads, sitting in a dotenv looking like working configuration."""

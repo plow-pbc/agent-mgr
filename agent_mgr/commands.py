@@ -296,6 +296,51 @@ def upsert(agent: ResolvedAgent, keys: list[str], values: list[str]) -> None:
         )
 
 
+def latch_pair_from_json(first_line: str) -> tuple[str, str]:
+    """The (uid, token) pair from the client-config JSON Latch shows once.
+
+    Reads the rest of the blob from stdin: a paste arrives line by line, so it
+    accumulates until the text parses. Latch names the server `plow` today, but
+    the shape -- one server, a `devices/<uid>/mcp` URL, a Bearer header -- is
+    the contract; the name is not."""
+    blob = first_line
+    while True:
+        try:
+            data = json.loads(blob)
+            break
+        except json.JSONDecodeError:
+            line = sys.stdin.readline()
+            if not line:
+                raise AgentMgrError(
+                    ErrorCode.INVALID_ARGUMENT,
+                    "the paste opened like JSON but is not valid JSON -- "
+                    "copy the whole blob from Latch and paste it again",
+                ) from None
+            blob += line
+    servers = data.get("mcpServers") if isinstance(data, dict) else None
+    matches = [
+        (m.group(1), server.get("headers", {}).get("Authorization", ""))
+        for server in (servers or {}).values()
+        if isinstance(server, dict)
+        if (m := re.search(r"/devices/([^/]+)/mcp", str(server.get("url", ""))))
+    ]
+    if not matches:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            "the JSON has no devices/<uid>/mcp URL under mcpServers -- "
+            "is this the blob from Latch's static credential screen?",
+        )
+    uid, authorization = matches[0]
+    token = authorization.removeprefix("Bearer ").strip()
+    if not authorization.startswith("Bearer ") or not token:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            "the JSON has no 'Bearer' Authorization header -- "
+            "is this the blob from Latch's static credential screen?",
+        )
+    return uid, token
+
+
 def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
     require_own_home(agent, registry)
     installed, dotenv = agent.home / "config.yaml", agent.home / ".env"
@@ -309,13 +354,23 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
             ErrorCode.INVALID_ARGUMENT,
             f"{agent.name} declares no latch server in {installed} -- nothing would read this pair",
         )
-    print("DOMO_DEVICE_UID: ", end="", file=sys.stderr)
-    uid = sys.stdin.readline().strip()
-    if sys.stdin.isatty():
-        token = getpass.getpass("DOMO_MCP_TOKEN: ", stream=sys.stderr).strip()
+    print(
+        'Paste the JSON from Latch ("can\'t use OAuth? create a static credential"),'
+        " or a bare DOMO_DEVICE_UID: ",
+        end="",
+        file=sys.stderr,
+        flush=True,
+    )
+    first = sys.stdin.readline()
+    if first.lstrip().startswith("{"):
+        uid, token = latch_pair_from_json(first)
     else:
-        print("DOMO_MCP_TOKEN: ", end="", file=sys.stderr)
-        token = sys.stdin.readline().strip()
+        uid = first.strip()
+        if sys.stdin.isatty():
+            token = getpass.getpass("DOMO_MCP_TOKEN: ", stream=sys.stderr).strip()
+        else:
+            print("DOMO_MCP_TOKEN: ", end="", file=sys.stderr, flush=True)
+            token = sys.stdin.readline().strip()
     if not uid or not token:
         missing = "DOMO_DEVICE_UID" if not uid else "DOMO_MCP_TOKEN"
         raise AgentMgrError(
