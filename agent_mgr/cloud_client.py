@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 from dataclasses import dataclass
 
 from agent_mgr.cloud_http import CloudTransport
@@ -8,16 +7,14 @@ from agent_mgr.cloud_models import (
     CloudAgentResource,
     CreateCloudAgentRequest,
     UpdateCloudAgentLineRequest,
+    validate_agent_id,
 )
 from agent_mgr.errors import AgentMgrError, ErrorCode
 
 CLOUD_PATH = "/v1/agents/cloud"
 
 
-def _agent_id(value: str) -> str:
-    if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
-        raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"invalid cloud agent id: {value}")
-    return value
+_agent_id = validate_agent_id
 
 
 @dataclass(frozen=True, slots=True)

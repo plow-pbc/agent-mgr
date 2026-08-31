@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import NoReturn
@@ -21,6 +22,21 @@ class FailureCode(StrEnum):
     SETUP_FAILED = "setup_failed"
     VALIDATION_FAILED = "validation_failed"
     UNKNOWN = "unknown"
+
+
+AGENT_ID = re.compile(r"[A-Za-z0-9_-]+")
+
+
+def validate_agent_id(value: str) -> str:
+    """The one definition of a cloud agent id.
+
+    It lived in the transport, so `register-cloud` accepted ids every call
+    would then refuse -- a row you could write and never use. One rule, applied
+    where the id enters and where it leaves.
+    """
+    if not AGENT_ID.fullmatch(value):
+        raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"invalid cloud agent id: {value}")
+    return value
 
 
 def _error(code: ErrorCode, message: str) -> NoReturn:

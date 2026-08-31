@@ -253,7 +253,7 @@ def test_updating_to_the_line_it_already_serves_is_not_a_write(
     """An idempotent caller PUTs its desired state on every reconcile; failing a
     request that asks for what is already true breaks it against a host that
     already matches."""
-    monkeypatch.setattr("agent_mgr.serve._dotenv_line", lambda agent: ("ln_home",))
+    monkeypatch.setattr("agent_mgr.serve._agent_line", lambda agent: ("ln_home",))
 
     same, _ = _call(base, "PUT", "/v1/agents/cloud/life/line", {"line_uid": "ln_home"})
     other, body = _call(base, "PUT", "/v1/agents/cloud/life/line", {"line_uid": "ln_x"})
@@ -300,3 +300,50 @@ def test_create_answers_before_the_container_is_up(base: str, api: _Api) -> None
     assert started.wait(5), "the bring-up never started"
     assert api.started == [], "the answer waited for the container"
     release.set()
+
+
+def test_a_public_bind_is_refused_outright(run) -> None:
+    """No escape hatch: this serves plain HTTP with a replayable bearer, so any
+    non-loopback bind puts container start/stop in front of an on-path peer who
+    only has to replay a request. A token does not fix a cleartext transport."""
+    for host in ("0.0.0.0", "192.168.1.10"):
+        result = run("serve", host, env={"AGENT_MGR_SERVE_TOKEN": "tok"})
+        assert result.returncode != 0
+        assert f"refusing to bind {host}" in result.stderr
+        assert "replayable bearer" in result.stderr
+
+
+def test_a_second_create_is_coalesced_not_doubled(base: str, api: _Api) -> None:
+    """An untracked worker let a second POST start a second `up` against the
+    same home -- which is the two-gateways-one-home failure this whole repo
+    exists to prevent."""
+    release = threading.Event()
+
+    def slow(agent, argv, failure):  # noqa: ANN001, ANN202
+        release.wait(5)
+        api.started.append(agent.name)
+
+    api._guarded = slow  # type: ignore[method-assign]
+    body = {"name": "life", "provider": "local:docker", "line_uid": "ln_home"}
+
+    first, _ = _call(base, "POST", "/v1/agents/cloud", body)
+    second, payload = _call(base, "POST", "/v1/agents/cloud", body)
+
+    assert (first, second) == (202, 202)
+    assert payload["status"] == "provisioning"
+    release.set()
+
+
+def test_delete_refuses_while_a_start_is_in_flight(base: str, api: _Api) -> None:
+    """Dropping the row mid-start leaves a running gateway nothing owns."""
+    release = threading.Event()
+    api._guarded = lambda agent, argv, failure: release.wait(5)  # type: ignore[method-assign]
+
+    _call(base, "POST", "/v1/agents/cloud",
+          {"name": "life", "provider": "local:docker", "line_uid": "ln_home"})
+    status, body = _call(base, "DELETE", "/v1/agents/cloud/life")
+    release.set()
+
+    assert status == 409
+    assert "still provisioning" in body["detail"]
+    assert [entry.name for entry in api.registry.entries()] == ["life"]

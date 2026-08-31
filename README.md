@@ -65,12 +65,12 @@ The cloud-control commands use Plow's API and return structured JSON:
 export PLOW_API_BASE=https://api.plow.co
 read -rsp 'Plow API token: ' PLOW_API_TOKEN; export PLOW_API_TOKEN
 
-printf '%s\n' '{"name":"Mary","provider":"exe:hermes","chat_uids":["cht_example"]}' \
+printf '%s\n' '{"name":"Mary","provider":"exe:hermes","line_uid":"ln_example"}' \
   | agent-mgr --json cloud-create
 agent-mgr --json cloud-list
 agent-mgr --json cloud-get AGENT_ID
-printf '%s\n' '{"chat_uids":["cht_example","cht_second"]}' \
-  | agent-mgr --json cloud-update-chats AGENT_ID
+printf '%s\n' '{"line_uid":"ln_example"}' \
+  | agent-mgr --json cloud-set-line AGENT_ID
 agent-mgr --json cloud-delete AGENT_ID
 ```
 
@@ -89,9 +89,10 @@ worse than one that says it cannot.
 
 `agent-mgr serve [host] [port]` answers the same `/v1/agents/cloud` routes
 against local containers, so a client written for Plow drives this host without
-knowing the difference. It requires `AGENT_MGR_SERVE_TOKEN` and binds loopback:
-the routes start and stop containers, and a bearer alone does not earn a public
-bind (`AGENT_MGR_SERVE_PUBLIC=1` accepts that exposure deliberately).
+knowing the difference. It requires `AGENT_MGR_SERVE_TOKEN` and binds loopback only, with no opt-out:
+the routes start and stop containers over plain HTTP with a replayable bearer,
+and a token does not fix a transport that carries it in the clear. Reach it from
+another machine with `ssh -L <port>:127.0.0.1:<port> <host>`.
 
 ## Why it exists
 

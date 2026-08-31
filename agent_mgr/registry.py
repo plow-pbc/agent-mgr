@@ -4,6 +4,7 @@ import os
 import re
 from pathlib import Path
 
+from .cloud_models import validate_agent_id
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write
 from .models import RegistryEntry
@@ -81,10 +82,11 @@ class Registry:
                 ErrorCode.INVALID_NAME,
                 f"agent name must be lowercase letters, digits and dashes: {name}",
             )
-        if not agent_id.strip():
-            raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, "agent id must not be empty")
-        self._upsert(RegistryEntry(name, agent_id.strip(), "cloud"))
-        return agent_id.strip()
+        # Validated here too, with the transport's own rule: a row holding an
+        # id every call would refuse is a row you can write and never use.
+        agent_id = validate_agent_id(agent_id.strip())
+        self._upsert(RegistryEntry(name, agent_id, "cloud"))
+        return agent_id
 
     def _upsert(self, entry: RegistryEntry) -> None:
         rows = [row for row in self.entries() if row.name != entry.name]

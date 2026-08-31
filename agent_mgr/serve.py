@@ -37,6 +37,7 @@ from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
+from .cloud_http import HttpCloudTransport
 from .cloud_models import (
     CloudAgentResource,
     CloudStatus,
@@ -58,9 +59,12 @@ from .registry import Registry
 # or a canonical-only agent reports no chats at all -- which also made an
 # idempotent PUT of its real set look like a change and get refused.
 HOME_CHAT_KEYS = ("PLOW_HOME_CHANNEL", "PLOW_CHAT_CHAT_UID")
-# The line a provisioned agent was minted against. `provision` writes it; an
-# agent that predates it has none, and then no line can be checked against.
-LINE_KEY = "PLOW_AGENT_LINE"
+# There is no `PLOW_AGENT_LINE`: nothing writes one, so checking a request
+# against it accepted every line on POST while the identical PUT refused. The
+# line an agent actually serves is the one its HOME CHAT sits on, and that is
+# read from Plow with the agent's own credential -- the same question the
+# gateway answers on connect, rather than a key invented for this facade.
+LINE_LOOKUP_TIMEOUT_SECONDS = 10
 PROVIDER = "local:docker"
 ROUTE = re.compile(r"^/v1/agents/cloud(?:/(?P<agent_id>[^/]+)(?P<line>/line)?)?$")
 
@@ -101,10 +105,35 @@ def _dotenv_value(agent: ResolvedAgent, keys: tuple[str, ...]) -> str:
     return ""
 
 
-def _dotenv_line(agent: ResolvedAgent) -> tuple[str, ...]:
-    """The line this agent's credential names, or empty when it predates one."""
-    value = _dotenv_value(agent, (LINE_KEY,))
-    return (value,) if value else ()
+def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
+    """The line this agent's home chat sits on, asked of Plow as the agent.
+
+    Empty when the agent has no credential or Plow cannot be reached: unknown
+    is not the same as mismatched, and refusing a request on an unanswered
+    question would fail provisioning whenever the API is briefly down.
+    """
+    home = _dotenv_value(agent, HOME_CHAT_KEYS)
+    token = _dotenv_value(agent, ("PLOW_AGENT_TOKEN", "PLOW_CHAT_TOKEN"))
+    base = _dotenv_value(agent, ("PLOW_API_BASE", "PLOW_CHAT_BASE_URL"))
+    if not home or not token or not base:
+        return ()
+    try:
+        transport = HttpCloudTransport.from_environment(
+            {"PLOW_API_BASE": base, "PLOW_API_TOKEN": token}
+        )
+        chat = transport.request("GET", f"/v1/chats/{home}")
+    except AgentMgrError:
+        return ()
+    if not isinstance(chat, dict):
+        return ()
+    for participant in chat.get("participants") or []:
+        if not isinstance(participant, dict) or participant.get("type") != "agent":
+            continue
+        line = participant.get("line")
+        uid = line.get("uid") if isinstance(line, dict) else None
+        if isinstance(uid, str) and uid:
+            return (uid,)
+    return ()
 
 
 def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
@@ -133,6 +162,14 @@ class LocalCloudApi:
     def __init__(self, registry: Registry, root: Any) -> None:
         self.registry = registry
         self.root = root
+        # One provisioning state per agent, behind one lock. Without it the
+        # worker was untracked: a second POST started a second `up` against the
+        # same home, a DELETE could remove the row while a worker was still
+        # bringing that agent up -- leaving a gateway nothing owns -- and a
+        # failed pull was invisible, so GET answered `provisioning` forever.
+        self._lock = threading.Lock()
+        self._starting: set[str] = set()
+        self._failed: dict[str, FailureCode] = {}
 
     def _agent(self, agent_id: str) -> ResolvedAgent:
         try:
@@ -144,6 +181,13 @@ class LocalCloudApi:
 
     def _resource(self, agent: ResolvedAgent, *, deleted: bool = False) -> CloudAgentResource:
         status, failure = (None, None) if deleted else _status(agent)
+        with self._lock:
+            recorded = self._failed.get(agent.name)
+            starting = agent.name in self._starting
+        if not deleted and recorded is not None and status is not CloudStatus.RUNNING:
+            status, failure = CloudStatus.FAILED, recorded
+        elif not deleted and starting and status is not CloudStatus.RUNNING:
+            status, failure = CloudStatus.PROVISIONING, None
         return CloudAgentResource(
             agent_id=agent.name,
             chat_uids=_dotenv_chats(agent),
@@ -196,7 +240,7 @@ class LocalCloudApi:
         # transition veto -- so a copied descriptor could start a second gateway
         # against a sibling's home, or a reused project stop a live agent, from
         # an HTTP request that never touched those checks.
-        held = _dotenv_line(agent)
+        held = _agent_line(agent)
         # Ignoring the requested line would answer 202 to a caller that asked
         # for a number this agent does not serve, and it would only find out by
         # reading the resource back. The grant is its minted credential's, so
@@ -208,19 +252,29 @@ class LocalCloudApi:
                 "line comes from the credential minted for it",
             )
         self._admit(agent)
+        with self._lock:
+            if agent.name in self._starting:
+                # Coalesced, not queued: the answer is the same resource and
+                # the caller polls the same GET either way.
+                return self._provisioning(agent)
+            self._starting.add(agent.name)
+            self._failed.pop(agent.name, None)
         # Then answer, and bring it up behind the response. `POST` is 202 in
         # Plow's contract precisely because provisioning outlasts a request --
         # exe's unpack "can outlast the sixty seconds the gateway allows", and a
         # first `docker pull` here is minutes. Waiting made the one-click create
         # time out in the client while the work was succeeding; the caller polls
         # GET out of `provisioning`, the same loop it runs against exe.
-        started = self._resource(agent).to_json()
         threading.Thread(
             target=self._bring_up, args=(agent,), name=f"up:{agent.name}", daemon=True
         ).start()
-        started["status"] = CloudStatus.PROVISIONING.value
-        started["failure_code"] = None
-        return started
+        return self._provisioning(agent)
+
+    def _provisioning(self, agent: ResolvedAgent) -> dict[str, JsonValue]:
+        answer = self._resource(agent).to_json()
+        answer["status"] = CloudStatus.PROVISIONING.value
+        answer["failure_code"] = None
+        return answer
 
     def _admit(self, agent: ResolvedAgent) -> None:
         """Ownership and identity, before the answer.
@@ -246,7 +300,14 @@ class LocalCloudApi:
         try:
             self._guarded(agent, ["up", "-d"], f"could not start {agent.name}")
         except ApiError:
-            return
+            # Recorded, not swallowed. There is nobody to raise to once the 202
+            # is sent, and a caller polling GET would otherwise read
+            # `provisioning` forever after a pull that failed.
+            with self._lock:
+                self._failed[agent.name] = FailureCode.SETUP_FAILED
+        finally:
+            with self._lock:
+                self._starting.discard(agent.name)
 
     def _guarded(self, agent: ResolvedAgent, argv: Sequence[str], failure: str) -> None:
         try:
@@ -261,7 +322,7 @@ class LocalCloudApi:
     def update_line(self, agent_id: str, payload: object) -> dict[str, JsonValue]:
         request = UpdateCloudAgentLineRequest.from_json(payload)
         agent = self._agent(agent_id)
-        if (request.line_uid,) == _dotenv_line(agent):
+        if (request.line_uid,) == _agent_line(agent):
             # Asking for the line it already serves is not a write. Answering
             # 200 keeps an idempotent caller -- one that PUTs desired state on
             # every reconcile -- working against a host that already matches.
@@ -277,6 +338,12 @@ class LocalCloudApi:
 
     def delete(self, agent_id: str) -> dict[str, JsonValue]:
         agent = self._agent(agent_id)
+        with self._lock:
+            if agent.name in self._starting:
+                # Deleting mid-start would drop the registry row while a worker
+                # is still bringing that agent up, leaving a running gateway
+                # nothing on this host owns.
+                raise ApiError(409, f"{agent.name} is still provisioning; retry once it settles")
         resource = self._resource(agent, deleted=True)
         self._guarded(agent, ["down"], f"could not stop {agent_id}")
         # The row goes with the container. exe's DELETE makes the agent stop
@@ -373,16 +440,17 @@ def serve(registry: Registry, root: Any, host: str, port: int) -> int:
             "AGENT_MGR_SERVE_TOKEN is unset",
             "these routes start and stop containers; set a bearer token before serving",
         )
-    # A bearer is not enough to earn a public bind. These routes start and stop
-    # containers on this host, and `0.0.0.0` puts them in front of every device
-    # on the network -- including one that only has to guess a token. Reaching
-    # them from elsewhere is what SSH forwarding is for; an explicit opt-out
-    # exists so the refusal is a decision rather than a wall.
-    if host not in LOOPBACK_HOSTS and os.environ.get("AGENT_MGR_SERVE_PUBLIC") != "1":
+    # Loopback, with no way to opt out. The escape hatch was the mistake: this
+    # speaks plain HTTP and the bearer is reusable, so a non-loopback bind puts
+    # container start/stop in front of any on-path peer who replays a request --
+    # and a token does not fix a transport that carries it in the clear.
+    # Reaching it from another machine is what SSH forwarding is for, which
+    # moves the exposure onto a transport that is actually encrypted.
+    if host not in LOOPBACK_HOSTS:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            f"refusing to bind {host}: these routes start and stop containers",
-            "forward the loopback port over SSH, or set AGENT_MGR_SERVE_PUBLIC=1 to accept the exposure",
+            f"refusing to bind {host}: this serves plain HTTP with a replayable bearer",
+            "forward the loopback port instead: ssh -L <port>:127.0.0.1:<port> <host>",
         )
     handler = build_handler(LocalCloudApi(registry, root), token)
     with ThreadingHTTPServer((host, port), handler) as httpd:

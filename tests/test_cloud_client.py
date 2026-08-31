@@ -45,8 +45,10 @@ def deleted_resource() -> CloudAgentResource:
 
 LIVE = resource()
 DELETED = deleted_resource()
-CREATE = CreateCloudAgentRequest(("chat-a",), "Mary", "exe:hermes")
-UPDATE = UpdateCloudAgentLineRequest(("chat-a", "chat-b"))
+# Scalar line ids, not tuples: `line_uid` is one string, and a tuple here
+# type-checked while asserting a body shape the API would reject.
+CREATE = CreateCloudAgentRequest("ln_example", "Mary", "exe:hermes")
+UPDATE = UpdateCloudAgentLineRequest("ln_second")
 
 
 @pytest.mark.parametrize("operation", ["create", "list", "get", "update_line", "delete"])

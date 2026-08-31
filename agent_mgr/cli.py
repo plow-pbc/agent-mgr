@@ -81,7 +81,9 @@ NATIVE_JSON_OPERATIONS = (
     frozenset({"ls", "register", "register-cloud", "unregister", "new", "resolve"})
     | CLOUD_OPERATIONS
 )
-UNBOUNDED_JSON_OPERATIONS = frozenset({"logs", "compose"})
+# `serve` joins them: it runs until interrupted, so the --json capture adapter
+# would sit on a child that never exits.
+UNBOUNDED_JSON_OPERATIONS = frozenset({"logs", "compose", "serve"})
 
 
 def _emit(operation: str, result: dict[str, JsonValue]) -> None:
@@ -203,6 +205,33 @@ def _cloud_agent_id(name: str, registry: Registry) -> str:
     return entry.location
 
 
+def _delete_cloud_agent(target: str, registry: Registry) -> CloudAgentResource:
+    """Delete a tenant and drop the row that named it, in that order.
+
+    Both spellings -- `cloud-delete mary` and `down mary` -- come through here.
+    They had separate bodies and only one dropped the row, so `cloud-delete` on
+    a registered name deleted the tenant and left a row whose id resolved to
+    nothing. The row goes only AFTER the delete succeeds: removing it first
+    would strand a live tenant with nothing on this host naming it.
+    """
+    agent_id = _cloud_agent_id(target, registry)
+    client = _cloud()
+    try:
+        resource = client.delete(agent_id)
+    except AgentMgrError as error:
+        if error.code in {ErrorCode.INVALID_RESPONSE, ErrorCode.REMOTE_UNREACHABLE}:
+            raise AgentMgrError(
+                error.code,
+                error.message,
+                "deletion may have succeeded; run agent-mgr cloud-list before retrying",
+            ) from None
+        raise
+    for entry in registry.entries():
+        if entry.is_cloud and entry.location == agent_id:
+            registry.remove(entry.name)
+    return resource
+
+
 def _cloud_lifecycle(
     operation: str,
     entry: RegistryEntry,
@@ -228,24 +257,7 @@ def _cloud_lifecycle(
         # would invent both -- `cloud-create` is where that request belongs.
         return _cloud_result(operation, client.get(entry.location), json_output)
     if operation == "down":
-        try:
-            resource = client.delete(entry.location)
-        except AgentMgrError as error:
-            if error.code in {ErrorCode.INVALID_RESPONSE, ErrorCode.REMOTE_UNREACHABLE}:
-                raise AgentMgrError(
-                    error.code,
-                    error.message,
-                    "deletion may have succeeded; run 'agent-mgr ls' and "
-                    "'agent-mgr cloud-list' before retrying",
-                ) from None
-            raise
-        # exe's DELETE destroys the tenant, so the id in this row now resolves
-        # to nothing. Keeping it made `down` look like a local `down` -- a
-        # stoppable thing you can bring back up -- when the next `up` could only
-        # GET a deleted agent. The row goes with the tenant; `register-cloud`
-        # names a new one.
-        registry.remove(entry.name)
-        return _cloud_result(operation, resource, json_output)
+        return _cloud_result(operation, _delete_cloud_agent(entry.name, registry), json_output)
     if operation == "chats":
         resource = client.get(entry.location)
         if json_output:
@@ -297,18 +309,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         return _cloud_result(operation, resource, json_output)
     if operation == "cloud-delete":
         _need(args, 1, "agent-mgr cloud-delete <name|agent-id>")
-        client = _cloud()
-        try:
-            resource = client.delete(_cloud_agent_id(args[0], registry))
-        except AgentMgrError as error:
-            if error.code in {ErrorCode.INVALID_RESPONSE, ErrorCode.REMOTE_UNREACHABLE}:
-                raise AgentMgrError(
-                    error.code,
-                    error.message,
-                    "deletion may have succeeded; run agent-mgr cloud-list before retrying",
-                ) from None
-            raise
-        return _cloud_result(operation, resource, json_output)
+        return _cloud_result(operation, _delete_cloud_agent(args[0], registry), json_output)
     if operation == "ls":
         _need(args, 0, "agent-mgr ls")
         entries = registry.entries()
