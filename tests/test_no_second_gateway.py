@@ -7,12 +7,10 @@ shutdown notice into the owners' channel. Measured on one host over two days:
 25 gateway starts against a 1-6/day baseline, 21 shutdown notices in a single
 day, and 6 sqlite errors from two gateways racing one session database.
 """
-
 import os
 import re
 import subprocess
 import tempfile
-
 # Bound at import time, on purpose: collection does this before any fixture
 # runs, so this name keeps pointing at the ORIGINAL run however `subprocess.run`
 # is later rebound. See the test that uses it.
@@ -54,11 +52,10 @@ def test_no_source_file_invokes_compose_run():
 def test_that_check_is_not_vacuous():
     """Stripping quotes must not have blinded the guard to a real invocation."""
     assert _invokes_compose_run('        compose run --rm hermes chat -q "$*"')
-    assert _invokes_compose_run("    docker compose --env-file x run --rm hermes")
+    assert _invokes_compose_run('    docker compose --env-file x run --rm hermes')
     assert not _invokes_compose_run(
-        """        *) die "refusing 'compose run' without --entrypoint" ;;"""
-    )
-    assert not _invokes_compose_run("        # docker compose run would start a rival")
+        """        *) die "refusing 'compose run' without --entrypoint" ;;""")
+    assert not _invokes_compose_run('        # docker compose run would start a rival')
 
 
 def _fake_docker(tmp_path, home, container="hermes-rowan", running=True):
@@ -69,9 +66,8 @@ def _fake_docker(tmp_path, home, container="hermes-rowan", running=True):
     sitting behind a condition that is false exactly when it matters.
     """
     log = tmp_path / "docker-argv.log"
-    b = fake_docker(
-        tmp_path, home=home, container=container, name="rowan", running=running, log=log
-    )
+    b = fake_docker(tmp_path, home=home, container=container, name="rowan",
+                    running=running, log=log)
     return b, log
 
 
@@ -82,7 +78,8 @@ def test_the_agent_subcommand_runs_a_turn_through_exec(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     home = tmp_path / "home" / ".hermes-rowan"
     b, log = _fake_docker(tmp_path, home)
-    r = run("agent", "rowan", "what is on today?", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("agent", "rowan", "what is on today?",
+            env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     calls = log.read_text()
     assert "exec" in calls
@@ -126,25 +123,17 @@ def test_agent_with_no_prompt_is_refused(run, instance):
     assert "usage" in r.stderr
 
 
-@pytest.mark.parametrize(
-    "args, ok, expect",
-    [
-        # The passthrough exists for an agent's own domain recipes, so it must not
-        # become the hole a rival gateway is started through -- but it must still
-        # allow the shape those recipes actually use. Two live callers in the
-        # rentals agent pass --entrypoint for exactly this reason.
-        (["run", "--rm", "hermes", "chat", "-q", "hi"], False, "second gateway"),
-        (
-            ["run", "--entrypoint", "bash", "--rm", "hermes", "-c", "true"],
-            True,
-            "--entrypoint bash",
-        ),
-        (["ps"], True, "ps"),
-    ],
-)
+@pytest.mark.parametrize("args, ok, expect", [
+    # The passthrough exists for an agent's own domain recipes, so it must not
+    # become the hole a rival gateway is started through -- but it must still
+    # allow the shape those recipes actually use. Two live callers in the
+    # rentals agent pass --entrypoint for exactly this reason.
+    (["run", "--rm", "hermes", "chat", "-q", "hi"], False, "second gateway"),
+    (["run", "--entrypoint", "bash", "--rm", "hermes", "-c", "true"], True, "--entrypoint bash"),
+    (["ps"], True, "ps"),
+])
 def test_the_compose_passthrough_allows_only_what_starts_no_gateway(
-    run, instance, tmp_path, args, ok, expect
-):
+        run, instance, tmp_path, args, ok, expect):
     run("register", "rowan", str(instance("rowan")))
     b, log = _fake_docker(tmp_path, tmp_path / "home" / ".hermes-rowan")
     r = run("compose", "rowan", *args, env={"PATH": f"{b}:{os.environ['PATH']}"})
@@ -165,85 +154,46 @@ def test_the_compose_passthrough_still_runs_the_guard(run, instance, tmp_path):
     assert "refusing to act" in r.stderr
 
 
-@pytest.mark.parametrize(
-    "args, refused, why, expect_msg",
-    [
-        (
-            ("scale", "hermes=0"),
-            True,
-            "scale stops a container and was in neither list when the guard enumerated "
-            "stoppers -- naming what is SAFE means an unknown subcommand asks the veto",
-            "refused",
-        ),
-        (
-            ("wait", "hermes", "--down-project"),
-            True,
-            "wait --down-project drops the whole project: membership of the safe list "
-            "has to hold under every flag the subcommand accepts",
-            "refused",
-        ),
-        (
-            ("--project-name", "logs", "down"),
-            True,
-            "scanning the argv for the first recognised word let a global option's "
-            "VALUE stand in for the subcommand -- it is $1 now, and a leading global "
-            "is refused outright so nothing can shift it",
-            "subcommand must come first",
-        ),
-        (
-            ("run", "--entrypoint", "bash", "--rm", "hermes"),
-            False,
-            "a throwaway container beside the live one stops nothing, and refusing it "
-            "would break the maintenance shell during exactly the ingest it guards",
-            "",
-        ),
-        (
-            ("run", "--rm", "--entrypoint", "bash", "hermes"),
-            True,
-            "not first: locating the service to check 'before it' needs a complete "
-            "list of value-taking flags, and a missing entry admits a second gateway",
-            "first argument is not --entrypoint",
-        ),
-        # With a SERVICE present, so the invocation would really boot a container --
-        # a bare `run --entrypoint` errors in docker on its own and cannot tell a
-        # working guard from a broken one.
-        (
-            ("run", "--entrypoint", "", "--rm", "hermes"),
-            True,
-            "first, but with no value: it overrides nothing and s6 still boots",
-            "has no value",
-        ),
-        (
-            ("run", "--entrypoint=", "--rm", "hermes"),
-            True,
-            "the same, spelled with =",
-            "has no value",
-        ),
-        (
-            ("run", "--entrypoint=bash", "--rm", "hermes"),
-            False,
-            "the = spelling WITH a value is a real override and must be admitted -- "
-            "the only arm no row reached",
-            "",
-        ),
-        (
-            ("run", "--rm", "hermes", "--entrypoint", "bash"),
-            True,
-            "--entrypoint AFTER the service is an argument to the service's own "
-            "command, so s6 still boots -- a substring check for the flag passed this",
-            "first argument is not --entrypoint",
-        ),
-        (
-            ("run", "--rm", "-e", "--entrypoint", "hermes"),
-            True,
-            "--entrypoint as another flag's VALUE is not an entrypoint override",
-            "first argument is not --entrypoint",
-        ),
-    ],
-)
+@pytest.mark.parametrize("args, refused, why, expect_msg", [
+    (("scale", "hermes=0"), True,
+     "scale stops a container and was in neither list when the guard enumerated "
+     "stoppers -- naming what is SAFE means an unknown subcommand asks the veto",
+     "refused"),
+    (("wait", "hermes", "--down-project"), True,
+     "wait --down-project drops the whole project: membership of the safe list "
+     "has to hold under every flag the subcommand accepts", "refused"),
+    (("--project-name", "logs", "down"), True,
+     "scanning the argv for the first recognised word let a global option's "
+     "VALUE stand in for the subcommand -- it is $1 now, and a leading global "
+     "is refused outright so nothing can shift it", "subcommand must come first"),
+    (("run", "--entrypoint", "bash", "--rm", "hermes"), False,
+     "a throwaway container beside the live one stops nothing, and refusing it "
+     "would break the maintenance shell during exactly the ingest it guards", ""),
+    (("run", "--rm", "--entrypoint", "bash", "hermes"), True,
+     "not first: locating the service to check 'before it' needs a complete "
+     "list of value-taking flags, and a missing entry admits a second gateway",
+     "first argument is not --entrypoint"),
+    # With a SERVICE present, so the invocation would really boot a container --
+    # a bare `run --entrypoint` errors in docker on its own and cannot tell a
+    # working guard from a broken one.
+    (("run", "--entrypoint", "", "--rm", "hermes"), True,
+     "first, but with no value: it overrides nothing and s6 still boots",
+     "has no value"),
+    (("run", "--entrypoint=", "--rm", "hermes"), True,
+     "the same, spelled with =", "has no value"),
+    (("run", "--entrypoint=bash", "--rm", "hermes"), False,
+     "the = spelling WITH a value is a real override and must be admitted -- "
+     "the only arm no row reached", ""),
+    (("run", "--rm", "hermes", "--entrypoint", "bash"), True,
+     "--entrypoint AFTER the service is an argument to the service's own "
+     "command, so s6 still boots -- a substring check for the flag passed this",
+     "first argument is not --entrypoint"),
+    (("run", "--rm", "-e", "--entrypoint", "hermes"), True,
+     "--entrypoint as another flag's VALUE is not an entrypoint override",
+     "first argument is not --entrypoint"),
+])
 def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
-    run, instance, tmp_path, args, refused, why, expect_msg
-):
+        run, instance, tmp_path, args, refused, why, expect_msg):
     """One table rather than four near-identical bodies: the contract IS a table
     of subcommand -> passes or asks the veto, and the next probe should cost a
     row."""
@@ -262,13 +212,10 @@ def test_the_veto_sees_every_subcommand_that_is_not_on_the_safe_list(
         assert r.returncode == 0, f"{why}: {r.stderr}"
 
 
-@pytest.mark.parametrize(
-    "path, why",
-    [
-        ("{outside}", "built from scratch, dropping the shadow entirely"),
-        ("{outside}{sep}{inherited}", "inherits the shadow but resolves ahead of it"),
-    ],
-)
+@pytest.mark.parametrize("path, why", [
+    ("{outside}", "built from scratch, dropping the shadow entirely"),
+    ("{outside}{sep}{inherited}", "inherits the shadow but resolves ahead of it"),
+])
 def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
     """An override cannot resolve Docker past the suite-owned shadow binary.
 
@@ -281,7 +228,8 @@ def test_an_override_that_reaches_the_real_docker_is_refused(run, path, why):
     # assert fires before the spawn, so this never executes.
     with tempfile.TemporaryDirectory() as outside:
         _docker_outside_the_suite(outside)
-        env = {"PATH": path.format(outside=outside, sep=os.pathsep, inherited=os.environ["PATH"])}
+        env = {"PATH": path.format(outside=outside, sep=os.pathsep,
+                                   inherited=os.environ["PATH"])}
         # `why` carried into BOTH failure modes rather than dangling beside the
         # call: a bare DID NOT RAISE names only the parametrize id.
         try:
@@ -342,7 +290,6 @@ def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_p
     session fixture shadows the real binary, and a test that rebuilt PATH from
     os.environ used to re-admit it."""
     import shutil
-
     run("register", "rowan", str(instance("rowan")))
 
     r = run("up", "rowan")
@@ -354,7 +301,6 @@ def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_p
     # mutation. Nothing else in the suite would notice: once the fakes are
     # installed everything goes green again and the class reopens invisibly.
     import subprocess
-
     found = shutil.which("docker")
     assert found, "no docker on PATH at all"
     probe = subprocess.run([found, "info"], capture_output=True, text=True)
@@ -380,13 +326,8 @@ def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance
     log = tmp_path / "argv"
     foreign = tmp_path / "someone-else" / ".hermes-rowan"
     foreign.mkdir(parents=True)
-    b = fake_docker(
-        tmp_path,
-        home=tmp_path / "home" / ".hermes-rowan",
-        name="rowan",
-        mount=str(foreign),
-        log=log,
-    )
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    mount=str(foreign), log=log)
     for cmd in ("restart", "up", "down"):
         r = run(cmd, "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
         assert r.returncode != 0, f"{cmd} touched a container mounting a different home"
@@ -395,8 +336,7 @@ def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance
         # The foreign home exists, so it belongs to a running agent: the remedy
         # must point at THIS descriptor, never at destroying that container.
         assert "docker rm -f" not in r.stderr, (
-            "offered to destroy a live gateway the refused command would only have bounced"
-        )
+            "offered to destroy a live gateway the refused command would only have bounced")
         assert "unregister" in r.stderr, "no escape named, so the owner is locked out"
         assert "docker inspect" in r.stderr, "no way to find out whose it is"
     # The ORDER is the invariant, not just the exit code: checking after the call
@@ -414,7 +354,7 @@ def test_a_container_that_cannot_be_identified_is_refused(run, instance, tmp_pat
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     d = b / "docker"
-    d.write_text(d.read_text().replace("*inspect*) echo", "*inspect*) exit 3 ;; *never*) echo"))
+    d.write_text(d.read_text().replace('*inspect*) echo', '*inspect*) exit 3 ;; *never*) echo'))
     r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, "touched a container docker could not identify"
     assert "could not say whose home it mounts" in r.stderr
@@ -429,31 +369,26 @@ def test_no_state_of_the_foreign_mount_produces_a_removal_command(run, instance,
     lands in the same place. The asymmetry is total, so no state offers removal."""
     run("register", "rowan", str(instance("rowan")))
     for mount in (str(tmp_path / "nothing-here"), "/home/other/.hermes-rowan", ""):
-        b = fake_docker(
-            tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan", mount=mount
-        )
+        b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                        mount=mount)
         r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
         assert r.returncode != 0, f"touched a container mounting {mount!r}"
         assert "docker rm -f" not in r.stderr, f"offered removal for mount {mount!r}"
         assert "docker inspect" in r.stderr
 
 
-@pytest.mark.parametrize(
-    "args",
-    [
-        ("logs", "rowan"),
-        ("agent", "rowan", "what's on today?"),
-        ("sign-in", "rowan"),
-        ("compose", "rowan", "exec", "hermes", "cat", "/opt/data/.env"),
-        ("compose", "rowan", "cp", "./x", "hermes:/opt/data/"),
-        ("compose", "rowan", "top"),
-        ("compose", "rowan", "events"),
-        ("compose", "rowan", "port", "hermes", "8080"),
-    ],
-)
+@pytest.mark.parametrize("args", [
+    ("logs", "rowan"),
+    ("agent", "rowan", "what's on today?"),
+    ("sign-in", "rowan"),
+    ("compose", "rowan", "exec", "hermes", "cat", "/opt/data/.env"),
+    ("compose", "rowan", "cp", "./x", "hermes:/opt/data/"),
+    ("compose", "rowan", "top"),
+    ("compose", "rowan", "events"),
+    ("compose", "rowan", "port", "hermes", "8080"),
+])
 def test_every_command_that_reaches_an_existing_container_identifies_it(
-    run, instance, tmp_path, args
-):
+        run, instance, tmp_path, args):
     """Not just the ones that STOP it. `agent rowan "<prompt>"` would exec a turn
     inside production's gateway and answer into the live owners' channel;
     `compose rowan cp` writes into production's home; `logs` streams it. The
@@ -466,14 +401,8 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
     home.mkdir(parents=True, exist_ok=True)
     (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
     log = tmp_path / "argv"
-    b = fake_docker(
-        tmp_path,
-        home=home,
-        name="rowan",
-        mount="/home/someone-else/.hermes-rowan",
-        exec_output="x",
-        log=log,
-    )
+    b = fake_docker(tmp_path, home=home, name="rowan",
+                    mount="/home/someone-else/.hermes-rowan", exec_output="x", log=log)
     r = run(*args, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, f"{args[0]} reached a container mounting a different home"
     assert "not rowan's home" in r.stderr
@@ -484,29 +413,16 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
         assert verb not in argv, f"{verb.strip()} reached compose before the check"
 
 
-@pytest.mark.parametrize(
-    "sub",
-    [
-        ["config"],
-        ["version"],
-        ["ls"],
-        ["images"],
-        ["build"],
-        ["push"],
-        ["ps"],
-    ],
-)
+@pytest.mark.parametrize("sub", [
+    ["config"], ["version"], ["ls"], ["images"], ["build"], ["push"], ["ps"],
+])
 def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, tmp_path, sub):
     """The identification costs a `compose ps`, which needs a live daemon. Gating
     the whole leaves-it-running list would make `config` -- which never contacted
     one -- require it."""
     run("register", "rowan", str(instance("rowan")))
-    b = fake_docker(
-        tmp_path,
-        home=tmp_path / "home" / ".hermes-rowan",
-        name="rowan",
-        mount="/home/someone-else/.hermes-rowan",
-    )
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    mount="/home/someone-else/.hermes-rowan")
     r = run("compose", "rowan", *sub, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"{sub} was gated on a container it never touches: {r.stderr}"
 
@@ -517,14 +433,8 @@ def test_a_stopped_siblings_container_is_not_treated_as_absent(run, instance, tm
     absent and `up` -- the one command that would adopt its project -- went
     through. A stopped container still owns the name."""
     run("register", "rowan", str(instance("rowan")))
-    b = fake_docker(
-        tmp_path,
-        home=tmp_path / "home" / ".hermes-rowan",
-        name="rowan",
-        running=False,
-        exists=True,
-        mount="/home/someone-else/.hermes-rowan",
-    )
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    running=False, exists=True, mount="/home/someone-else/.hermes-rowan")
     r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, "adopted a stopped sibling's project"
     assert "not rowan's home" in r.stderr
@@ -536,11 +446,8 @@ def test_a_home_that_traverses_to_a_siblings_is_caught(run, instance, tmp_path):
     overwrote the sibling's config and credentials. Canonicalised now, which is
     what collapsing repeated slashes only looked like it was doing."""
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    run(
-        "register",
-        "copycat",
-        str(instance("copycat", descriptor="AGENT_HOME=$HOME/foo/../.hermes\n")),
-    )
+    run("register", "copycat",
+        str(instance("copycat", descriptor="AGENT_HOME=$HOME/foo/../.hermes\n")))
     r = run("restore", "copycat")
     assert r.returncode != 0, "a traversing home reached a sibling's directory"
     assert "str is already registered there" in r.stderr
@@ -554,13 +461,9 @@ def test_a_foreign_container_is_caught_even_beside_our_own(run, instance, tmp_pa
     seen."""
     run("register", "rowan", str(instance("rowan")))
     ours = str(tmp_path / "home" / ".hermes-rowan")
-    b = fake_docker(
-        tmp_path,
-        home=tmp_path / "home" / ".hermes-rowan",
-        name="rowan",
-        all_cids=("ourown", "theirs"),
-        mounts={"ourown": ours, "theirs": "/home/other/.hermes-rowan"},
-    )
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    all_cids=("ourown", "theirs"),
+                    mounts={"ourown": ours, "theirs": "/home/other/.hermes-rowan"})
     r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, "a foreign container was missed because ours came first"
     assert "/home/other/.hermes-rowan" in r.stderr
@@ -592,7 +495,8 @@ def test_two_homes_aliasing_one_directory_through_a_symlink_collide(run, instanc
     (tmp_path / "home").mkdir(exist_ok=True)
     (tmp_path / "home" / ".hermes-rowan").symlink_to(target)
     run("register", "rowan", str(instance("rowan")))
-    run("register", "copycat", str(instance("copycat", descriptor=f"AGENT_HOME={target}\n")))
+    run("register", "copycat",
+        str(instance("copycat", descriptor=f"AGENT_HOME={target}\n")))
     r = run("restore", "copycat")
     assert r.returncode != 0, "two descriptors reached one directory undetected"
     assert "rowan is already registered there" in r.stderr
@@ -622,46 +526,38 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     # doors that do not open for a subcommand with no accepted form, so an
     # operator would be told to touch a live agent over a typo.
     (tmp_path / "foreign").mkdir()
-    foreign = fake_docker(
-        tmp_path / "foreign",
-        home=tmp_path / "home" / ".hermes-rowan",
-        name="rowan",
-        mount="/home/someone-else/.hermes-rowan",
-    )
+    foreign = fake_docker(tmp_path / "foreign", home=tmp_path / "home" / ".hermes-rowan",
+                          name="rowan", mount="/home/someone-else/.hermes-rowan")
     r = run("compose", "rowan", "pull", env={"PATH": f"{foreign}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert "no accepted form" in r.stderr, (
-        "sent through identification first, whose remedy does not open for pull"
-    )
+        "sent through identification first, whose remedy does not open for pull")
     # The tail too: it points at the OTHER door, and a message claiming this
     # refusal is the whole guarantee is the framing this branch retracted.
     assert "the other door" in r.stderr
 
     # `pull` is not the only door: up/run/create all take --pull always, which
     # is the same substitution by a different route.
-    for args in (
-        ("up", "-d", "--pull", "always"),
-        ("up", "-d", "--pull=always"),
-        # The flag AFTER the service: only run and exec hand later
-        # words to the container, so only they may stop scanning there.
-        ("up", "hermes", "--pull", "always"),
-        # The CLI flag overrides a safe file-level policy, so it gets
-        # the same allowlist: `missing` fetches when the tag is absent.
-        ("up", "-d", "--pull", "missing"),
-        ("up", "-d", "--pull=missing"),
-        ("create", "hermes", "--pull=always"),
-        ("run", "--entrypoint", "bash", "--rm", "--pull", "always", "hermes"),
-        # `pull` has no admitted form. Each of these was accepted by
-        # a version of the exemption that recognised one spelling of
-        # --ignore-buildable, and each fetches: a later occurrence
-        # overrides an earlier one, a word past `--` is a service
-        # name, and --policy swallows the next word as its value so
-        # Compose never sees the flag. Measured, all three.
-        ("pull", "--ignore-buildable"),
-        ("pull", "--ignore-buildable", "--ignore-buildable=false"),
-        ("pull", "--ignore-buildable=false", "--", "--ignore-buildable"),
-        ("pull", "--policy", "--ignore-buildable"),
-    ):
+    for args in (("up", "-d", "--pull", "always"), ("up", "-d", "--pull=always"),
+                 # The flag AFTER the service: only run and exec hand later
+                 # words to the container, so only they may stop scanning there.
+                 ("up", "hermes", "--pull", "always"),
+                 # The CLI flag overrides a safe file-level policy, so it gets
+                 # the same allowlist: `missing` fetches when the tag is absent.
+                 ("up", "-d", "--pull", "missing"),
+                 ("up", "-d", "--pull=missing"),
+                 ("create", "hermes", "--pull=always"),
+                 ("run", "--entrypoint", "bash", "--rm", "--pull", "always", "hermes"),
+                 # `pull` has no admitted form. Each of these was accepted by
+                 # a version of the exemption that recognised one spelling of
+                 # --ignore-buildable, and each fetches: a later occurrence
+                 # overrides an earlier one, a word past `--` is a service
+                 # name, and --policy swallows the next word as its value so
+                 # Compose never sees the flag. Measured, all three.
+                 ("pull", "--ignore-buildable"),
+                 ("pull", "--ignore-buildable", "--ignore-buildable=false"),
+                 ("pull", "--ignore-buildable=false", "--", "--ignore-buildable"),
+                 ("pull", "--policy", "--ignore-buildable")):
         r = run("compose", "rowan", *args, env=env)
         assert r.returncode != 0, f"{args} fetched past the guard"
         assert "could replace a built image" in r.stderr
@@ -675,30 +571,24 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
         # is different and otherwise untypeable.
         assert "INSIDE the container" in r.stderr
 
-    for safe in (
-        ("up", "-d", "--pull", "never"),
-        ("up", "-d", "--pull=build"),
-        # boolean flag: re-pulls the FROM image and rebuilds, so the
-        # output is still what this host built
-        ("build", "--pull"),
-    ):
+    for safe in (("up", "-d", "--pull", "never"), ("up", "-d", "--pull=build"),
+                 # boolean flag: re-pulls the FROM image and rebuilds, so the
+                 # output is still what this host built
+                 ("build", "--pull")):
         assert run("compose", "rowan", *safe, env=env).returncode == 0, (
-            f"{safe} names a policy that does not fetch and was refused"
-        )
+            f"{safe} names a policy that does not fetch and was refused")
 
     # Keyed on the SUBCOMMAND and on flags before the service, per this file's
     # own rule -- scanning the whole argv made a container's own command line
     # trip the guard.
-    assert run("compose", "rowan", "exec", "hermes", "git", "pull", env=env).returncode == 0, (
-        "a container's `git pull` tripped the fetch guard"
-    )
+    assert run("compose", "rowan", "exec", "hermes", "git", "pull",
+               env=env).returncode == 0, "a container's `git pull` tripped the fetch guard"
 
     # The accepted false positive, and the escape the message names. A
     # container's own --pull is a bare word on this argv and indistinguishable
     # from ours; wrapped in sh -c it is one word and passes.
-    r = run(
-        "compose", "rowan", "exec", "hermes", "docker", "build", "--pull", "-t", "x", ".", env=env
-    )
+    r = run("compose", "rowan", "exec", "hermes", "docker", "build", "--pull",
+            "-t", "x", ".", env=env)
     assert r.returncode != 0, "the whole-argv scan is supposed to catch this"
     assert "INSIDE the container" in r.stderr, "no remedy for the one it cannot type"
     assert "sh -c" in r.stderr, "the named escape must be the one that works"
@@ -725,19 +615,11 @@ def test_the_escape_the_refusal_names_actually_reaches_compose(run, instance, tm
     a word again and the advice would be wrong."""
     run("register", "rowan", str(instance("rowan")))
     log = tmp_path / "escape.log"
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan", log=log)
-    r = run(
-        "compose",
-        "rowan",
-        "exec",
-        "hermes",
-        "sh",
-        "-c",
-        "docker build --pull -t x .",
-        env={"PATH": f"{b}:{os.environ['PATH']}"},
-    )
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    log=log)
+    r = run("compose", "rowan", "exec", "hermes", "sh", "-c",
+            "docker build --pull -t x .", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"the escape the message names was refused: {r.stderr}"
     words = (tmp_path / "escape.log.argv").read_text().splitlines()
     assert "docker build --pull -t x ." in words, (
-        "reached compose re-split, so the flag is a word on the argv after all"
-    )
+        "reached compose re-split, so the flag is a word on the argv after all")

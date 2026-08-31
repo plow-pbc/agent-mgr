@@ -14,7 +14,7 @@ from .cloud_http import HttpCloudTransport, validate_token
 from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write, read_regular_text
-from .local import compose, require_own_home, require_running, resolve_guard
+from .local import ACK_ENV, compose, require_own_home, require_running, resolve_guard
 from .models import ResolvedAgent
 from .registry import Registry
 
@@ -175,28 +175,21 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
     return 0
 
 
-class EmptyGrant(AgentMgrError):
-    """The minted grant reaches no chat, so the fix is on the line itself."""
+class HomeNotSelected(AgentMgrError):
+    """The credential is written but no home could be chosen from the line.
 
+    One type, because the state is one state: the mint is spent, the token is on
+    disk, and the home is not set. What differs is only the action that has to
+    come FIRST -- give the line a chat, open a one-to-one on it, or nothing at
+    all when the chats are already there and merely ambiguous -- and each raise
+    carries that as its `remediation`. The shared tail (`up`, then `set-home`)
+    is appended once by the caller, which is what keeps a stopped agent from
+    being told to `set-home` into a container that is not running.
 
-class GroupsOnlyLine(AgentMgrError):
-    """The line carries chats, but none of them is private.
-
-    Distinct from `EmptyGrant` because the fix is distinct and, more to the
-    point, because `set-home` is WRONG here: it accepts any listed uid, and
-    every uid on this line is a group, so following a generic "then set-home"
-    would put the owner's cron and unprompted output in front of its members.
-    """
-
-
-class AmbiguousHome(AgentMgrError):
-    """The line carries several 1:1 chats, so `set-home` is the recovery.
-
-    A distinct type rather than a substring of the message: dispatching on the
-    words meant an API failure whose text happened to differ was read as an
-    ambiguity, and an outage sent the operator to `set-home` -- which cannot
-    fix an outage. What the recovery is depends on WHY discovery failed, so the
-    why has to be typed.
+    A type rather than a substring of the message: dispatching on the words
+    meant an API failure whose text happened to differ was read as an
+    ambiguity, and an outage sent the operator to `set-home` -- which cannot fix
+    an outage.
     """
 
 
@@ -271,37 +264,25 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     )
     try:
         home = _home_chat_on_line(transport.base_url, token, line_uid)
-    except (AmbiguousHome, EmptyGrant, GroupsOnlyLine) as error:
-        # Only the two failures that are actually ABOUT the line get a line
+    except HomeNotSelected as error:
+        # Only the failures that are actually ABOUT the line get a line
         # recovery. Catching every AgentMgrError sent an API error or a schema
         # failure to "give the line a chat", which is not the problem and not
         # the fix; those propagate now, and the operator sees what really broke.
         #
-        # Ambiguity is the set-home case: the chats exist, this tool just may
-        # not choose between them. An empty grant is not; nothing is reachable
-        # yet, and the fix is on the line, after which set-home works.
-        #
-        # Both recoveries name `up` first: `set_home` reaches into a RUNNING
-        # container, so prescribing it against a stopped one is a command that
-        # refuses -- the second unrunnable recovery this seam has offered.
-        # Each refusal carries the remediation that fits it, and discarding it
-        # for a generic one is what sent a groups-only operator to `set-home`,
-        # which would have accepted a group.
-        if isinstance(error, AmbiguousHome):
-            recovery = (
-                f"agent-mgr up {agent.name}, then 'agent-mgr set-home {agent.name} <cht_...>'"
-            )
-        elif isinstance(error, GroupsOnlyLine):
-            recovery = (
-                f"{error.remediation}, then 'agent-mgr up {agent.name}' and "
-                f"'agent-mgr set-home {agent.name} <the new cht_...>' -- not one of the group "
-                "uids already on this line"
-            )
-        else:
-            recovery = (
-                f"give {line_uid} a chat this account owns, then 'agent-mgr up {agent.name}' "
-                f"and 'agent-mgr set-home {agent.name} <cht_...>'"
-            )
+        # The tail is shared because it is the same for all of them: `set_home`
+        # reaches into a RUNNING container, so it can only follow `up`.
+        # Prescribing it against a stopped agent was a command that refuses.
+        # The placeholder says one-to-one because `set-home` accepts any uid it
+        # is given: on a groups-only line every uid already there is a group,
+        # and naming one would put the owner's cron and unprompted output in
+        # front of its members. Said once in the shared tail rather than as a
+        # per-case branch -- a group uid is the wrong answer in all of them.
+        prefix = f"{error.remediation}, then " if error.remediation else ""
+        recovery = (
+            f"{prefix}'agent-mgr up {agent.name}', then "
+            f"'agent-mgr set-home {agent.name} <the one-to-one's cht_...>'"
+        )
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
             f"{agent.name}'s credential IS written -- do not re-run provision, the mint is "
@@ -327,10 +308,15 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
         # nothing else, so following it against a docker, ownership, hook or
         # Compose failure repeats the same failure with the credential still
         # unloaded. Only the confirmation refusal names it.
-        confirmation = "AGENT_LIVE=1" in error.message or "acknowledge" in error.message
+        # Which one it was comes from the raise, not from its wording: matching
+        # "acknowledge" in the message classified a docker failure against an
+        # agent NAMED acknowledge as a confirmation refusal, and sent its
+        # operator into the same docker failure. `confirm_transition` is the
+        # only raise on this path that carries a remediation, and it names the
+        # ACK there.
         recovery = (
-            f"AGENT_TRANSITION_ACK=1 agent-mgr restart {agent.name}"
-            if confirmation
+            f"{ACK_ENV} agent-mgr restart {agent.name}"
+            if ACK_ENV in error.remediation
             else f"fix what the reload reported, then 'agent-mgr restart {agent.name}'"
         )
         raise AgentMgrError(
@@ -356,10 +342,10 @@ def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
     listing = transport.request("GET", "/v1/chats")
     rows = listing.get("data") if isinstance(listing, dict) else None
     if not isinstance(rows, list) or not rows:
-        raise EmptyGrant(
+        raise HomeNotSelected(
             ErrorCode.IO_ERROR,
             f"the minted grant reaches no chat on {line_uid}",
-            "that line must carry a chat this account owns before the agent has a home",
+            f"give {line_uid} a chat this account owns",
         )
 
     # The 1:1 is the home: cron and unprompted output land there, and a group
@@ -378,21 +364,24 @@ def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
     # with no 1:1 has no private home to name, which is a different problem
     # with a different fix.
     if not ones:
-        raise GroupsOnlyLine(
+        raise HomeNotSelected(
             ErrorCode.IO_ERROR,
             f"{line_uid} carries only group chats, so there is no private home on it",
-            "text that number from the owner's phone to open a one-to-one, then set the home",
+            # `set-home` accepts any uid it is given, and every uid on this line
+            # is a group -- so the one-to-one has to exist before the tail runs,
+            # or the owner's cron and unprompted output land in front of members.
+            "text that number from the owner's phone to open a one-to-one",
         )
     if len(ones) > 1:
         # A line can carry several 1:1s -- one per person who has texted that
         # number -- and nothing in the listing says which is the owner's, so
         # picking by API order could hand another contact's DM the owner's
         # private output.
-        raise AmbiguousHome(
+        # Nothing to do first: the chats are already there, and the shared
+        # tail names the one that has to be chosen.
+        raise HomeNotSelected(
             ErrorCode.INVALID_ARGUMENT,
             f"{line_uid} carries {len(ones)} one-to-one chats, so the home is ambiguous",
-            "name it explicitly with 'agent-mgr set-home <name> <cht_...>' after provisioning, "
-            "or provision against a line that serves one person",
         )
     uid = ones[0].get("uid") if isinstance(ones[0], dict) else None
     if not isinstance(uid, str) or not uid:

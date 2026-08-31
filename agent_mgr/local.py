@@ -256,6 +256,11 @@ def require_container_ours(agent: ResolvedAgent) -> None:
         )
 
 
+# The one thing `AGENT_TRANSITION_ACK` clears -- named once, so the refusal
+# that earns it and the callers that recognise it cannot drift apart.
+ACK_ENV = "AGENT_TRANSITION_ACK=1"
+
+
 def confirm_transition(agent: ResolvedAgent) -> None:
     if not agent.live or os.environ.get("AGENT_TRANSITION_ACK") == "1":
         return
@@ -276,7 +281,12 @@ def confirm_transition(agent: ResolvedAgent) -> None:
     raise AgentMgrError(
         ErrorCode.INVALID_ARGUMENT,
         f"refusing non-interactively: {agent.name} is live (AGENT_LIVE=1) and a restart messages its person. "
-        "Re-run from a terminal to confirm, or set AGENT_TRANSITION_ACK=1 to acknowledge.",
+        f"Re-run from a terminal to confirm, or set {ACK_ENV} to acknowledge.",
+        # The ACK belongs to THIS refusal, and saying so here is what lets a
+        # caller recognise it without reading the message text: `provision`
+        # matched any error mentioning "acknowledge", which a legal agent NAME
+        # can be, and then prescribed an ACK restart for a docker failure.
+        f"re-run the same command with {ACK_ENV} set",
     )
 
 

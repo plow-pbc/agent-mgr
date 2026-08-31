@@ -217,7 +217,9 @@ def test_cloud_create_refuses_terminal_stdin(monkeypatch, capsys) -> None:
     assert "interactive terminal" in body["error"]["message"]
 
 
-def test_cloud_create_rejects_lone_surrogates_as_one_json_document(run, cloud_server) -> None:
+def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
+    run, cloud_server
+) -> None:
     payload = r'{"chat_uids":["\ud800"]}'
     cloud_server.respond(_contract_resources()[1])
     result = run(

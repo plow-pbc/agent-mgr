@@ -1,5 +1,4 @@
 """agent-mgr cron-sync: the seam between the registry and the in-container converger."""
-
 import os
 from pathlib import Path
 
@@ -13,15 +12,12 @@ def _bin(tmp_path, name, **kw):
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
 
-@pytest.mark.parametrize(
-    "descriptor,why",
-    [
-        # Unset means the agent declares no shipped jobs -- a refusal, never a
-        # silent no-op that reads as 'everything converged'.
-        ("", "AGENT_CRON_SPEC"),
-        ("AGENT_CRON_SPEC=crons.json\n", "crons.json"),  # named but absent
-    ],
-)
+@pytest.mark.parametrize("descriptor,why", [
+    # Unset means the agent declares no shipped jobs -- a refusal, never a
+    # silent no-op that reads as 'everything converged'.
+    ("", "AGENT_CRON_SPEC"),
+    ("AGENT_CRON_SPEC=crons.json\n", "crons.json"),   # named but absent
+])
 def test_cron_sync_preflight_refusals(run, instance, descriptor, why):
     run("register", "str", str(instance("str", descriptor=descriptor)))
     r = run("cron-sync", "str")
@@ -32,8 +28,7 @@ def test_cron_sync_preflight_refusals(run, instance, descriptor, why):
 def test_refuses_when_the_gateway_is_not_running(run, instance, tmp_path):
     repo = instance("str", descriptor="AGENT_CRON_SPEC=crons.json\n")
     (repo / "crons.json").write_text(
-        '[{"name": "j", "schedule": "0 6 * * *", "prompt": "p", "deliver": "local"}]'
-    )
+        '[{"name": "j", "schedule": "0 6 * * *", "prompt": "p", "deliver": "local"}]')
     run("register", "str", str(repo))
     r = run("cron-sync", "str", env=_bin(tmp_path, "str", running=False))
     assert r.returncode != 0
@@ -43,8 +38,7 @@ def test_refuses_when_the_gateway_is_not_running(run, instance, tmp_path):
 def test_pipes_converger_and_spec_into_the_container(run, instance, tmp_path):
     repo = instance("str", descriptor="AGENT_CRON_SPEC=crons.json\n")
     (repo / "crons.json").write_text(
-        '[{"name": "j", "schedule": "0 6 * * *", "prompt": "p", "deliver": "local"}]'
-    )
+        '[{"name": "j", "schedule": "0 6 * * *", "prompt": "p", "deliver": "local"}]')
     run("register", "str", str(repo))
     log = tmp_path / "docker.log"
     r = run("cron-sync", "str", env=_bin(tmp_path, "str", log=log))

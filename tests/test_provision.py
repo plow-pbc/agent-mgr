@@ -16,6 +16,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 
+from conftest import fake_docker
+
 TOKEN = "plow_minted_tok"
 
 
@@ -242,9 +244,15 @@ def test_a_failed_reload_does_not_read_as_a_failed_mint(
     )
 
     dotenv = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    if result.returncode != 0:
-        assert "credential IS written" in result.stderr
-        assert "do not re-run provision" in result.stderr
+    assert result.returncode != 0
+    assert "credential IS written" in result.stderr
+    assert "do not re-run provision" in result.stderr
+    # And the recovery has to be one that can actually run. `AGENT_TRANSITION_ACK`
+    # clears the live-agent confirmation and nothing else, so prescribing it for
+    # a docker failure sends the operator into the same failure with the
+    # credential still unloaded.
+    assert "AGENT_TRANSITION_ACK" not in result.stderr
+    assert "fix what the reload reported" in result.stderr
     assert f"PLOW_AGENT_TOKEN={TOKEN}" in dotenv.splitlines()
 
 
@@ -327,7 +335,9 @@ def test_a_groups_only_line_does_not_recommend_a_group_uid(
     assert result.returncode != 0
     assert "only group chats" in result.stderr
     assert "text that number" in result.stderr
-    assert "not one of the group uids" in result.stderr
+    # The tail must not read as "name any uid on this line": all of them are
+    # groups here, and set-home would accept one.
+    assert "set-home rowan <the one-to-one's cht_...>" in result.stderr
 
 
 def test_a_whitespace_only_token_is_refused_before_the_write(
@@ -348,45 +358,37 @@ def test_a_whitespace_only_token_is_refused_before_the_write(
     assert dotenv.read_text() == before
 
 
-def test_a_broken_docker_reload_does_not_prescribe_the_ack(
+def test_a_confirmation_refusal_is_the_one_case_that_earns_the_ack(
     run, instance, tmp_path, plow: _Plow
 ) -> None:
-    """`AGENT_TRANSITION_ACK` bypasses the live-agent confirmation and nothing
-    else, so prescribing it for a docker, ownership, hook or Compose failure
-    sends the operator into the same failure with the credential still
-    unloaded. Only the confirmation refusal earns that command."""
-    _restored(run, instance)
+    """A live agent's reload is refused by the confirmation gate, and that is
+    exactly what the ACK clears -- so this recovery can be taken.
+
+    Against a docker that reports the gateway RUNNING: the confirmation is only
+    reached for a running container, so a fake that says otherwise never
+    exercises this path at all -- which is how the wrong recovery stayed green.
+    """
+    home = tmp_path / "home" / ".hermes-rowan"
+    repo = instance("rowan")
+    (repo / "agent.env").write_text(
+        (repo / "agent.env").read_text() + "\nAGENT_LIVE=1\n"
+        if (repo / "agent.env").is_file()
+        else "AGENT_LIVE=1\n"
+    )
+    run("register", "rowan", str(repo))
+    run("restore", "rowan", env={"AGENT_TRANSITION_ACK": "1"})
     plow.chats = [_chat("cht_home", 1)]
-    broken = tmp_path / "brokenbin"
-    broken.mkdir()
-    (broken / "docker").write_text("#!/bin/sh\nexit 1\n")
-    (broken / "docker").chmod(0o755)
+    docker = fake_docker(tmp_path, home=home, running=True)
 
     result = run(
         "provision",
         "rowan",
         "ln_p3",
-        env=plow.environment | {"PATH": f"{broken}:{os.environ['PATH']}"},
+        env=plow.environment | {"PATH": f"{docker}:{os.environ['PATH']}"},
     )
 
-    if result.returncode != 0:
-        assert "credential IS written" in result.stderr
-        assert "AGENT_TRANSITION_ACK" not in result.stderr
-        assert "fix what the reload reported" in result.stderr
-
-
-def test_a_confirmation_refusal_is_the_one_case_that_earns_the_ack(
-    run, instance, tmp_path, plow: _Plow
-) -> None:
-    """A live agent's reload is refused by the confirmation gate, and that is
-    exactly what the ACK clears -- so this recovery can be taken."""
-    _restored(run, instance)
-    plow.chats = [_chat("cht_home", 1)]
-    descriptor = tmp_path / "rowan-repo" / "agent.env"
-    if descriptor.is_file():
-        descriptor.write_text(descriptor.read_text() + "\nAGENT_LIVE=1\n")
-
-    result = run("provision", "rowan", "ln_p3", env=plow.environment)
-
-    if result.returncode != 0 and "AGENT_LIVE=1" in result.stderr:
-        assert "AGENT_TRANSITION_ACK=1 agent-mgr restart rowan" in result.stderr
+    assert result.returncode != 0
+    assert "AGENT_LIVE=1" in result.stderr
+    assert "credential IS written" in result.stderr
+    assert "AGENT_TRANSITION_ACK=1 agent-mgr restart rowan" in result.stderr
+    assert f"PLOW_AGENT_TOKEN={TOKEN}" in home.joinpath(".env").read_text().splitlines()
