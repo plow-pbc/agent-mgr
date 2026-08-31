@@ -48,14 +48,16 @@ agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
 agent-mgr check-latch errands
 ```
 
-Every command accepts `--json`. Reads return typed domain objects; operational
+Every command accepts `--json` except the three whose output has no end --
+`logs`, `compose` and `serve`, which run until interrupted. Reads return typed
+domain objects; operational
 commands return a versioned envelope with exit status and captured output.
 Errors use stable codes, so automation never has to parse terminal prose:
 
 Machine consumers should always request JSON explicitly. Operational JSON
 detaches terminal stdin: pipe input (for example, `credential-helper | agent-mgr
 --json set-latch errands`), and set `AGENT_TRANSITION_ACK=1` for an intentional
-live transition. `logs` and `compose` reject JSON because they can stream forever.
+live transition. `logs`, `compose` and `serve` reject JSON because they can stream forever.
 
 ## Cloud agents
 

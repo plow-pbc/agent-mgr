@@ -43,12 +43,7 @@ def test_release_zipapp_contains_every_resource_needed_for_restore(tmp_path):
     assert restored.returncode == 0, restored.stderr
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").is_file()
     assert (
-        tmp_path
-        / "home"
-        / ".hermes-rowan"
-        / "plugins"
-        / "plow-chat-platform"
-        / "plugin.yaml"
+        tmp_path / "home" / ".hermes-rowan" / "plugins" / "plow-chat-platform" / "plugin.yaml"
     ).is_file()
     resolved = subprocess.run(
         [str(artifact), "--json", "resolve", "rowan"],

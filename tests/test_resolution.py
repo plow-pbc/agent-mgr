@@ -3,6 +3,8 @@ import pathlib
 import pytest
 
 from conftest import fake_docker
+
+
 def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
@@ -73,7 +75,7 @@ def test_a_descriptor_is_read_not_executed(run, instance, tmp_path):
     registered repo able to run arbitrary commands with the operator's
     credentials the moment `resolve` touched it -- before any Compose guard."""
     canary = tmp_path / "pwned"
-    repo = instance("rowan", descriptor=f'AGENT_TZ=$(touch {canary})\n')
+    repo = instance("rowan", descriptor=f"AGENT_TZ=$(touch {canary})\n")
     run("register", "rowan", str(repo))
     r = run("resolve", "rowan")
     assert r.returncode == 0, r.stderr
@@ -85,7 +87,7 @@ def test_a_descriptor_cannot_run_a_command_through_a_later_line(run, instance, t
     """A parser that only *starts* strict still executes if it falls back to
     sourcing on anything it does not recognise."""
     canary = tmp_path / "pwned2"
-    repo = instance("rowan", descriptor=f'AGENT_TZ=UTC\ntouch {canary}\nAGENT_CONTAINER=x\n')
+    repo = instance("rowan", descriptor=f"AGENT_TZ=UTC\ntouch {canary}\nAGENT_CONTAINER=x\n")
     run("register", "rowan", str(repo))
     r = run("resolve", "rowan")
     assert not canary.exists(), "a non-assignment line was executed"
@@ -130,7 +132,7 @@ def test_an_instances_own_variables_reach_its_hook(run, instance, tmp_path):
 def test_a_non_agent_variable_is_still_parsed_not_executed(run, instance, tmp_path):
     """Widening the parser past AGENT_* must not widen it into a shell."""
     canary = tmp_path / "pwned3"
-    run("register", "str", str(instance("str", descriptor=f'STR_VAULT=$(touch {canary})\n')))
+    run("register", "str", str(instance("str", descriptor=f"STR_VAULT=$(touch {canary})\n")))
     r = run("resolve", "str")
     assert r.returncode == 0, r.stderr
     assert not canary.exists()
@@ -150,6 +152,7 @@ def test_a_descriptor_cannot_repoint_the_tool_at_its_own_code(run, instance, tmp
     run("register", "rowan", str(instance("rowan", descriptor=f"AGENT_MGR_ROOT={evil}\n")))
     import os
     from conftest import fake_docker
+
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     run("resolve", "rowan")
     # `up` runs resolve-guard, which is the file the descriptor tried to supply.
@@ -167,13 +170,16 @@ def test_an_instance_variable_still_reaches_its_hook(run, instance, tmp_path):
     run("register", "str", str(repo))
     import os
     from conftest import fake_docker
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-str", name="str",
-                    container="hermes-str", project="hermes-str")
+
+    b = fake_docker(
+        tmp_path,
+        home=tmp_path / "home" / ".hermes-str",
+        name="str",
+        container="hermes-str",
+        project="hermes-str",
+    )
     run("up", "str", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert seen.read_text() == "/tmp/v"
-
-
-
 
 
 # --- the descriptor parser is data, not shell -------------------------------
@@ -221,11 +227,14 @@ def test_a_descriptor_key_cannot_execute_host_code(run, instance, injection_mark
     assert "malformed" in r.stderr
 
 
-@pytest.mark.parametrize("line", [
-    "STR VAULT=x",             # a key this tool does not own, with a space in it
-    "AGENT_TZ AGENT_IMAGE=x",  # multi-token: matched the allowlist as a substring
-    "PLOW_CHAT_TOKEN-sk-notreal=x",  # the malformed "key" IS a secret
-])
+@pytest.mark.parametrize(
+    "line",
+    [
+        "STR VAULT=x",  # a key this tool does not own, with a space in it
+        "AGENT_TZ AGENT_IMAGE=x",  # multi-token: matched the allowlist as a substring
+        "PLOW_CHAT_TOKEN-sk-notreal=x",  # the malformed "key" IS a secret
+    ],
+)
 def test_a_malformed_declaration_is_refused(run, instance, line):
     """Refused, not classified.
 
@@ -275,27 +284,30 @@ def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instanc
     assert "unregister broken" in r.stderr, "the refusal must name the way out"
 
 
-@pytest.mark.parametrize("line,expected", [
-    ("AGENT_TZ = America/Chicago", "America/Chicago"),        # spaces around =
-    ("  AGENT_TZ=America/Chicago", "America/Chicago"),        # indented
-    ("\tAGENT_TZ=America/Chicago", "America/Chicago"),        # tab-indented
-    ("export AGENT_TZ=America/Chicago", "America/Chicago"),   # shell-style export
-    ("export\tAGENT_TZ=America/Chicago", "America/Chicago"),  # export + tab
-    ("AGENT_TZ=America/Chicago   ", "America/Chicago"),       # trailing space: trimmed
-    ("AGENT_TZ =  America/Chicago  ", "America/Chicago"),     # both sides
-    ('AGENT_TZ="America/Chicago  "', "America/Chicago  "),    # quoted: spaces KEPT
-    ("AGENT_TZ=America/Chicago # the default", "America/Chicago"),   # inline comment
-    ("AGENT_TZ=America/Chicago# no space", "America/Chicago# no space"),  # not a comment
-    ('AGENT_TZ="America/Chicago # kept"', "America/Chicago # kept"),      # quotes protect
-    ("AGENT_TZ='America/Chicago # kept'", "America/Chicago # kept"),
-    ('AGENT_TZ="America/Chicago" trailing', "America/Chicago"),  # dropped after close quote
-    # comments and blanks, however indented -- a commented-out setting usually
-    # carries an `=`, which is what makes refusing them a live hazard
-    ("# AGENT_TZ=Europe/Berlin is the default\nAGENT_TZ=America/Chicago", "America/Chicago"),
-    ("  # AGENT_TZ=Europe/Berlin\nAGENT_TZ=America/Chicago", "America/Chicago"),
-    ("\t# commented out: AGENT_IMAGE=pinned\nAGENT_TZ=America/Chicago", "America/Chicago"),
-    ("   \nAGENT_TZ=America/Chicago", "America/Chicago"),
-])
+@pytest.mark.parametrize(
+    "line,expected",
+    [
+        ("AGENT_TZ = America/Chicago", "America/Chicago"),  # spaces around =
+        ("  AGENT_TZ=America/Chicago", "America/Chicago"),  # indented
+        ("\tAGENT_TZ=America/Chicago", "America/Chicago"),  # tab-indented
+        ("export AGENT_TZ=America/Chicago", "America/Chicago"),  # shell-style export
+        ("export\tAGENT_TZ=America/Chicago", "America/Chicago"),  # export + tab
+        ("AGENT_TZ=America/Chicago   ", "America/Chicago"),  # trailing space: trimmed
+        ("AGENT_TZ =  America/Chicago  ", "America/Chicago"),  # both sides
+        ('AGENT_TZ="America/Chicago  "', "America/Chicago  "),  # quoted: spaces KEPT
+        ("AGENT_TZ=America/Chicago # the default", "America/Chicago"),  # inline comment
+        ("AGENT_TZ=America/Chicago# no space", "America/Chicago# no space"),  # not a comment
+        ('AGENT_TZ="America/Chicago # kept"', "America/Chicago # kept"),  # quotes protect
+        ("AGENT_TZ='America/Chicago # kept'", "America/Chicago # kept"),
+        ('AGENT_TZ="America/Chicago" trailing', "America/Chicago"),  # dropped after close quote
+        # comments and blanks, however indented -- a commented-out setting usually
+        # carries an `=`, which is what makes refusing them a live hazard
+        ("# AGENT_TZ=Europe/Berlin is the default\nAGENT_TZ=America/Chicago", "America/Chicago"),
+        ("  # AGENT_TZ=Europe/Berlin\nAGENT_TZ=America/Chicago", "America/Chicago"),
+        ("\t# commented out: AGENT_IMAGE=pinned\nAGENT_TZ=America/Chicago", "America/Chicago"),
+        ("   \nAGENT_TZ=America/Chicago", "America/Chicago"),
+    ],
+)
 def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line, expected):
     """Parity with compose-go, measured rather than assumed.
 
@@ -315,11 +327,14 @@ def test_the_spellings_compose_accepts_are_accepted_here(run, instance, line, ex
     assert f"AGENT_TZ={expected}\n" in r.stdout
 
 
-@pytest.mark.parametrize("line", [
-    'AGENT_TZ="America/Chicago',
-    "AGENT_TZ='America/Chicago",
-    'AGENT_TZ="America/Chicago\'',
-])
+@pytest.mark.parametrize(
+    "line",
+    [
+        'AGENT_TZ="America/Chicago',
+        "AGENT_TZ='America/Chicago",
+        "AGENT_TZ=\"America/Chicago'",
+    ],
+)
 def test_an_unterminated_quote_is_refused(run, instance, line):
     """Compose refuses these, so accepting them is the dangerous direction:
     the descriptor would resolve here and break the deploy that reads it."""
@@ -352,9 +367,12 @@ def test_the_dotenv_cannot_set_anything_but_the_zone(run, instance, tmp_path):
     """It holds credentials. Exactly one non-secret value is taken from it, and
     identity is already derived before it is read, so it cannot move its home."""
     run("register", "rowan", str(instance("rowan")))
-    _home_env(tmp_path, "rowan",
-              "AGENT_TZ=America/Chicago\nAGENT_HOME=/opt/hijack\n"
-              "AGENT_IMAGE=pinned:by-hand\nPLOW_CHAT_TOKEN=sk-secret\n")
+    _home_env(
+        tmp_path,
+        "rowan",
+        "AGENT_TZ=America/Chicago\nAGENT_HOME=/opt/hijack\n"
+        "AGENT_IMAGE=pinned:by-hand\nPLOW_CHAT_TOKEN=sk-secret\n",
+    )
     r = run("resolve", "rowan")
     assert "AGENT_TZ=America/Chicago" in r.stdout
     assert "/opt/hijack" not in r.stdout
@@ -410,9 +428,13 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
     seen = tmp_path / "seen-tz"
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     stub = b / "docker"
-    stub.write_text(stub.read_text().replace(
-        "#!/usr/bin/env bash",
-        f'#!/usr/bin/env bash\nprintf "%s\\n" "${{AGENT_TZ-<unset>}}" >> {seen}', 1))
+    stub.write_text(
+        stub.read_text().replace(
+            "#!/usr/bin/env bash",
+            f'#!/usr/bin/env bash\nprintf "%s\\n" "${{AGENT_TZ-<unset>}}" >> {seen}',
+            1,
+        )
+    )
 
     r = run("compose", "rowan", "config", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
@@ -429,14 +451,24 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
     "descriptor, dotenv, rowan_resolves, reaches_siblings, expected_error",
     [
         ("", "AGENT_T[oops]=1\n", True, False, None),
-        ("", 'PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n',
-         False, True, "line 2: unterminated quote"),
+        (
+            "",
+            'PLOW_CHAT_TOKEN=sk-notreal\nAGENT_TZ="America/Chicago\n',
+            False,
+            True,
+            "line 2: unterminated quote",
+        ),
         # Blanked, not deleted: the repo's zone is cleared, the convention
         # default fills in, and the container runs on a third zone NEITHER file
         # named -- so an empty value on a consumed key is refused like any other
         # value it cannot use.
-        ("AGENT_TZ=America/New_York\n", "AGENT_TZ=\n",
-         False, True, "line 1: empty value for AGENT_TZ"),
+        (
+            "AGENT_TZ=America/New_York\n",
+            "AGENT_TZ=\n",
+            False,
+            True,
+            "line 1: empty value for AGENT_TZ",
+        ),
     ],
     ids=[
         "a-key-agent-mgr-skips",
@@ -445,8 +477,7 @@ def test_the_dotenv_zone_reaches_compose(run, instance, tmp_path):
     ],
 )
 def test_which_dotenv_lines_reach_another_agent(
-    run, instance, tmp_path, descriptor, dotenv, rowan_resolves,
-    reaches_siblings, expected_error
+    run, instance, tmp_path, descriptor, dotenv, rowan_resolves, reaches_siblings, expected_error
 ):
     """Which lines in somebody's credential file can cost somebody ELSE a command.
 
@@ -490,11 +521,15 @@ def test_which_dotenv_lines_reach_another_agent(
     assert ("could not resolve rowan" in other.stderr) is reaches_siblings
 
 
-@pytest.mark.parametrize("line, accepted", [
-    ("AGENT_IMAGE=", False),
-    ("AGENT_RESTORE_HOOK=", True),
-    ("AGENT_PRE_TRANSITION=", True),
-], ids=["a-key-that-defaults-to-a-value", "the-restore-hook", "the-pre-transition-hook"])
+@pytest.mark.parametrize(
+    "line, accepted",
+    [
+        ("AGENT_IMAGE=", False),
+        ("AGENT_RESTORE_HOOK=", True),
+        ("AGENT_PRE_TRANSITION=", True),
+    ],
+    ids=["a-key-that-defaults-to-a-value", "the-restore-hook", "the-pre-transition-hook"],
+)
 def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
     run, instance, line, accepted
 ):

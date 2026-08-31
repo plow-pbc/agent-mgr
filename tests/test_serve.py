@@ -456,3 +456,45 @@ def test_an_uncredentialed_agent_has_nothing_to_contradict(base: str, api: _Api)
         serve_module._agent_line = original  # type: ignore[assignment]
 
     assert status == 202
+
+
+def test_a_duplicate_create_does_not_deadlock(base: str, api: _Api) -> None:
+    """`_provisioning()` is called holding the lock and reads the failure map,
+    which takes it again. A plain Lock deadlocked the coalesced path outright,
+    so the second POST never answered at all."""
+    release = threading.Event()
+    api._guarded = lambda agent, argv, failure: release.wait(5)  # type: ignore[method-assign]
+    body = {"name": "life", "provider": "local:docker", "line_uid": "ln_home"}
+
+    first, _ = _call(base, "POST", "/v1/agents/cloud", body)
+    second, payload = _call(base, "POST", "/v1/agents/cloud", body)
+    release.set()
+
+    assert (first, second) == (202, 202)
+    assert payload["status"] == "provisioning"
+
+
+def test_an_uncredentialed_resource_still_parses(tmp_path, monkeypatch) -> None:
+    """`CloudAgentResource` requires a non-empty grant, so answering `[]` for an
+    agent whose credential has not landed produced a body Plow's own parser --
+    and therefore every client -- refuses. Until the credential arrives, the
+    line it was created against is its grant.
+
+    Against the real `LocalCloudApi`, not the fake: the projection under test is
+    `_resource` itself, which the fake replaces.
+    """
+    import agent_mgr.serve as serve_module
+
+    registry = Registry(tmp_path / "agents")
+    api = serve_module.LocalCloudApi(registry, ROOT)
+    agent = SimpleNamespace(name="life", container="hermes-life", home=Path("/nowhere"))
+    monkeypatch.setattr(serve_module, "_dotenv_chats", lambda a: ())
+    monkeypatch.setattr(
+        serve_module, "_status", lambda a: (serve_module.CloudStatus.PROVISIONING, None)
+    )
+    api._requested_line["life"] = "ln_home"
+
+    payload = api._resource(agent).to_json()
+
+    assert payload["chat_uids"] == ["line:ln_home"]
+    CloudAgentResource.from_json(payload)

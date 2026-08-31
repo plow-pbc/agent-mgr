@@ -183,9 +183,16 @@ class LocalCloudApi:
         # same home, a DELETE could remove the row while a worker was still
         # bringing that agent up -- leaving a gateway nothing owns -- and a
         # failed pull was invisible, so GET answered `provisioning` forever.
-        self._lock = threading.Lock()
+        # Reentrant: `_provisioning()` is called while holding it and reaches
+        # `_resource()`, which takes it again to read the failure map. A plain
+        # Lock deadlocked the duplicate-POST path outright.
+        self._lock = threading.RLock()
         self._starting: set[str] = set()
         self._deleting: set[str] = set()
+        # What the caller asked for, so an uncredentialed agent's resource can
+        # report the line it was created against instead of an empty grant the
+        # shared parser refuses.
+        self._requested_line: dict[str, str] = {}
         self._failed: dict[str, FailureCode] = {}
 
     def _agent(self, agent_id: str) -> ResolvedAgent:
@@ -207,7 +214,11 @@ class LocalCloudApi:
             status, failure = CloudStatus.PROVISIONING, None
         return CloudAgentResource(
             agent_id=agent.name,
-            chat_uids=_dotenv_chats(agent),
+            # Never empty: `CloudAgentResource` requires a non-empty grant, so
+            # an uncredentialed agent answering `[]` produced a body Plow's own
+            # parser -- and therefore every client -- refuses. Before the
+            # credential lands, the line it was created against IS its grant.
+            chat_uids=_dotenv_chats(agent) or self._created_grant(agent),
             # A local agent has no published address -- exe's `url` is the
             # tenant's, and a fabricated https:// one would read as reachable.
             # The container is what a caller can actually act on from here.
@@ -257,29 +268,38 @@ class LocalCloudApi:
         # transition veto -- so a copied descriptor could start a second gateway
         # against a sibling's home, or a reused project stop a live agent, from
         # an HTTP request that never touched those checks.
-        try:
-            held = _agent_line(agent)
-        except LineUnknown:
-            # Not credentialed yet, so there is nothing to contradict.
-            held = ()
-        # Ignoring the requested line would answer 202 to a caller that asked
-        # for a number this agent does not serve, and it would only find out by
-        # reading the resource back. The grant is its minted credential's, so
-        # this cannot be satisfied here -- it is refused, not dropped.
-        if held and (request.line_uid,) != held:
-            raise ApiError(
-                409,
-                f"{request.name} is bound to {held[0]}, not {request.line_uid}; a local agent's "
-                "line comes from the credential minted for it",
-            )
-        self._admit(agent)
+        # Line and admission checks are SLOW -- one reads Plow over the network
+        # -- and they used to run outside the lock. A POST paused in them could
+        # resume after a DELETE had removed the registry row and cleared
+        # `_deleting`, and then start a gateway nothing on this host owns. The
+        # whole decision, from the checks through the reservation, is one
+        # critical section now; the slow part is the price of not racing.
         with self._lock:
+            if agent.name in self._deleting:
+                raise ApiError(409, f"{agent.name} is being deleted; retry once it settles")
+            try:
+                held = _agent_line(agent)
+            except LineUnknown:
+                # Not credentialed yet. The line still has to be RECORDED, or
+                # POST answers 202 having ignored `line_uid` entirely -- the
+                # caller would believe it selected a number it did not.
+                held = ()
+            if held and (request.line_uid,) != held:
+                raise ApiError(
+                    409,
+                    f"{request.name} is bound to {held[0]}, not {request.line_uid}; a local "
+                    "agent's line comes from the credential minted for it",
+                )
+            self._admit(agent)
+            # Re-checked after the slow work: a DELETE may have landed while
+            # this request was reading Plow.
             if agent.name in self._deleting:
                 raise ApiError(409, f"{agent.name} is being deleted; retry once it settles")
             if agent.name in self._starting:
                 # Coalesced, not queued: the answer is the same resource and
                 # the caller polls the same GET either way.
                 return self._provisioning(agent)
+            self._requested_line[agent.name] = request.line_uid
             self._starting.add(agent.name)
             self._failed.pop(agent.name, None)
         # Then answer, and bring it up behind the response. `POST` is 202 in
@@ -292,6 +312,11 @@ class LocalCloudApi:
             target=self._bring_up, args=(agent,), name=f"up:{agent.name}", daemon=True
         ).start()
         return self._provisioning(agent)
+
+    def _created_grant(self, agent: ResolvedAgent) -> tuple[str, ...]:
+        with self._lock:
+            requested = self._requested_line.get(agent.name)
+        return (f"line:{requested}",) if requested else ("line:unassigned",)
 
     def _provisioning(self, agent: ResolvedAgent) -> dict[str, JsonValue]:
         answer = self._resource(agent).to_json()
@@ -359,9 +384,10 @@ class LocalCloudApi:
         # Answering 200 to a write that changed nothing is the failure to avoid.
         raise ApiError(
             409,
-            f"{agent.name} is bound to its minted credential's line, and a local agent's "
-            "credential is minted by 'agent-mgr activate <name>' from the owner's phone -- "
-            "re-point it by activating against a fresh home, not over HTTP",
+            f"{agent.name} is bound to its minted credential's line. Activation cannot "
+            "re-point it -- Plow assigns the line and the caller does not choose it -- so "
+            "moving an agent to a named line means minting a credential for that line "
+            "directly, not a request over HTTP",
         )
 
     def delete(self, agent_id: str) -> dict[str, JsonValue]:
