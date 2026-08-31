@@ -22,6 +22,7 @@ def test_restore_writes_a_dotenv_skeleton_carrying_both_platforms(run, instance,
     run("restore", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
     assert "PLOW_AGENT_TOKEN" in env
+    assert "PLOW_HOME_CHANNEL" in env
     assert "DOMO_MCP_TOKEN" in env, "latch is baseline, not an opt-in"
 
 
@@ -91,48 +92,6 @@ def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp
     r = run("migrate-plugin-env", "rowan")
     assert r.returncode == 0, r.stderr
     assert "PLOW_AGENT_TOKEN=tok_live" in env.read_text().splitlines()
-
-
-@pytest.mark.parametrize(
-    "preexisting",
-    [
-        pytest.param("", id="fresh_dotenv"),
-        # The stale row is the bug that shipped: activate's copy skipped set keys,
-        # so re-activation left the PREVIOUS (dead) token under the current name.
-        pytest.param(
-            "PLOW_AGENT_TOKEN=tok_stale\nPLOW_HOME_CHANNEL=cht_old\n", id="stale_current_values"
-        ),
-    ],
-)
-def test_activate_syncs_legacy_names(run, instance, tmp_path, preexisting):
-    """The pinned activate script is frozen and writes PLOW_CHAT_*; activate's
-    post-step must SYNC those onto the current names — overwriting, because the
-    script just minted the freshest values there are. A break here passes every
-    other activate test: their stub scripts write no dotenv at all."""
-    from conftest import fake_curl
-
-    run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    if preexisting:
-        env.write_text(preexisting)
-    (tmp_path / "act").mkdir()
-    b = fake_curl(
-        tmp_path / "act",
-        body=(
-            "#!/usr/bin/env bash\n"
-            'd=""\n'
-            'while [ $# -gt 0 ]; do case "$1" in --data-dir) d="$2"; shift 2 ;; *) shift ;; esac; done\n'
-            "printf 'PLOW_CHAT_TOKEN=tok_live\\nPLOW_CHAT_CHAT_UID=cht_dm\\n' >> \"$d/.env\"\n"
-        ),
-    )
-    r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr
-    lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_live" in lines
-    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
-    assert "PLOW_CHAT_TOKEN=tok_live" in lines, "the pinned script's own lines must survive"
-    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
 
 
 def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path):

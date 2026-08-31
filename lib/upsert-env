@@ -119,13 +119,19 @@ def migrate_values(current, sync):
 
 def main(argv):
     if len(argv) < 2:
-        die("usage: upsert-env <home> KEY [KEY...]  (one value per key on stdin)")
+        die("usage: upsert-env <home> KEY [KEY...] | --migrate-legacy | --publish-activation")
     home = argv[0]
     migrate = argv[1] == "--migrate-legacy"
+    publish_activation = argv[1] == "--publish-activation"
     if migrate:
         sync = argv[2:] == ["--sync"]
         if not sync and argv[2:]:
             die("unknown arguments after --migrate-legacy: %s" % " ".join(argv[2:]))
+        keys, values = (), {}
+    elif publish_activation:
+        if argv[2:]:
+            die("unknown arguments after --publish-activation: %s" % " ".join(argv[2:]))
+        remembered_home = sys.stdin.buffer.readline().strip()
         keys, values = (), {}
     else:
         # Keys arrive as literals from the agent-mgr call sites (set-latch,
@@ -172,6 +178,34 @@ def main(argv):
                 for line in ledger:
                     print(line)
                 return
+        elif publish_activation:
+            vals = parse(current)
+            token = vals.get(b"PLOW_CHAT_TOKEN") or b""
+            home_uid = (
+                remembered_home
+                or vals.get(b"PLOW_HOME_CHANNEL")
+                or vals.get(b"PLOW_CHAT_CHAT_UID")
+                or b""
+            )
+            if not token or not home_uid:
+                die("activation must provide a fresh legacy token and a home channel")
+            keys = (
+                b"PLOW_CHAT_TOKEN",
+                b"PLOW_AGENT_TOKEN",
+                b"PLOW_CHAT_CHAT_UID",
+                b"PLOW_HOME_CHANNEL",
+            )
+            values = {
+                b"PLOW_CHAT_TOKEN": token,
+                b"PLOW_AGENT_TOKEN": token,
+                b"PLOW_CHAT_CHAT_UID": home_uid,
+                b"PLOW_HOME_CHANNEL": home_uid,
+            }
+            base = vals.get(b"PLOW_CHAT_BASE_URL") or vals.get(b"PLOW_API_BASE")
+            if base:
+                keys += (b"PLOW_CHAT_BASE_URL", b"PLOW_API_BASE")
+                values[b"PLOW_CHAT_BASE_URL"] = base
+                values[b"PLOW_API_BASE"] = base
         updated = upsert(current, keys, values)
 
         # Staged OUTSIDE the mount, which is the only place a name is safe.

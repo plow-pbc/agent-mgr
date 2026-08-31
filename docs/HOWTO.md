@@ -36,7 +36,20 @@ agent-mgr sign-in errands     # device-code OAuth; hand the URL to whoever owns 
 no credential — the account binding is *whichever phone texts the code back*. So
 the code must be sent from the handset that should own the agent. A code texted
 by the wrong person binds the agent to the wrong account, and it is a one-time
-spend.
+spend. `agent-mgr` then narrows that same bootstrap credential to the agent's
+existing line through Plow's key API, stores the canonical
+`PLOW_HOME_CHANNEL`/`PLOW_AGENT_TOKEN` pair, and reloads a running container.
+That line grant is what lets a newly added group arrive without reactivation.
+
+For an agent activated before line grants were introduced, run this once after
+the compatible Plow API is deployed:
+
+```sh
+agent-mgr scope-chat-credential rowan
+```
+
+It narrows the existing credential in place; it does not leave a broad key
+behind, spend another activation, rotate the token, or change the home chat.
 
 To let it drive a Mac, mint the pair on that Mac and hand it to `set-latch`,
 which writes it into that instance's own dotenv — `$AGENT_HOME/.env`, the one
@@ -495,33 +508,19 @@ the *Why `agent` uses `exec`* section of the [README](../README.md).
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |
 | a shared skill behaves oddly | compare the SHA in `skills.tsv` against what upstream has since fixed |
-| `configured group(s) not on this agent's line` after a re-activation | § Recovering a line after re-activation |
+| `configured group(s) not on this agent's line` | verify `PLOW_HOME_CHANNEL` names a chat on the intended line, then run `scope-chat-credential` |
 
-## Recovering a line after re-activation
+## Line preservation on re-activation
 
-A Plow token is **user-scoped**; the agent's *line* identity is client-side —
-it is whichever line the home chat (`PLOW_HOME_CHANNEL`) is on. `activate`
-mints a fresh token but also provisions a fresh DM on a **randomly assigned**
-pool line and writes that DM as the home, which strands every group chat on
-the line the agent used to hold: the plugin logs `configured group(s) not on
-this agent's line` once a minute and the groups go quiet.
+`activate` remembers an existing canonical `PLOW_HOME_CHANNEL`, publishes the
+freshly minted token, and narrows that new token to the remembered home chat's
+line. Existing group delivery therefore stays on the same line automatically,
+even when the previous token is dead. A first activation has no remembered
+home and uses the newly provisioned DM's line.
 
-Nothing was lost. The old line's chats still exist server-side and the new
-token can see all of them, because authorization is by owner, not by line:
-
-```sh
-agent-mgr chats str        # every chat, with its line and number; home marked *
-agent-mgr set-home str cht_TheOldLinesDm   # keep the new token, take back the old line
-```
-
-`set-home` refuses a uid the token cannot see, writes the dotenv under the
-same containment as `set-latch`, and reloads a running gateway. The DM
-`activate` provisioned on the new line is simply abandoned — harmless.
-
-There is deliberately no way to *request* a line at activation (the server
-assigns one at random), so `set-home` back to the old line's DM is the whole
-recovery. First proved live on `str`, 2026-08-27, after a dead token forced a
-re-activation onto a fresh line.
+`scope-chat-credential` performs the same in-place narrowing for an agent that
+was activated before line grants existed. It requires the configured home to
+be visible to the current token; it never leaves a second broad credential.
 
 ## Bumping the plugin pin
 
