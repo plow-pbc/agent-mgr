@@ -320,18 +320,24 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     try:
         reload_if_running(agent, registry, "the credential just minted")
     except AgentMgrError as error:
-        # In the message, not only the remediation: plain-text output prints the
-        # message alone, and "do not re-run this" is exactly the sentence an
-        # operator must see before they try again on a spent mint.
+        # The credential is on disk and the mint is spent, so this is never a
+        # failed provision -- but the recovery depends on WHY the reload was
+        # refused, and it used to prescribe an ACK restart for all of them.
+        # `AGENT_TRANSITION_ACK` bypasses the live-agent confirmation and
+        # nothing else, so following it against a docker, ownership, hook or
+        # Compose failure repeats the same failure with the credential still
+        # unloaded. Only the confirmation refusal names it.
+        confirmation = "AGENT_LIVE=1" in error.message or "acknowledge" in error.message
+        recovery = (
+            f"AGENT_TRANSITION_ACK=1 agent-mgr restart {agent.name}"
+            if confirmation
+            else f"fix what the reload reported, then 'agent-mgr restart {agent.name}'"
+        )
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
             f"{agent.name}'s credential IS written -- do not re-run provision, the mint is "
-            f"spent. The gateway did not reload ({error.message}); "
-            f"restart it with 'AGENT_TRANSITION_ACK=1 agent-mgr restart {agent.name}'.",
-            # The ACK is not decoration: the reload was refused by the same
-            # transition guard a bare `restart` walks into, so recommending the
-            # bare form sends the operator back into the refusal they just hit.
-            f"AGENT_TRANSITION_ACK=1 agent-mgr restart {agent.name}",
+            f"spent. The gateway did not reload ({error.message}). Recovery: {recovery}.",
+            recovery,
         ) from None
     return 0
 
