@@ -246,9 +246,16 @@ write one (derived image or extra mounts). Two rules for that override:
   directory. Name paths through a variable set in `agent.env`.
 - **A `build:` must carry `pull_policy: never`** (or `build`) — the default
   *pulls* the tag when absent locally, so a registry image could land over
-  what this host built and run with the agent's credentials. `resolve-guard`
-  refuses every Compose-resolving command until the line is there (a running
-  container keeps running; you just lose the agent-mgr surface over it).
+  what this host built and run with the agent's credentials. A digest-pinned
+  `image:` satisfies the guard too. Until one of those is there,
+  `resolve-guard` refuses every Compose-resolving command — everything but
+  the registry bookkeeping (`ls`, `register`, `unregister`, `new`,
+  `resolve`). A running container keeps running; you just lose the agent-mgr
+  surface over it. `activate` is the one command that neither refuses nor
+  fully works: it swallows the guard's refusal on its final reload (so the
+  one-time activation is never re-spent), writes the credential, skips the
+  reload, and tells you to `restart` — which then refuses until the line is
+  fixed.
 
 ```yaml
 services:
