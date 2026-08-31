@@ -659,22 +659,11 @@ def test_a_registered_checkout_with_no_dotenv_still_reads_back(tmp_path, monkeyp
     assert api._resource(agent).to_json()["chat_uids"] == ["line:unassigned"]
 
 
-def test_the_control_bearer_does_not_reach_agent_hooks(monkeypatch) -> None:
-    """`transition` runs the agent's own pre-transition hook, which inherits
-    this process's environment -- so the fleet-wide control token was handed to
-    agent-specific code on every create and delete."""
-    import agent_mgr.serve as serve_module
-
-    monkeypatch.setenv("AGENT_MGR_SERVE_TOKEN", "fleet-secret")
-    serve_module._without_control_token()
-
-    assert "AGENT_MGR_SERVE_TOKEN" not in os.environ
-
-
 def test_the_control_bearer_is_gone_before_the_first_subprocess(tmp_path, monkeypatch) -> None:
-    """A tailnet bind runs `tailscale ip`, and that child inherited the
-    fleet-wide bearer that starts and stops every local agent. The environment
-    has to be clean before the first thing that can spawn one, not after."""
+    """A tailnet bind runs `tailscale ip`, and `transition` runs an agent's own
+    pre-transition hook -- both children inherit this environment, and the
+    fleet-wide bearer starts and stops every local agent. So the environment has
+    to be clean before the first thing that can spawn one, not after."""
     import agent_mgr.serve as serve_module
     from agent_mgr.errors import AgentMgrError, ErrorCode
 
