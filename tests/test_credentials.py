@@ -246,7 +246,7 @@ def test_set_latch_accepts_the_json_latch_shows(run, instance, tmp_path):
     Pasting it whole is one prompt and zero hand-extraction -- the shape the
     pair actually arrives in."""
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     b, _ = _fake_docker(tmp_path)
     r = run(
         "set-latch", "rowan", input=_latch_json(), env={"PATH": f"{b}:{os.environ['PATH']}"}
@@ -288,7 +288,7 @@ def test_set_latch_refuses_json_it_cannot_take_a_pair_from(
     """A blob that half-parses must refuse loudly, not write a fragment the
     gateway later 401s on."""
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     r = run("set-latch", "rowan", input=stdin)
     assert r.returncode != 0
     assert diagnosis in r.stderr
