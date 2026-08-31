@@ -49,13 +49,12 @@ from .cloud_models import (
     FailureCode,
     UpdateCloudAgentLineRequest,
 )
-from .commands import dotenv_read
+from .commands import agent_line_uid, dotenv_read
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
 from .local import (
     compose,
     require_container_ours,
-    require_own_home,
     resolve_guard,
     transition,
 )
@@ -75,8 +74,11 @@ HOME_CHAT_KEYS = ("PLOW_HOME_CHANNEL", "PLOW_CHAT_CHAT_UID")
 # line an agent actually serves is the one its HOME CHAT sits on, and that is
 # read from Plow with the agent's own credential -- the same question the
 # gateway answers on connect, rather than a key invented for this facade.
-LINE_LOOKUP_TIMEOUT_SECONDS = 10
 PROVIDER = "local:docker"
+# What a registered-but-uncredentialed agent answers with. `CloudAgentResource`
+# requires a NON-EMPTY grant, so `[]` produced a body Plow's own parser -- and
+# therefore every client -- refuses.
+UNASSIGNED = ("line:unassigned",)
 ROUTE = re.compile(r"^/v1/agents/cloud(?:/(?P<agent_id>[^/]+)(?P<line>/line)?)?$")
 
 
@@ -164,20 +166,10 @@ def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
         ) from None
     if not isinstance(chat, dict):
         raise ApiError(502, f"Plow returned no readable chat for {agent.name}'s home")
-    # The SELF participant, the way `narrow_chat_credential` already selects it.
-    # Taking the first agent participant picked a sibling's line in any chat
-    # holding more than one agent -- and a wrong line makes a valid POST or PUT
-    # 409 against a number the agent really does serve.
-    agents = [
-        participant
-        for participant in chat.get("participants") or []
-        if isinstance(participant, dict) and participant.get("type") == "agent"
-    ]
-    mine = [participant for participant in agents if participant.get("relationship") == "self"]
-    current = mine[0] if len(mine) == 1 else agents[0] if len(agents) == 1 else None
-    line = current.get("line") if current is not None else None
-    uid = line.get("uid") if isinstance(line, dict) else None
-    if isinstance(uid, str) and uid:
+    # Through the one selector `narrow_chat_credential` uses: two readers of the
+    # same roster is how the two could answer differently about one chat.
+    uid = agent_line_uid(chat)
+    if uid:
         return (uid,)
     # Malformed, or several agents with no `self` among them: either way this
     # cannot say which line is ours, and guessing is what the probe caught.
@@ -234,17 +226,33 @@ def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
         # a foreign mount failed validation, an unanswerable docker is the
         # provider being unreachable.
         owner = _ownership(agent)
-        if owner is Ownership.FOREIGN:
-            return CloudStatus.FAILED, FailureCode.VALIDATION_FAILED
-        if owner is Ownership.UNKNOWN:
-            return CloudStatus.FAILED, FailureCode.PROVIDER_UNREACHABLE
+        if owner is not Ownership.OURS:
+            return CloudStatus.FAILED, _failure_for(owner, FailureCode.SETUP_FAILED)
         return CloudStatus.RUNNING, None
     existing = compose(agent, ["ps", "--all", "--quiet", "hermes"], capture=True)
     if existing.returncode:
         return CloudStatus.FAILED, FailureCode.PROVIDER_UNREACHABLE
     if existing.stdout.strip():
-        return CloudStatus.FAILED, FailureCode.SETUP_FAILED
+        # A STOPPED container needs the same identity question as a running one:
+        # a reused project mounting a sibling's home is not this agent's setup
+        # that failed, and telling its operator to look at their own provision
+        # points them away from the descriptor that is actually wrong.
+        return CloudStatus.FAILED, _failure_for(_ownership(agent), FailureCode.SETUP_FAILED)
     return CloudStatus.PROVISIONING, None
+
+
+def _failure_for(owner: Ownership, ours: FailureCode) -> FailureCode:
+    """What a container that is not ours failed at, kept in one place.
+
+    A foreign mount is a descriptor that does not validate; a docker that cannot
+    say is the provider being unreachable. Collapsing the two told a polling
+    client to fix a descriptor while the real problem was an outage.
+    """
+    if owner is Ownership.FOREIGN:
+        return FailureCode.VALIDATION_FAILED
+    if owner is Ownership.UNKNOWN:
+        return FailureCode.PROVIDER_UNREACHABLE
+    return ours
 
 
 class LocalCloudApi:
@@ -267,7 +275,6 @@ class LocalCloudApi:
         # What the caller asked for, so an uncredentialed agent's resource can
         # report the line it was created against instead of an empty grant the
         # shared parser refuses.
-        self._requested_line: dict[str, str] = {}
         self._failed: dict[str, FailureCode] = {}
 
     def _agent(self, agent_id: str) -> ResolvedAgent:
@@ -303,9 +310,11 @@ class LocalCloudApi:
             agent_id=agent.name,
             # Never empty: `CloudAgentResource` requires a non-empty grant, so
             # an uncredentialed agent answering `[]` produced a body Plow's own
-            # parser -- and therefore every client -- refuses. Before the
-            # credential lands, the line it was created against IS its grant.
-            chat_uids=_dotenv_chats(agent) or self._created_grant(agent),
+            # parser -- and therefore every client -- refuses. A registered
+            # agent that has not been activated reads as unassigned, which is
+            # what it is: CREATE refuses it, so no resource here ever claims a
+            # line no credential backs.
+            chat_uids=_dotenv_chats(agent) or UNASSIGNED,
             # A local agent has no published address -- exe's `url` is the
             # tenant's, and a fabricated https:// one would read as reachable.
             # The container is what a caller can actually act on from here.
@@ -371,14 +380,21 @@ class LocalCloudApi:
             try:
                 held = _agent_line(agent)
             except LineUnknown:
-                # Not credentialed yet -- a registered checkout whose `restore`
-                # has not run has no dotenv at all. The line still has to be
-                # RECORDED, or POST answers 202 having ignored `line_uid`
-                # entirely and the caller believes it selected a number it did
-                # not. Projection must not then read that absent file: the
-                # requested line is what `_created_grant` answers with.
-                held = ()
-            if held and (request.line_uid,) != held:
+                # Nothing on this host MINTS a credential, so an uncredentialed
+                # agent cannot be put on the requested line -- and answering 202
+                # told the caller it had selected a number that was never
+                # assigned. Holding the request in memory only moved the lie:
+                # a `serve` restart turned the same resource into
+                # `line:unassigned`. The line comes from the credential, so the
+                # credential has to exist first.
+                raise ApiError(
+                    409,
+                    f"{request.name} holds no Plow credential, so it serves no line yet. "
+                    f"Run 'agent-mgr restore {request.name}', then "
+                    f"'agent-mgr activate {request.name}' -- the number it activates on is "
+                    "the line it serves -- and repeat this request naming that line.",
+                ) from None
+            if (request.line_uid,) != held:
                 raise ApiError(
                     409,
                     f"{request.name} is bound to {held[0]}, not {request.line_uid}; a local "
@@ -393,7 +409,6 @@ class LocalCloudApi:
                 # Coalesced, not queued: the answer is the same resource and
                 # the caller polls the same GET either way.
                 return self._provisioning(agent)
-            self._requested_line[agent.name] = request.line_uid
             # Build the ANSWER before starting anything. Serialization reads the
             # dotenv, and on a fresh home that raised after `_bring_up` was
             # already running -- the container came up and the caller was told
@@ -412,11 +427,6 @@ class LocalCloudApi:
         ).start()
         return answer
 
-    def _created_grant(self, agent: ResolvedAgent) -> tuple[str, ...]:
-        with self._lock:
-            requested = self._requested_line.get(agent.name)
-        return (f"line:{requested}",) if requested else ("line:unassigned",)
-
     def _provisioning(self, agent: ResolvedAgent) -> dict[str, JsonValue]:
         answer = self._resource(agent).to_json()
         answer["status"] = CloudStatus.PROVISIONING.value
@@ -431,7 +441,8 @@ class LocalCloudApi:
         the 202, where there is nobody left to raise to.
         """
         try:
-            require_own_home(agent, self.registry)
+            # `resolve_guard` opens with `require_own_home`, so calling it here
+            # too was the same check twice.
             resolve_guard(agent, self.registry)
             # Container identity too. Without it a reused Compose project
             # mounting ANOTHER agent's home was admitted here, the background
@@ -463,7 +474,8 @@ class LocalCloudApi:
 
     def _guarded(self, agent: ResolvedAgent, argv: Sequence[str], failure: str) -> None:
         try:
-            require_own_home(agent, self.registry)
+            # `resolve_guard` opens with `require_own_home`, so calling it here
+            # too was the same check twice.
             resolve_guard(agent, self.registry)
             code = transition(agent, argv)
         except AgentMgrError as error:

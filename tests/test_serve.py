@@ -39,6 +39,10 @@ class _Api(LocalCloudApi):
         self.started: list[str] = []
         self.stopped: list[str] = []
         self.home_chats: tuple[str, ...] = ("cht_home",)
+        # The line the credential grants. A registered agent in these tests is
+        # an ACTIVATED one: CREATE refuses an uncredentialed agent outright, and
+        # the credential these tests would have to write lives in a real home.
+        self.line: tuple[str, ...] = ("ln_home",)
 
     def _agent(self, agent_id: str):  # type: ignore[override]
         from agent_mgr.serve import ApiError
@@ -77,12 +81,16 @@ def _resource(name: str) -> dict[str, object]:
 
 
 @pytest.fixture
-def api(tmp_path) -> _Api:
+def api(tmp_path, monkeypatch) -> _Api:
+    import agent_mgr.serve as serve_module
+
     registry = Registry(tmp_path / "agents")
     repo = tmp_path / "life-repo"
     repo.mkdir()
     registry.add("life", repo)
-    return _Api(registry, {"life": _resource("life")})
+    fake = _Api(registry, {"life": _resource("life")})
+    monkeypatch.setattr(serve_module, "_agent_line", lambda agent: fake.line)
+    return fake
 
 
 @pytest.fixture
@@ -435,10 +443,14 @@ def test_an_unreadable_line_refuses_rather_than_reading_as_no_mismatch(
     assert "could not read" in body["detail"]
 
 
-def test_an_uncredentialed_agent_has_nothing_to_contradict(base: str, api: _Api) -> None:
-    """`LineUnknown` is the other half: no credential yet means no line to
-    compare, so provisioning proceeds rather than refusing on a question that
-    has no answer."""
+def test_an_uncredentialed_agent_is_refused_rather_than_promised_a_line(
+    base: str, api: _Api
+) -> None:
+    """Nothing on this host mints a credential, so an agent that holds none
+    cannot be put on the requested line. Answering 202 told the caller it had
+    selected a number that was never assigned -- and holding the request in
+    memory only moved the lie, since a `serve` restart turned the same resource
+    into `line:unassigned`."""
     import agent_mgr.serve as serve_module
 
     def unknown(agent):  # noqa: ANN001, ANN202
@@ -456,7 +468,7 @@ def test_an_uncredentialed_agent_has_nothing_to_contradict(base: str, api: _Api)
     finally:
         serve_module._agent_line = original  # type: ignore[assignment]
 
-    assert status == 202
+    assert status == 409
 
 
 def test_a_duplicate_create_does_not_deadlock(base: str, api: _Api) -> None:
@@ -493,11 +505,12 @@ def test_an_uncredentialed_resource_still_parses(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         serve_module, "_status", lambda a: (serve_module.CloudStatus.PROVISIONING, None)
     )
-    api._requested_line["life"] = "ln_home"
 
     payload = api._resource(agent).to_json()
 
-    assert payload["chat_uids"] == ["line:ln_home"]
+    # Unassigned is what it is -- CREATE refuses an uncredentialed agent, so no
+    # resource here claims a line no credential backs.
+    assert payload["chat_uids"] == ["line:unassigned"]
     CloudAgentResource.from_json(payload)
 
 
@@ -567,12 +580,19 @@ def test_a_repaired_container_clears_a_recorded_failure(tmp_path, monkeypatch) -
     assert inspected == []
 
 
+@pytest.mark.parametrize(
+    ("code", "failure"),
+    [("INVALID_DESCRIPTOR", "validation_failed"), ("IO_ERROR", "provider_unreachable")],
+    ids=["foreign-mount", "docker-outage"],
+)
+@pytest.mark.parametrize("running", [True, False], ids=["running", "stopped"])
 def test_a_foreign_container_and_a_docker_outage_are_different_diagnoses(
-    monkeypatch,
+    monkeypatch, code, failure, running
 ) -> None:
     """A Boolean ownership check made both of these `validation_failed`, so a
     polling client told to fix its descriptor was really looking at a docker
-    that could not answer."""
+    that could not answer. A STOPPED container needs the same question: a reused
+    project mounting a sibling's home is not this agent's setup that failed."""
     import agent_mgr.serve as serve_module
     from agent_mgr.errors import AgentMgrError, ErrorCode
 
@@ -580,35 +600,49 @@ def test_a_foreign_container_and_a_docker_outage_are_different_diagnoses(
     monkeypatch.setattr(
         serve_module,
         "compose",
-        lambda a, argv, capture=False: SimpleNamespace(returncode=0, stdout="abc123\n"),
+        lambda a, argv, capture=False: SimpleNamespace(
+            returncode=0, stdout="abc123\n" if running or "--all" in argv else ""
+        ),
     )
 
-    def raiser(code):  # noqa: ANN001, ANN202
-        def refuse(a):  # noqa: ANN001, ANN202
-            raise AgentMgrError(code, "no")
+    def refuse(a):  # noqa: ANN001, ANN202
+        raise AgentMgrError(ErrorCode[code], "no")
 
-        return refuse
+    monkeypatch.setattr(serve_module, "require_container_ours", refuse)
 
+    status, reported = serve_module._status(agent)
+
+    assert status is serve_module.CloudStatus.FAILED
+    assert reported.value == failure
+
+
+def test_a_stopped_container_that_is_ours_is_still_setup_failed(monkeypatch) -> None:
+    """The ownership question must not swallow the ordinary case: our own
+    container that exists and is not running is a provision that did not
+    finish."""
+    import agent_mgr.serve as serve_module
+
+    agent = SimpleNamespace(name="life", container="hermes-life", home=Path("/nowhere"))
     monkeypatch.setattr(
-        serve_module, "require_container_ours", raiser(ErrorCode.INVALID_DESCRIPTOR)
+        serve_module,
+        "compose",
+        lambda a, argv, capture=False: SimpleNamespace(
+            returncode=0, stdout="abc123\n" if "--all" in argv else ""
+        ),
     )
+    monkeypatch.setattr(serve_module, "require_container_ours", lambda a: None)
+
     assert serve_module._status(agent) == (
         serve_module.CloudStatus.FAILED,
-        serve_module.FailureCode.VALIDATION_FAILED,
-    )
-
-    monkeypatch.setattr(serve_module, "require_container_ours", raiser(ErrorCode.IO_ERROR))
-    assert serve_module._status(agent) == (
-        serve_module.CloudStatus.FAILED,
-        serve_module.FailureCode.PROVIDER_UNREACHABLE,
+        serve_module.FailureCode.SETUP_FAILED,
     )
 
 
-def test_a_registered_checkout_with_no_dotenv_can_be_provisioned(tmp_path, monkeypatch) -> None:
+def test_a_registered_checkout_with_no_dotenv_still_reads_back(tmp_path, monkeypatch) -> None:
     """A fresh checkout that has never run `restore` has no `.env` at all.
     `_agent_line` read that as uncredentialed, but the projection went straight
-    to the reader and turned the ENOENT into a failed request -- so the one
-    state every new agent starts in could not be provisioned."""
+    to the reader and turned the ENOENT into a failed READ -- so a registered
+    agent could not even be listed until it was activated."""
     import agent_mgr.serve as serve_module
 
     registry = Registry(tmp_path / "agents")
@@ -619,12 +653,10 @@ def test_a_registered_checkout_with_no_dotenv_can_be_provisioned(tmp_path, monke
     monkeypatch.setattr(
         serve_module, "_status", lambda a: (serve_module.CloudStatus.PROVISIONING, None)
     )
-    api._requested_line["life"] = "ln_home"
-
     with pytest.raises(serve_module.LineUnknown):
         serve_module._agent_line(agent)
 
-    assert api._resource(agent).to_json()["chat_uids"] == ["line:ln_home"]
+    assert api._resource(agent).to_json()["chat_uids"] == ["line:unassigned"]
 
 
 def test_the_control_bearer_does_not_reach_agent_hooks(monkeypatch) -> None:

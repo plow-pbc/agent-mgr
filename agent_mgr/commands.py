@@ -124,6 +124,27 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
     return 0
 
 
+def agent_line_uid(chat: object) -> str:
+    """The line THIS agent's participant sits on, out of a chat payload.
+
+    The `self` participant, not the first agent one: a chat can hold several
+    agents, and taking the first picks a sibling's line -- which makes a valid
+    request refuse against a number the agent really does serve. One definition,
+    because two consumers reading the same roster two ways is exactly how the
+    two could disagree about the same chat. Answers "" when the payload cannot
+    say, and each caller reports that in its own vocabulary.
+    """
+    participants = chat.get("participants") if isinstance(chat, dict) else None
+    if not isinstance(participants, list):
+        return ""
+    agents = [p for p in participants if isinstance(p, dict) and p.get("type") == "agent"]
+    mine = [p for p in agents if p.get("relationship") == "self"]
+    current = mine[0] if len(mine) == 1 else agents[0] if len(agents) == 1 else None
+    line = current.get("line") if current is not None else None
+    uid = line.get("uid") if isinstance(line, dict) else None
+    return uid if isinstance(uid, str) else ""
+
+
 def narrow_chat_credential(agent: ResolvedAgent) -> int:
     """Convert an activation credential to line reach in place."""
     dotenv = agent.home / ".env"
@@ -145,21 +166,8 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
     chat = transport.request("GET", f"/v1/chats/{home_uid}")
     if not isinstance(chat, dict):
         raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "home chat returned invalid JSON")
-    participants = chat.get("participants")
-    if not isinstance(participants, list):
-        raise AgentMgrError(ErrorCode.IO_ERROR, "home chat has no participant roster")
-    agents = [
-        participant
-        for participant in participants
-        if isinstance(participant, dict) and participant.get("type") == "agent"
-    ]
-    self_agents = [
-        participant for participant in agents if participant.get("relationship") == "self"
-    ]
-    current = self_agents[0] if len(self_agents) == 1 else agents[0] if len(agents) == 1 else None
-    line = current.get("line") if current is not None else None
-    line_uid = line.get("uid") if isinstance(line, dict) else None
-    if not isinstance(line_uid, str) or not line_uid:
+    line_uid = agent_line_uid(chat)
+    if not line_uid:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, "home chat did not identify exactly one current agent line"
         )
