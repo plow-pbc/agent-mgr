@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import getpass
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import termios
+from collections.abc import Callable
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
@@ -296,6 +297,30 @@ def upsert(agent: ResolvedAgent, keys: list[str], values: list[str]) -> None:
         )
 
 
+def read_latch_pair() -> tuple[str, str]:
+    """The (uid, token) pair from stdin: Latch's JSON blob, or two bare lines."""
+    first = sys.stdin.readline()
+    if first.lstrip().startswith("{"):
+        return latch_pair_from_json(first)
+    print("DOMO_MCP_TOKEN: ", end="", file=sys.stderr, flush=True)
+    return first.strip(), sys.stdin.readline().strip()
+
+
+def hidden_on_tty(read: Callable[[], tuple[str, str]]) -> tuple[str, str]:
+    """Run `read` with terminal echo off -- the JSON paste carries a live token,
+    and getpass can only hide a single line. The operator may be screen-sharing."""
+    fd = sys.stdin.fileno()
+    saved = termios.tcgetattr(fd)
+    hidden = termios.tcgetattr(fd)
+    hidden[3] &= ~termios.ECHO
+    termios.tcsetattr(fd, termios.TCSADRAIN, hidden)
+    try:
+        return read()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, saved)
+        print(file=sys.stderr)
+
+
 def latch_pair_from_json(first_line: str) -> tuple[str, str]:
     """The (uid, token) pair from the client-config JSON Latch shows once.
 
@@ -317,28 +342,21 @@ def latch_pair_from_json(first_line: str) -> tuple[str, str]:
                     "copy the whole blob from Latch and paste it again",
                 ) from None
             blob += line
-    servers = data.get("mcpServers") if isinstance(data, dict) else None
-    rows = list(servers.values()) if isinstance(servers, dict) else []
-    matches = [
-        (
-            m.group(1),
-            str(headers.get("Authorization", ""))
-            if isinstance(headers := server.get("headers"), dict)
-            else "",
-        )
-        for server in rows
-        if isinstance(server, dict)
-        if (m := re.search(r"/devices/([^/]+)/mcp", str(server.get("url", ""))))
-    ]
-    if not matches:
+    try:
+        (server,) = data["mcpServers"].values()
+        match = re.search(r"/devices/([^/]+)/mcp", server["url"])
+        authorization = server["headers"]["Authorization"]
+    except (KeyError, ValueError, AttributeError, TypeError):
+        match = authorization = None
+    if match is None:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
             "the JSON has no devices/<uid>/mcp URL under mcpServers -- "
             "is this the blob from Latch's static credential screen?",
         )
-    uid, authorization = matches[0]
-    token = authorization.removeprefix("Bearer ").strip()
-    if not authorization.startswith("Bearer ") or not token:
+    uid = match.group(1)
+    token = str(authorization).removeprefix("Bearer ").strip()
+    if not str(authorization).startswith("Bearer ") or not token:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
             "the JSON has no 'Bearer' Authorization header -- "
@@ -362,21 +380,12 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
         )
     print(
         'Paste the JSON from Latch ("can\'t use OAuth? create a static credential"),'
-        " or a bare DOMO_DEVICE_UID: ",
+        " or a bare DOMO_DEVICE_UID (input hidden): ",
         end="",
         file=sys.stderr,
         flush=True,
     )
-    first = sys.stdin.readline()
-    if first.lstrip().startswith("{"):
-        uid, token = latch_pair_from_json(first)
-    else:
-        uid = first.strip()
-        if sys.stdin.isatty():
-            token = getpass.getpass("DOMO_MCP_TOKEN: ", stream=sys.stderr).strip()
-        else:
-            print("DOMO_MCP_TOKEN: ", end="", file=sys.stderr, flush=True)
-            token = sys.stdin.readline().strip()
+    uid, token = hidden_on_tty(read_latch_pair) if sys.stdin.isatty() else read_latch_pair()
     if not uid or not token:
         missing = "DOMO_DEVICE_UID" if not uid else "DOMO_MCP_TOKEN"
         raise AgentMgrError(
