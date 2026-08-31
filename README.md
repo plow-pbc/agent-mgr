@@ -31,7 +31,7 @@ the checksum before running it.
 
 It runs on the Linux host the fleet lives on and on macOS with Python 3.11+.
 `python3`, `docker` and
-an authenticated `gh` have to be on `PATH` — `restore` installs the Plow Chat
+an authenticated `gh` have to be on `PATH` — `deploy` installs the Plow Chat
 plugin and the pinned fleet skills (`google-workspace`, `plow-invite`) through
 `gh api` for **every** agent, not only one shipping a `skills.tsv` (one whose
 own `skills.tsv` pins a fleet destination keeps its instance copy for that
@@ -39,7 +39,7 @@ destination instead).
 
 ```sh
 agent-mgr new errands ~/services/errands-hermes-agent
-agent-mgr restore errands    # the whole deploy: config, plugin, restore hook
+agent-mgr deploy errands     # the whole deploy: config, plugin, deploy hook
 agent-mgr activate errands   # phone bind, then a line-scoped agent credential
 agent-mgr up errands
 agent-mgr cron-sync errands  # only if its agent.env names a cron spec
@@ -115,7 +115,7 @@ The test for where something belongs: **would a second agent want this?**
 - a fleet skill — yes, every agent → **common**, one pin per tree in
   `runtime/stack.json` (the `google_workspace_skill`
   redirect and the `plow-invite` referral, both sourced from plow-pbc/plow's
-  hosted-agent seed; `restore` installs and `install-skill` re-installs each —
+  hosted-agent seed; `deploy` installs and `install-skill` re-installs each —
   except an agent whose own `skills.tsv` pins that destination, where the
   instance pin is authoritative and both skip it)
 - a skill two agents share — pinned by SHA from upstream, installed by `add-skill`
@@ -176,15 +176,15 @@ shape: a second copy of something `agent-mgr` already owns.
 | `SKILL.md`, `scripts/`, `references/` | if the agent does something | its own skill: the instructions the container reads, and whatever runs for them |
 | `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` (or `build`) beside it — [HOWTO](docs/HOWTO.md#where-does-my-code-go) has the shape and what `resolve-guard` refuses without it |
 | `AGENT_LIVE=1` | if real people's workflows run through it | declared in `agent.env`; the gateway messages its person at every restart, so a restart of a live agent is user-visible. agent-mgr asks `[y/N]` at a terminal before any transition and refuses non-interactively unless `AGENT_TRANSITION_ACK=1` — the explicit acknowledgement for automation that means to restart. Once admitted, container shutdown gives Hermes up to 30 seconds to checkpoint the interrupted session and release its database leases before s6 escalates |
-| a restore hook | if it has its own deploy step | named by `AGENT_RESTORE_HOOK`; `restore` sequences it, so one command is the whole deploy -- except crons, which are `cron-sync`'s and run against a live gateway |
-| a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `restore` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
+| a deploy hook | if it has its own deploy step | named by `AGENT_DEPLOY_HOOK`; `deploy` sequences it, so one command is the whole deploy -- except crons, which are `cron-sync`'s and run against a live gateway |
+| a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `deploy` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
 
 What must **not** be there is the common half: **no `compose.yml`, no activation
 script, no `model-provider` or `reload-if-running`, no hand-rolled cron
 registration** — `agent-mgr` owns those,
 and a copy is a fork of the fleet that drifts silently. A `justfile` is the one
 near-miss: keep it for this agent's own recipes and tests, never to restate
-`up`, `restore` or `activate`.
+`up`, `deploy` or `activate`.
 
 **Pin upstream, never vendor it.** Every artifact from another repo arrives at
 an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image

@@ -281,7 +281,7 @@ def test_the_guard_sees_an_entry_point_bound_before_it_was_installed():
 def test_the_suite_cannot_reach_a_docker_it_did_not_install(run, instance, tmp_path):
     """The harness fence, and it belongs in this file: restarting a live gateway
     is this repo's own failure class, and for a day the SUITE was the actor --
-    `up`/`restore` on a fixture agent named `rowan` resolved to the production
+    `up`/`deploy` on a fixture agent named `rowan` resolved to the production
     compose project, so 20 real `compose restart hermes` calls went out per run
     (plow-pbc/agent-mgr#13).
 
@@ -313,7 +313,7 @@ def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance
     rather than in a fixture.
 
     AGENT_PROJECT derives from the agent NAME and Docker's namespace is global,
-    so `agent-mgr restore rowan` from a scratch checkout addresses `-p
+    so `agent-mgr deploy rowan` from a scratch checkout addresses `-p
     hermes-rowan` -- production -- however thoroughly HOME and the registry are
     isolated. Every other check compares the descriptor against the config
     agent-mgr WOULD apply, and a scratch descriptor is perfectly self-consistent.
@@ -442,13 +442,13 @@ def test_a_stopped_siblings_container_is_not_treated_as_absent(run, instance, tm
 
 def test_a_home_that_traverses_to_a_siblings_is_caught(run, instance, tmp_path):
     """The collision check compared paths lexically, so `$HOME/foo/../.hermes`
-    and `$HOME/.hermes` -- one directory -- compared unequal and restore
+    and `$HOME/.hermes` -- one directory -- compared unequal and deploy
     overwrote the sibling's config and credentials. Canonicalised now, which is
     what collapsing repeated slashes only looked like it was doing."""
     run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
     run("register", "copycat",
         str(instance("copycat", descriptor="AGENT_HOME=$HOME/foo/../.hermes\n")))
-    r = run("restore", "copycat")
+    r = run("deploy", "copycat")
     assert r.returncode != 0, "a traversing home reached a sibling's directory"
     assert "str is already registered there" in r.stderr
 
@@ -480,7 +480,7 @@ def test_a_home_symlinked_onto_another_disk_still_works(run, instance, tmp_path)
     (tmp_path / "home" / ".hermes-rowan").symlink_to(target)
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    r = run("restore", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("deploy", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"a symlinked home was refused: {r.stderr}"
 
 
@@ -497,7 +497,7 @@ def test_two_homes_aliasing_one_directory_through_a_symlink_collide(run, instanc
     run("register", "rowan", str(instance("rowan")))
     run("register", "copycat",
         str(instance("copycat", descriptor=f"AGENT_HOME={target}\n")))
-    r = run("restore", "copycat")
+    r = run("deploy", "copycat")
     assert r.returncode != 0, "two descriptors reached one directory undetected"
     assert "rowan is already registered there" in r.stderr
 

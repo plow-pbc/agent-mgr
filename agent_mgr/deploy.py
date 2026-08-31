@@ -30,7 +30,7 @@ def migrate_plugin_env(agent: ResolvedAgent, sync: bool = False) -> None:
     dotenv = agent.home / ".env"
     if not dotenv.is_file():
         raise AgentMgrError(
-            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr restore {agent.name}' first"
+            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr deploy {agent.name}' first"
         )
     args = [str(ROOT / "lib" / "upsert-env"), str(agent.home), "--migrate-legacy"]
     if sync:
@@ -135,7 +135,7 @@ def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> 
         raise AgentMgrError(ErrorCode.IO_ERROR, f"could not restart {agent.name}")
 
 
-def restore(agent: ResolvedAgent, registry: Registry) -> None:
+def deploy(agent: ResolvedAgent, registry: Registry) -> None:
     resolve_guard(agent, registry)
     confirm_transition(agent)
     require_transition_allowed(agent)
@@ -144,10 +144,10 @@ def restore(agent: ResolvedAgent, registry: Registry) -> None:
             ErrorCode.IO_ERROR,
             f"no config at {agent.config} -- an agent repo needs one, or set AGENT_CONFIG in its agent.env",
         )
-    if agent.restore_hook and not os.access(agent.restore_hook, os.X_OK):
+    if agent.deploy_hook and not os.access(agent.deploy_hook, os.X_OK):
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
-            f"{agent.name} declares a restore hook at {agent.restore_hook}, which is missing or not executable -- nothing was installed",
+            f"{agent.name} declares a deploy hook at {agent.deploy_hook}, which is missing or not executable -- nothing was installed",
         )
     agent.home.mkdir(parents=True, exist_ok=True)
     dotenv = agent.home / ".env"
@@ -159,20 +159,20 @@ def restore(agent: ResolvedAgent, registry: Registry) -> None:
     install_plugin(agent, "The dotenv skeleton IS written; config.yaml and skills are NOT.")
     install_fleet_skills(agent)
     _publish_home_file(agent.config, agent.home, "config.yaml")
-    print(f"restored config.yaml to {agent.home}")
+    print(f"deployed config.yaml to {agent.home}")
     replay_skills(agent)
-    if agent.restore_hook:
+    if agent.deploy_hook:
         hook_env = environment(agent)
         for item in agent.hook_environment:
             key, value = item.split("=", 1)
             hook_env[key] = value
         if subprocess.run(
-            [str(agent.restore_hook)], cwd=agent.repo, env=hook_env, check=False
+            [str(agent.deploy_hook)], cwd=agent.repo, env=hook_env, check=False
         ).returncode:
             raise AgentMgrError(
                 ErrorCode.IO_ERROR,
-                f"{agent.name}'s restore hook failed. The config, plugin and pinned skills "
+                f"{agent.name}'s deploy hook failed. The config, plugin and pinned skills "
                 "ARE installed; the hook's own work is NOT. Fix the cause and re-run "
-                f"'agent-mgr restore {agent.name}' before restarting.",
+                f"'agent-mgr deploy {agent.name}' before restarting.",
             )
-    reload_if_running(agent, registry, "what the restore installed")
+    reload_if_running(agent, registry, "what the deploy installed")

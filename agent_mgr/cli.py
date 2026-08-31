@@ -26,11 +26,11 @@ from .commands import (
     sign_in,
 )
 from .deploy import (
+    deploy,
     install_fleet_skills,
     install_plugin,
     migrate_plugin_env,
     reload_if_running,
-    restore,
 )
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
@@ -132,7 +132,7 @@ def _usage(stream: TextIO = sys.stdout) -> None:
         """usage: agent-mgr [--json] <command> [args]
 
   ls | register | unregister | new | resolve
-  restore | install-plugin | install-skill | add-skill | cron-sync
+  deploy | install-plugin | install-skill | add-skill | cron-sync
   activate | scope-chat-credential | sign-in | set-latch | check-latch | chats | set-home
   check-connectors | migrate-plugin-env
   backup-homes | prune-backups
@@ -262,10 +262,10 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
             _emit("new", {"agent": agent.to_json()})
         else:
             print(f"scaffolded {name} at {target.resolve()}")
-            print(f"  home:     {agent.home} (created by restore)\n")
+            print(f"  home:     {agent.home} (created by deploy)\n")
             print("bring it up:")
             for next_command in (
-                "restore",
+                "deploy",
                 "activate",
                 "up",
                 "cron-sync",
@@ -290,13 +290,13 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         _need(args, 1, "agent-mgr resolve-guard <name>")
         resolve_guard(resolve_agent(args[0], registry, ROOT), registry)
         return 0
-    if operation in {"restore", "install-plugin", "install-skill", "migrate-plugin-env"}:
+    if operation in {"deploy", "install-plugin", "install-skill", "migrate-plugin-env"}:
         if not args:
             raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"usage: agent-mgr {operation} <name>")
         agent = resolve_agent(args[0], registry, ROOT)
-        if operation == "restore":
-            _need(args, 1, "agent-mgr restore <name>")
-            restore(agent, registry)
+        if operation == "deploy":
+            _need(args, 1, "agent-mgr deploy <name>")
+            deploy(agent, registry)
         elif operation == "migrate-plugin-env":
             if len(args) > 2 or (len(args) == 2 and args[1] != "--sync"):
                 raise AgentMgrError(
@@ -311,7 +311,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
             if not agent.home.is_dir():
                 raise AgentMgrError(
                     ErrorCode.IO_ERROR,
-                    f"no {agent.home} -- run 'agent-mgr restore {agent.name}' first",
+                    f"no {agent.home} -- run 'agent-mgr deploy {agent.name}' first",
                 )
             if operation == "install-plugin":
                 install_plugin(agent)
