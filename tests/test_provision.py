@@ -152,32 +152,6 @@ def test_a_refused_line_writes_nothing(run, instance, tmp_path, plow: _Plow) -> 
     assert dotenv.read_text() == before
 
 
-def test_a_grant_reaching_no_chat_is_an_error_not_a_silent_agent(
-    run, instance, tmp_path, plow: _Plow
-) -> None:
-    """An empty listing means the credential would arrive at an agent with no
-    home -- it would start, look healthy, and answer nothing. It still fails
-    loudly, but the token stays: the mint is one-time, and discarding it here
-    would leave the operator with nothing to recover from."""
-    _restored(run, instance)
-    plow.chats = []
-    dotenv = tmp_path / "home" / ".hermes-rowan" / ".env"
-
-    result = run("provision", "rowan", "ln_p3", env=plow.environment)
-
-    assert result.returncode != 0
-    assert "reaches no chat" in result.stderr
-    lines = dotenv.read_text().splitlines()
-    assert f"PLOW_AGENT_TOKEN={TOKEN}" in lines
-    # Present but empty is what `restore` seeds; what must not happen is a home
-    # invented from a listing that named none.
-    assert "PLOW_HOME_CHANNEL=" in lines
-    # And the recovery must be one that can actually succeed. `set-home`
-    # validates the uid against this same empty listing, so offering it alone
-    # hands a spent-credential operator a command that refuses every value.
-    assert "give ln_p3 a chat" in result.stderr
-
-
 def test_provision_refuses_before_restore_has_run(run, instance, plow: _Plow) -> None:
     """There is no dotenv to write into yet, and creating one here would leave a
     home no restore afterwards owns."""
@@ -208,27 +182,40 @@ def test_help_lists_provision(run) -> None:
     assert os.linesep is not None
 
 
-def test_two_one_to_one_chats_on_a_line_refuse_rather_than_guess(
-    run, instance, tmp_path, plow: _Plow
+@pytest.mark.parametrize(
+    ("chats", "diagnostic", "recovery"),
+    [
+        ([_chat("cht_someone", 1), _chat("cht_owner", 1)], "ambiguous", "set-home"),
+        ([], "reaches no chat", "give ln_p3 a chat"),
+    ],
+    ids=["two-one-to-ones", "empty-grant"],
+)
+def test_post_mint_refusal_preserves_the_token_and_names_a_usable_recovery(
+    run, instance, tmp_path, plow: _Plow, chats, diagnostic, recovery
 ) -> None:
-    """A line carries one 1:1 per person who has texted that number. Breaking
-    the tie by API order could pick ANOTHER CONTACT'S DM as home and deliver
-    this owner's cron output and private replies into it -- and nothing in the
-    listing says which one is theirs, so guessing is the bug."""
+    """Both post-mint refusals owe the operator the same two things.
+
+    The token must already be on disk -- the mint is one-time, so refusing
+    after receiving it and before writing it destroys something nobody can get
+    back -- and the recovery named must be one that can actually run. They
+    differ only in WHY discovery failed and therefore what to do about it:
+    ambiguity is `set-home`'s case because the chats exist, an empty grant is
+    not, because nothing is reachable until the line carries one.
+    """
     _restored(run, instance)
-    plow.chats = [_chat("cht_someone", 1), _chat("cht_owner", 1)]
+    plow.chats = chats
 
     result = run("provision", "rowan", "ln_p3", env=plow.environment)
 
     assert result.returncode != 0
-    assert "ambiguous" in result.stderr
-    # The mint is one-time, so the token must already be on disk before the
-    # home is decided: refusing after it was received and before it was written
-    # destroys a credential nobody can get back, and `set-home` -- the recovery
-    # this very message names -- needs it persisted to be possible at all.
-    dotenv = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert f"PLOW_AGENT_TOKEN={TOKEN}" in dotenv.splitlines()
-    assert "set-home" in result.stderr
+    assert diagnostic in result.stderr
+    assert recovery in result.stderr
+    assert "credential IS written" in result.stderr
+    lines = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text().splitlines()
+    assert f"PLOW_AGENT_TOKEN={TOKEN}" in lines
+    # Present but empty is what `restore` seeds; what must not happen is a home
+    # invented from a listing that never named one.
+    assert "PLOW_HOME_CHANNEL=" in lines
 
 
 def test_a_failed_reload_does_not_read_as_a_failed_mint(

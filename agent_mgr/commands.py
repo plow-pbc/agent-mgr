@@ -175,6 +175,17 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
     return 0
 
 
+class AmbiguousHome(AgentMgrError):
+    """The line carries several 1:1 chats, so `set-home` is the recovery.
+
+    A distinct type rather than a substring of the message: dispatching on the
+    words meant an API failure whose text happened to differ was read as an
+    ambiguity, and an outage sent the operator to `set-home` -- which cannot
+    fix an outage. What the recovery is depends on WHY discovery failed, so the
+    why has to be typed.
+    """
+
+
 def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     """Mint this agent's credential server-side and write it -- no text, no code.
 
@@ -236,7 +247,7 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
         # yet, and the fix is on the line, after which set-home works.
         recovery = (
             f"agent-mgr set-home {agent.name} <cht_...>"
-            if "ambiguous" in error.message
+            if isinstance(error, AmbiguousHome)
             else f"give {line_uid} a chat this account owns, then "
             f"'agent-mgr set-home {agent.name} <cht_...>'"
         )
@@ -307,7 +318,7 @@ def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
     # There is nothing in the listing that says which of them is the owner's, so
     # the honest answer is to refuse and make the caller name it.
     if len(ones) != 1:
-        raise AgentMgrError(
+        raise AmbiguousHome(
             ErrorCode.INVALID_ARGUMENT,
             f"{line_uid} carries {len(ones)} one-to-one chats, so the home is ambiguous",
             "name it explicitly with 'agent-mgr set-home <name> <cht_...>' after provisioning, "
