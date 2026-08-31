@@ -10,16 +10,17 @@ Where the substrates genuinely differ, this says so rather than inventing a
 mapping:
 
 - **exe unpacks an image; a local agent needs a checkout.** `CreateCloudAgentRequest`
-  carries `{name, provider, chat_uids}` and no repository, because on exe there
+  carries `{line_uid, name?, provider?}` and no repository, because on exe there
   is nothing to point at. So POST provisions a name that is already registered
   and refuses one that is not, naming the register command. Same wire shape,
   same status codes, and the one asymmetry is stated in the error rather than
   guessed at.
-- **DELETE stops the container and keeps the home.** On exe the tenant *is* the
-  agent and deleting it takes everything; here the credentials, the checkpoint
-  and the cron schedule live in `~/.hermes-<name>` on this host, and no HTTP
-  request should be able to destroy them. Removing the row is `unregister`,
-  which stays a deliberate local act.
+- **DELETE stops the container and drops the registry row, but keeps the home.**
+  On exe the tenant *is* the agent, so answering with a deleted resource while
+  leaving a row the next GET resolves would report a deletion that did not
+  happen. The credentials, the checkpoint and the cron schedule live in
+  `~/.hermes-<name>` on this host, and no HTTP request may destroy them --
+  `register` brings the agent back against the same home.
 
 Bearer auth is mandatory and the bind is loopback by default: these routes
 start and stop containers, so a token-less listener would be a remote shell for
@@ -107,27 +108,38 @@ def _dotenv_value(agent: ResolvedAgent, keys: tuple[str, ...]) -> str:
     return ""
 
 
+class LineUnknown(Exception):
+    """The agent has no credential yet -- there is no line to compare against."""
+
+
 def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
     """The line this agent's home chat sits on, asked of Plow as the agent.
 
-    Empty when the agent has no credential or Plow cannot be reached: unknown
-    is not the same as mismatched, and refusing a request on an unanswered
-    question would fail provisioning whenever the API is briefly down.
+    Three outcomes, and collapsing them was the bug: `()` used to mean both
+    "not credentialed yet" and "the API did not answer", so CREATE read an
+    outage as "no mismatch" and returned 202 for the WRONG line while PUT of
+    the right one refused. Now `LineUnknown` says the agent has no credential
+    (nothing to compare, proceed), and an API failure raises `ApiError` (refuse,
+    because a mismatch cannot be ruled out).
     """
     home = _dotenv_value(agent, HOME_CHAT_KEYS)
     token = _dotenv_value(agent, ("PLOW_AGENT_TOKEN", "PLOW_CHAT_TOKEN"))
-    base = _dotenv_value(agent, ("PLOW_API_BASE", "PLOW_CHAT_BASE_URL"))
-    if not home or not token or not base:
-        return ()
+    # `PLOW_API_BASE` absent is the ordinary case, not a failure: the gateway
+    # falls back to the public API and so does this.
+    base = _dotenv_value(agent, ("PLOW_API_BASE", "PLOW_CHAT_BASE_URL")) or "https://api.plow.co"
+    if not home or not token:
+        raise LineUnknown
     try:
         transport = HttpCloudTransport.from_environment(
             {"PLOW_API_BASE": base, "PLOW_API_TOKEN": token}
         )
         chat = transport.request("GET", f"/v1/chats/{home}")
-    except AgentMgrError:
-        return ()
+    except AgentMgrError as error:
+        raise ApiError(
+            502, f"could not read {agent.name}'s line from Plow: {error.message}"
+        ) from None
     if not isinstance(chat, dict):
-        return ()
+        raise ApiError(502, f"Plow returned no readable chat for {agent.name}'s home")
     for participant in chat.get("participants") or []:
         if not isinstance(participant, dict) or participant.get("type") != "agent":
             continue
@@ -135,7 +147,9 @@ def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
         uid = line.get("uid") if isinstance(line, dict) else None
         if isinstance(uid, str) and uid:
             return (uid,)
-    return ()
+    # A home chat with no agent participant is malformed, not "no line": saying
+    # unknown here would let a wrong line through the same way the collapse did.
+    raise ApiError(502, f"{agent.name}'s home chat names no agent line")
 
 
 def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
@@ -171,6 +185,7 @@ class LocalCloudApi:
         # failed pull was invisible, so GET answered `provisioning` forever.
         self._lock = threading.Lock()
         self._starting: set[str] = set()
+        self._deleting: set[str] = set()
         self._failed: dict[str, FailureCode] = {}
 
     def _agent(self, agent_id: str) -> ResolvedAgent:
@@ -242,7 +257,11 @@ class LocalCloudApi:
         # transition veto -- so a copied descriptor could start a second gateway
         # against a sibling's home, or a reused project stop a live agent, from
         # an HTTP request that never touched those checks.
-        held = _agent_line(agent)
+        try:
+            held = _agent_line(agent)
+        except LineUnknown:
+            # Not credentialed yet, so there is nothing to contradict.
+            held = ()
         # Ignoring the requested line would answer 202 to a caller that asked
         # for a number this agent does not serve, and it would only find out by
         # reading the resource back. The grant is its minted credential's, so
@@ -255,6 +274,8 @@ class LocalCloudApi:
             )
         self._admit(agent)
         with self._lock:
+            if agent.name in self._deleting:
+                raise ApiError(409, f"{agent.name} is being deleted; retry once it settles")
             if agent.name in self._starting:
                 # Coalesced, not queued: the answer is the same resource and
                 # the caller polls the same GET either way.
@@ -324,7 +345,11 @@ class LocalCloudApi:
     def update_line(self, agent_id: str, payload: object) -> dict[str, JsonValue]:
         request = UpdateCloudAgentLineRequest.from_json(payload)
         agent = self._agent(agent_id)
-        if (request.line_uid,) == _agent_line(agent):
+        try:
+            current = _agent_line(agent)
+        except LineUnknown:
+            current = ()
+        if (request.line_uid,) == current:
             # Asking for the line it already serves is not a write. Answering
             # 200 keeps an idempotent caller -- one that PUTs desired state on
             # every reconcile -- working against a host that already matches.
@@ -334,28 +359,35 @@ class LocalCloudApi:
         # Answering 200 to a write that changed nothing is the failure to avoid.
         raise ApiError(
             409,
-            f"{agent.name} is bound to its minted credential's line; re-point it with "
-            "'agent-mgr provision' against a fresh home, not over HTTP",
+            f"{agent.name} is bound to its minted credential's line, and a local agent's "
+            "credential is minted by 'agent-mgr activate <name>' from the owner's phone -- "
+            "re-point it by activating against a fresh home, not over HTTP",
         )
 
     def delete(self, agent_id: str) -> dict[str, JsonValue]:
         agent = self._agent(agent_id)
+        # The lock is held from the check through the row removal, not just over
+        # the check: releasing it in between let a concurrent POST reserve and
+        # launch a startup in the gap, and DELETE then dropped the row out from
+        # under a gateway that was already coming up -- one running against a
+        # home nothing on this host owns.
         with self._lock:
             if agent.name in self._starting:
-                # Deleting mid-start would drop the registry row while a worker
-                # is still bringing that agent up, leaving a running gateway
-                # nothing on this host owns.
                 raise ApiError(409, f"{agent.name} is still provisioning; retry once it settles")
-        resource = self._resource(agent, deleted=True)
-        self._guarded(agent, ["down"], f"could not stop {agent_id}")
-        # The row goes with the container. exe's DELETE makes the agent stop
-        # existing, and answering with a deleted resource while leaving a row
-        # that the next GET happily resolves would report a deletion that did
-        # not happen. The HOME is what stays -- credentials, checkpoint and cron
-        # schedule live there, and no HTTP request may destroy them; `register`
-        # brings the agent back against the same home.
-        self.registry.remove(agent.name)
-        return resource.to_json()
+            self._deleting.add(agent.name)
+        try:
+            resource = self._resource(agent, deleted=True)
+            self._guarded(agent, ["down"], f"could not stop {agent_id}")
+            # The row goes with the container. exe's DELETE makes the agent stop
+            # existing, and answering with a deleted resource while leaving a
+            # row the next GET resolves would report a deletion that did not
+            # happen. The HOME stays -- credentials, checkpoint and cron live
+            # there and no HTTP request may destroy them; `register` brings the
+            # agent back against the same home.
+            self.registry.remove(agent.name)
+            return resource.to_json()
+        finally:
+            self._deleting.discard(agent.name)
 
 
 def build_handler(api: LocalCloudApi, token: str) -> type[BaseHTTPRequestHandler]:
@@ -453,28 +485,45 @@ def _tailscale_addresses() -> frozenset[str]:
     return frozenset(line.strip() for line in result.stdout.splitlines() if line.strip())
 
 
-def _bind_is_allowed(host: str) -> bool:
-    """Loopback, or an address of this machine's own tailnet.
+def resolve_bind(host: str) -> str:
+    """The ADDRESS to bind, or a refusal. Never the name.
 
-    A tailnet is the one non-loopback case where the objection does not hold:
-    the bearer still travels in plain HTTP, but the transport underneath is
-    WireGuard between two authenticated peers, so there is no on-path position
-    to replay from. Everything else -- `0.0.0.0`, a LAN address, a public
-    one -- stays refused, because a token cannot fix a cleartext path.
+    Validating a hostname and then handing the *name* to the socket resolves it
+    twice, and a name carrying both an owned tailnet address and a LAN or public
+    one passes the check and then binds the unsafe one -- the exact exposure the
+    rule exists to prevent. So this returns the single address it approved, and
+    the caller binds that.
+
+    A tailnet is the one non-loopback case the objection does not cover: the
+    bearer still travels in plain HTTP, but WireGuard between two authenticated
+    peers leaves no on-path position to replay from. Everything else stays
+    refused, because a token cannot fix a cleartext path.
     """
     if host in LOOPBACK_HOSTS:
-        return True
+        return host
     own = _tailscale_addresses()
     if host in own:
-        return True
-    # A MagicDNS name is the spelling clients prefer (and some require, since a
-    # bare 100.x cannot be told apart from carrier CGNAT), so resolve it and
-    # accept it only when it lands on one of our own tailnet addresses.
+        return host
+    # A MagicDNS name is the spelling clients prefer -- a bare 100.x cannot be
+    # told apart from carrier CGNAT by the caller either -- so resolve it, and
+    # accept ONLY when every address it names is ours. One unsafe address in the
+    # set is enough to refuse: which one the socket would pick is not ours to
+    # assume.
     try:
         resolved = {info[4][0] for info in socket.getaddrinfo(host, None)}
     except OSError:
-        return False
-    return bool(resolved & own)
+        resolved = set()
+    if resolved and resolved <= own:
+        # getaddrinfo's sockaddr is (host, port) for v4 and a 4-tuple for v6;
+        # the address is element 0 either way, and str() keeps mypy honest.
+        return str(sorted(resolved)[0])
+    raise AgentMgrError(
+        ErrorCode.INVALID_ARGUMENT,
+        f"refusing to bind {host}: this serves plain HTTP with a replayable bearer, and "
+        "these routes start and stop containers",
+        "bind loopback or this machine's tailnet address, or forward the port: "
+        "ssh -L <port>:127.0.0.1:<port> <host>",
+    )
 
 
 def serve(registry: Registry, root: Any, host: str, port: int) -> int:
@@ -485,14 +534,7 @@ def serve(registry: Registry, root: Any, host: str, port: int) -> int:
             "AGENT_MGR_SERVE_TOKEN is unset",
             "these routes start and stop containers; set a bearer token before serving",
         )
-    if not _bind_is_allowed(host):
-        raise AgentMgrError(
-            ErrorCode.INVALID_ARGUMENT,
-            f"refusing to bind {host}: this serves plain HTTP with a replayable bearer, and "
-            "these routes start and stop containers",
-            "bind loopback or this machine's tailnet address, or forward the port: "
-            "ssh -L <port>:127.0.0.1:<port> <host>",
-        )
+    host = resolve_bind(host)
     handler = build_handler(LocalCloudApi(registry, root), token)
     with ThreadingHTTPServer((host, port), handler) as httpd:
         print(

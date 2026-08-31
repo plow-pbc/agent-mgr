@@ -182,9 +182,7 @@ def test_delete_returns_a_null_status_resource(base: str, api: _Api) -> None:
 def test_updating_the_line_refuses_rather_than_lying(base: str) -> None:
     """A local agent's line comes from the credential minted for it. Answering
     200 to a write that changed nothing is the failure worth avoiding."""
-    status, body = _call(
-        base, "PUT", "/v1/agents/cloud/life/line", {"line_uid": "ln_other"}
-    )
+    status, body = _call(base, "PUT", "/v1/agents/cloud/life/line", {"line_uid": "ln_other"})
 
     assert status == 409
     assert "bound to" in body["detail"]
@@ -339,8 +337,12 @@ def test_delete_refuses_while_a_start_is_in_flight(base: str, api: _Api) -> None
     release = threading.Event()
     api._guarded = lambda agent, argv, failure: release.wait(5)  # type: ignore[method-assign]
 
-    _call(base, "POST", "/v1/agents/cloud",
-          {"name": "life", "provider": "local:docker", "line_uid": "ln_home"})
+    _call(
+        base,
+        "POST",
+        "/v1/agents/cloud",
+        {"name": "life", "provider": "local:docker", "line_uid": "ln_home"},
+    )
     status, body = _call(base, "DELETE", "/v1/agents/cloud/life")
     release.set()
 
@@ -358,10 +360,36 @@ def test_a_tailnet_bind_is_allowed_and_a_lan_one_is_not(run, monkeypatch) -> Non
 
     monkeypatch.setattr(serve_module, "_tailscale_addresses", lambda: frozenset({"100.98.135.0"}))
 
-    assert serve_module._bind_is_allowed("127.0.0.1")
-    assert serve_module._bind_is_allowed("100.98.135.0")
-    assert not serve_module._bind_is_allowed("0.0.0.0")
-    assert not serve_module._bind_is_allowed("192.168.15.12")
+    from agent_mgr.errors import AgentMgrError
+
+    # It returns the ADDRESS to bind, never the name: validating a hostname and
+    # then handing the name to the socket resolves it twice, and a name carrying
+    # both an owned tailnet address and a public one would bind the public one.
+    assert serve_module.resolve_bind("127.0.0.1") == "127.0.0.1"
+    assert serve_module.resolve_bind("100.98.135.0") == "100.98.135.0"
+    for refused in ("0.0.0.0", "192.168.15.12"):
+        with pytest.raises(AgentMgrError):
+            serve_module.resolve_bind(refused)
+
+
+def test_a_name_that_also_resolves_off_tailnet_is_refused(monkeypatch) -> None:
+    """One unsafe address in the set is enough: which one the socket would pick
+    is not ours to assume, so a mixed name refuses rather than gambling."""
+    import agent_mgr.serve as serve_module
+    from agent_mgr.errors import AgentMgrError
+
+    monkeypatch.setattr(serve_module, "_tailscale_addresses", lambda: frozenset({"100.98.135.0"}))
+    monkeypatch.setattr(
+        serve_module.socket,
+        "getaddrinfo",
+        lambda host, port: [
+            (0, 0, 0, "", ("100.98.135.0", 0)),
+            (0, 0, 0, "", ("203.0.113.9", 0)),
+        ],
+    )
+
+    with pytest.raises(AgentMgrError):
+        serve_module.resolve_bind("mixed.example.ts.net")
 
 
 def test_without_a_tailnet_only_loopback_is_allowed(monkeypatch) -> None:
@@ -372,5 +400,59 @@ def test_without_a_tailnet_only_loopback_is_allowed(monkeypatch) -> None:
 
     monkeypatch.setattr(serve_module, "_tailscale_addresses", lambda: frozenset())
 
-    assert serve_module._bind_is_allowed("localhost")
-    assert not serve_module._bind_is_allowed("100.98.135.0")
+    from agent_mgr.errors import AgentMgrError
+
+    assert serve_module.resolve_bind("localhost") == "localhost"
+    with pytest.raises(AgentMgrError):
+        serve_module.resolve_bind("100.98.135.0")
+
+
+def test_an_unreadable_line_refuses_rather_than_reading_as_no_mismatch(
+    base: str, api: _Api
+) -> None:
+    """Collapsing "not credentialed" and "the API did not answer" into the same
+    empty answer made CREATE read an outage as agreement: 202 for the wrong
+    line, while PUT of the right one refused. An unanswerable question refuses."""
+    import agent_mgr.serve as serve_module
+
+    def unreachable(agent):  # noqa: ANN001, ANN202
+        raise serve_module.ApiError(502, "could not read the line from Plow")
+
+    original = serve_module._agent_line
+    serve_module._agent_line = unreachable  # type: ignore[assignment]
+    try:
+        status, body = _call(
+            base,
+            "POST",
+            "/v1/agents/cloud",
+            {"name": "life", "provider": "local:docker", "line_uid": "ln_home"},
+        )
+    finally:
+        serve_module._agent_line = original  # type: ignore[assignment]
+
+    assert status == 502
+    assert "could not read" in body["detail"]
+
+
+def test_an_uncredentialed_agent_has_nothing_to_contradict(base: str, api: _Api) -> None:
+    """`LineUnknown` is the other half: no credential yet means no line to
+    compare, so provisioning proceeds rather than refusing on a question that
+    has no answer."""
+    import agent_mgr.serve as serve_module
+
+    def unknown(agent):  # noqa: ANN001, ANN202
+        raise serve_module.LineUnknown
+
+    original = serve_module._agent_line
+    serve_module._agent_line = unknown  # type: ignore[assignment]
+    try:
+        status, _ = _call(
+            base,
+            "POST",
+            "/v1/agents/cloud",
+            {"name": "life", "provider": "local:docker", "line_uid": "ln_home"},
+        )
+    finally:
+        serve_module._agent_line = original  # type: ignore[assignment]
+
+    assert status == 202
