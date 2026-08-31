@@ -253,9 +253,9 @@ write one (derived image or extra mounts). Two rules for that override:
   `resolve`). A running container keeps running; you just lose the agent-mgr
   surface over it. `activate` is the one command that neither refuses nor
   fully works: it swallows the guard's refusal on its final reload (so the
-  one-time activation is never re-spent), writes the credential, skips the
-  reload, and tells you to `restart` — which then refuses until the line is
-  fixed.
+  one-time activation is never re-spent), writes the credential, and skips
+  the reload — leaving you to fix the line and then `restart`, which itself
+  refuses until you do.
 
 ```yaml
 services:
