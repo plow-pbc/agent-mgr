@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
-from .cloud_http import HttpCloudTransport
+from .cloud_http import HttpCloudTransport, validate_token
 from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write, read_regular_text
@@ -231,16 +231,20 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     token = minted.get("token")
     if not isinstance(token, str) or not token:
         raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned no token")
-    # `upsert-env` reads one value per LINE, so a token carrying a newline would
-    # shift its own tail into the next key and the base URL into a credential
-    # field -- corrupting the dotenv after a one-time mint is already spent.
-    # Checked before anything is written, not after.
-    if any(character in token for character in "\r\n"):
+    # The transport's own rule, applied to the MINTED token before it is
+    # written. A bespoke CR/LF check here accepted control and non-ASCII
+    # characters the transport refuses, so the token was persisted and only
+    # then rejected -- after the one-time mint was already spent. `upsert-env`
+    # also reads one value per line, so a newline would shift the token's tail
+    # into the next key and the base URL into a credential field.
+    try:
+        validate_token(token, "the minted token")
+    except AgentMgrError as error:
         raise AgentMgrError(
             ErrorCode.INVALID_RESPONSE,
-            "relay mint returned a token containing a line break",
+            f"relay mint returned an unusable token: {error.message}",
             "nothing was written; report this response to Plow rather than retrying",
-        )
+        ) from None
     # The token lands BEFORE the home is resolved, and that order is the whole
     # point: the mint is one-time, so anything that raises between receiving it
     # and writing it destroys a credential nobody can get back. Home discovery
@@ -333,13 +337,23 @@ def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
         return sum(1 for p in participants if isinstance(p, dict) and p.get("type") == "member")
 
     ones = [row for row in rows if members(row) == 1]
-    # A line can carry several one-to-one chats -- one per person who has texted
-    # that number. `min()` broke that tie by whatever order the API happened to
-    # return, so provisioning could silently pick ANOTHER CONTACT'S DM as the
-    # home and deliver this owner's cron output and private replies into it.
-    # There is nothing in the listing that says which of them is the owner's, so
-    # the honest answer is to refuse and make the caller name it.
-    if len(ones) != 1:
+    # Three outcomes, not two. Classifying by "is there exactly one 1:1" folded
+    # the groups-only case into ambiguity, and its recovery -- `set-home` --
+    # accepts any listed uid, INCLUDING a group: the owner's cron output and
+    # unprompted replies would then land in front of every member of it. A line
+    # with no 1:1 has no private home to name, which is a different problem
+    # with a different fix.
+    if not ones:
+        raise EmptyGrant(
+            ErrorCode.IO_ERROR,
+            f"{line_uid} carries only group chats, so there is no private home on it",
+            "text that number from the owner's phone to open a one-to-one, then set the home",
+        )
+    if len(ones) > 1:
+        # A line can carry several 1:1s -- one per person who has texted that
+        # number -- and nothing in the listing says which is the owner's, so
+        # picking by API order could hand another contact's DM the owner's
+        # private output.
         raise AmbiguousHome(
             ErrorCode.INVALID_ARGUMENT,
             f"{line_uid} carries {len(ones)} one-to-one chats, so the home is ambiguous",

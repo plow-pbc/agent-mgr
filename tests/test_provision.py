@@ -266,14 +266,21 @@ def test_a_legacy_only_dotenv_still_blocks_a_second_mint(
     assert dotenv.read_text() == "PLOW_CHAT_TOKEN=legacy_live\n"
 
 
-def test_a_token_with_a_line_break_is_refused_before_anything_is_written(
-    run, instance, tmp_path, plow: _Plow
+@pytest.mark.parametrize(
+    "token",
+    ["plow_broken\ninjected", "plow_broken\x07bell", "plow_br\u00f6ken"],
+    ids=["newline", "control", "non-ascii"],
+)
+def test_an_unusable_minted_token_is_refused_before_anything_is_written(
+    run, instance, tmp_path, plow: _Plow, token
 ) -> None:
-    """`upsert-env` reads one value per line, so a newline in the token would
-    shift its tail into the next key and the base URL into a credential field --
-    corrupting the dotenv after a one-time mint is already spent."""
+    """The transport's own rule, applied before the write. A bespoke CR/LF check
+    accepted control and non-ASCII characters the transport refuses, so the
+    token was persisted and only then rejected -- after the one-time mint was
+    already spent. `upsert-env` also reads one value per line, so a newline
+    would shift the token's tail into the next key."""
     _restored(run, instance)
-    plow.token = "plow_broken\ninjected"
+    plow.token = token
     plow.chats = [_chat("cht_home", 1)]
     dotenv = tmp_path / "home" / ".hermes-rowan" / ".env"
     before = dotenv.read_text()
@@ -281,5 +288,26 @@ def test_a_token_with_a_line_break_is_refused_before_anything_is_written(
     result = run("provision", "rowan", "ln_p3", env=plow.environment)
 
     assert result.returncode != 0
-    assert "line break" in result.stderr
+    assert "unusable token" in result.stderr
     assert dotenv.read_text() == before
+
+
+def test_a_groups_only_line_is_not_treated_as_an_ambiguous_home(
+    run, instance, tmp_path, plow: _Plow
+) -> None:
+    """A line carrying only groups has no private home at all, which is a
+    different problem from too many candidates -- and the ambiguity recovery,
+    `set-home`, accepts any listed uid INCLUDING a group, which would put the
+    owner's cron output and unprompted replies in front of every member."""
+    _restored(run, instance)
+    plow.chats = [_chat("cht_group_a", 3), _chat("cht_group_b", 4)]
+
+    result = run("provision", "rowan", "ln_p3", env=plow.environment)
+
+    assert result.returncode != 0
+    assert "only group chats" in result.stderr
+    assert "ambiguous" not in result.stderr
+    assert (
+        f"PLOW_AGENT_TOKEN={TOKEN}"
+        in (tmp_path / "home" / ".hermes-rowan" / ".env").read_text().splitlines()
+    )

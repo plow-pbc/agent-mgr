@@ -36,7 +36,10 @@ agent-mgr sign-in errands     # device-code OAuth; hand the URL to whoever owns 
 
 `agent-mgr provision <name> <line-uid>` mints it server-side against a line this
 account already holds a live chat on, the way cloud provisioning does — no code,
-no phone, nothing to text. Use it whenever the agent is going on a number the
+no phone, nothing to text. **It authenticates as you**, so it needs
+`PLOW_API_BASE` and `PLOW_API_TOKEN` in the environment, the same pair the
+`cloud-*` commands use — that is the whole reason it can skip the text, and
+without them it refuses before minting anything. Use it whenever the agent is going on a number the
 account already owns; `agent-mgr chats <name>` on any existing agent names the
 line uids. It refuses if the line carries more than one one-to-one chat, because
 the home would be ambiguous and picking wrong sends this owner's private output

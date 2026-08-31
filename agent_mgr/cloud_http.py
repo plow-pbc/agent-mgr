@@ -49,6 +49,25 @@ class CloudTransport(Protocol):
     ) -> object: ...
 
 
+def validate_token(value: str, name: str) -> str:
+    """The one rule for a credential this tool will send or store.
+
+    Exported because `provision` has to apply it to a MINTED token BEFORE the
+    token is written: the mint is one-time, so a token this transport would
+    later reject must be caught while there is still something to report, not
+    after it is on disk. A bespoke check there accepted control and non-ASCII
+    characters this one refuses.
+    """
+    if not value.isascii() or any(
+        ord(character) < 0x20 or ord(character) == 0x7F for character in value
+    ):
+        raise AgentMgrError(
+            ErrorCode.CONFIGURATION_ERROR,
+            f"{name} contains invalid characters",
+        )
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class HttpCloudTransport:
     base_url: str
@@ -68,13 +87,7 @@ class HttpCloudTransport:
                 ErrorCode.CONFIGURATION_ERROR,
                 "missing required environment variable: PLOW_API_TOKEN",
             )
-        if not raw_token.isascii() or any(
-            ord(character) < 0x20 or ord(character) == 0x7F for character in raw_token
-        ):
-            raise AgentMgrError(
-                ErrorCode.CONFIGURATION_ERROR,
-                "PLOW_API_TOKEN contains invalid characters",
-            )
+        validate_token(raw_token, "PLOW_API_TOKEN")
         token = raw_token.strip()
         if not token:
             raise AgentMgrError(

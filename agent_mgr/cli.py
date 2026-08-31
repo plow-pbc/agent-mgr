@@ -280,7 +280,9 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
             # could not discover the path that needs no text at all.
             print(
                 f"\n  on a line this account already holds, replace activate with:\n"
-                f"  agent-mgr provision {name} <line-uid>   # no code, no phone"
+                f"  agent-mgr provision {name} <line-uid>   # no code, no phone\n"
+                "  (needs PLOW_API_BASE + PLOW_API_TOKEN: it mints as you, which is\n"
+                "   why there is no code to text)"
             )
         return 0
     if operation == "resolve":
