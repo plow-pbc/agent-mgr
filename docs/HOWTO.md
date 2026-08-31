@@ -40,9 +40,12 @@ agent-mgr new errands ~/services/errands-hermes-agent
 ```
 
 **B. Another instance of an existing repo** — e.g. a second person on
-`life-assistant-hermes-agent`. No scaffolding, just a registry row:
+`life-assistant-hermes-agent`. No scaffolding, just a registry row —
+`register` refuses a directory that doesn't exist, so clone the repo first
+if this host doesn't have it:
 
 ```sh
+git clone git@github.com:plow-pbc/life-assistant-hermes-agent.git ~/services/life-assistant-hermes-agent
 agent-mgr register bob ~/services/life-assistant-hermes-agent
 ```
 
