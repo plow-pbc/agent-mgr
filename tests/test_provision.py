@@ -346,3 +346,27 @@ def test_a_whitespace_only_token_is_refused_before_the_write(
     assert result.returncode != 0
     assert "returned no token" in result.stderr
     assert dotenv.read_text() == before
+
+
+def test_a_reload_refused_by_the_guard_recommends_a_command_that_clears_it(
+    run, instance, tmp_path, plow: _Plow
+) -> None:
+    """The reload was refused by the transition guard, so a bare `restart`
+    walks into the same refusal -- the recovery has to carry what clears it."""
+    _restored(run, instance)
+    plow.chats = [_chat("cht_home", 1)]
+    broken = tmp_path / "brokenbin"
+    broken.mkdir()
+    (broken / "docker").write_text("#!/bin/sh\nexit 1\n")
+    (broken / "docker").chmod(0o755)
+
+    result = run(
+        "provision",
+        "rowan",
+        "ln_p3",
+        env=plow.environment | {"PATH": f"{broken}:{os.environ['PATH']}"},
+    )
+
+    if result.returncode != 0:
+        assert "credential IS written" in result.stderr
+        assert "AGENT_TRANSITION_ACK=1 agent-mgr restart rowan" in result.stderr

@@ -327,8 +327,11 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
             ErrorCode.IO_ERROR,
             f"{agent.name}'s credential IS written -- do not re-run provision, the mint is "
             f"spent. The gateway did not reload ({error.message}); "
-            f"restart it with 'agent-mgr restart {agent.name}'.",
-            f"agent-mgr restart {agent.name}",
+            f"restart it with 'AGENT_TRANSITION_ACK=1 agent-mgr restart {agent.name}'.",
+            # The ACK is not decoration: the reload was refused by the same
+            # transition guard a bare `restart` walks into, so recommending the
+            # bare form sends the operator back into the refusal they just hit.
+            f"AGENT_TRANSITION_ACK=1 agent-mgr restart {agent.name}",
         ) from None
     return 0
 
@@ -613,7 +616,9 @@ def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
     if not token:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            f"PLOW_AGENT_TOKEN is empty in {dotenv} -- run 'agent-mgr activate {agent.name}' first",
+            f"PLOW_AGENT_TOKEN is empty in {dotenv} -- give {agent.name} a credential first: "
+            f"'agent-mgr provision {agent.name} <line-uid>' on a line this account already holds, "
+            f"or 'agent-mgr activate {agent.name}' for a new number",
         )
     base = dotenv_read(dotenv, "PLOW_API_BASE") or "https://api.plow.co"
     response = compose(
