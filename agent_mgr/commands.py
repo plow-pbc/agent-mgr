@@ -226,12 +226,25 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     try:
         home = _home_chat_on_line(transport.base_url, token, line_uid)
     except AgentMgrError as error:
+        # Two different failures, and pointing both at `set-home` was wrong:
+        # it validates the uid against the SAME listing, so on an empty grant
+        # every uid it could be given is rejected -- a recovery that cannot
+        # succeed, offered to an operator holding a spent credential.
+        #
+        # Ambiguity is the set-home case: the chats exist, this tool just may
+        # not choose between them. An empty grant is not; nothing is reachable
+        # yet, and the fix is on the line, after which set-home works.
+        recovery = (
+            f"agent-mgr set-home {agent.name} <cht_...>"
+            if "ambiguous" in error.message
+            else f"give {line_uid} a chat this account owns, then "
+            f"'agent-mgr set-home {agent.name} <cht_...>'"
+        )
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
             f"{agent.name}'s credential IS written -- do not re-run provision, the mint is "
-            f"spent. Its home is not set: {error.message}. Name it with "
-            f"'agent-mgr set-home {agent.name} <cht_...>'.",
-            f"agent-mgr set-home {agent.name} <cht_...>",
+            f"spent. Its home is not set: {error.message}. Recovery: {recovery}.",
+            recovery,
         ) from None
     upsert(
         agent,
@@ -275,7 +288,7 @@ def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
             f"the minted grant reaches no chat on {line_uid}",
-            "the line must already carry a chat this account owns",
+            "that line must carry a chat this account owns before the agent has a home",
         )
 
     # The 1:1 is the home: cron and unprompted output land there, and a group

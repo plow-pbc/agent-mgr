@@ -172,6 +172,10 @@ def test_a_grant_reaching_no_chat_is_an_error_not_a_silent_agent(
     # Present but empty is what `restore` seeds; what must not happen is a home
     # invented from a listing that named none.
     assert "PLOW_HOME_CHANNEL=" in lines
+    # And the recovery must be one that can actually succeed. `set-home`
+    # validates the uid against this same empty listing, so offering it alone
+    # hands a spent-credential operator a command that refuses every value.
+    assert "give ln_p3 a chat" in result.stderr
 
 
 def test_provision_refuses_before_restore_has_run(run, instance, plow: _Plow) -> None:
