@@ -513,23 +513,31 @@ class LocalCloudApi:
         # launch a startup in the gap, and DELETE then dropped the row out from
         # under a gateway that was already coming up -- one running against a
         # home nothing on this host owns.
+        #
+        # It also has to span `registry.remove`, which is a read-modify-write of
+        # the whole file: two DELETEs for DIFFERENT agents could each read the
+        # rows, each write their own result, and the second write would restore
+        # the row the first had removed -- both answering 200 while one stopped
+        # agent stayed registered. Serialising deletes costs a concurrent caller
+        # the wait for a `compose down`; losing a removal costs a row that
+        # names a container nobody is running.
         with self._lock:
             if agent.name in self._starting:
                 raise ApiError(409, f"{agent.name} is still provisioning; retry once it settles")
             self._deleting.add(agent.name)
-        try:
-            resource = self._resource(agent, deleted=True)
-            self._guarded(agent, ["down"], f"could not stop {agent_id}")
-            # The row goes with the container. exe's DELETE makes the agent stop
-            # existing, and answering with a deleted resource while leaving a
-            # row the next GET resolves would report a deletion that did not
-            # happen. The HOME stays -- credentials, checkpoint and cron live
-            # there and no HTTP request may destroy them; `register` brings the
-            # agent back against the same home.
-            self.registry.remove(agent.name)
-            return resource.to_json()
-        finally:
-            self._deleting.discard(agent.name)
+            try:
+                resource = self._resource(agent, deleted=True)
+                self._guarded(agent, ["down"], f"could not stop {agent_id}")
+                # The row goes with the container. exe's DELETE makes the agent
+                # stop existing, and answering with a deleted resource while
+                # leaving a row the next GET resolves would report a deletion
+                # that did not happen. The HOME stays -- credentials, checkpoint
+                # and cron live there and no HTTP request may destroy them;
+                # `register` brings the agent back against the same home.
+                self.registry.remove(agent.name)
+                return resource.to_json()
+            finally:
+                self._deleting.discard(agent.name)
 
 
 def _without_control_token() -> None:
@@ -688,9 +696,13 @@ def serve(registry: Registry, root: Any, host: str, port: int) -> int:
             "AGENT_MGR_SERVE_TOKEN is unset",
             "these routes start and stop containers; set a bearer token before serving",
         )
+    # Before anything that can spawn a child: `resolve_bind` runs `tailscale ip`
+    # for a tailnet bind, and that subprocess inherited the fleet-wide bearer
+    # controlling every local agent. The handler already holds the value it
+    # compares against, so the variable is not needed past this point.
+    _without_control_token()
     host = resolve_bind(host)
     handler = build_handler(LocalCloudApi(registry, root), token)
-    _without_control_token()
     with ThreadingHTTPServer((host, port), handler) as httpd:
         print(
             f"serving Plow's cloud-agent API for local agents on http://{host}:{httpd.server_address[1]}"

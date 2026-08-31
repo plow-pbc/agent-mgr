@@ -669,3 +669,49 @@ def test_the_control_bearer_does_not_reach_agent_hooks(monkeypatch) -> None:
     serve_module._without_control_token()
 
     assert "AGENT_MGR_SERVE_TOKEN" not in os.environ
+
+
+def test_the_control_bearer_is_gone_before_the_first_subprocess(tmp_path, monkeypatch) -> None:
+    """A tailnet bind runs `tailscale ip`, and that child inherited the
+    fleet-wide bearer that starts and stops every local agent. The environment
+    has to be clean before the first thing that can spawn one, not after."""
+    import agent_mgr.serve as serve_module
+    from agent_mgr.errors import AgentMgrError, ErrorCode
+
+    seen: dict[str, str | None] = {}
+
+    def resolving(host: str) -> str:
+        seen["token"] = os.environ.get("AGENT_MGR_SERVE_TOKEN")
+        # Stop here: the point under test is what the environment held by now,
+        # and going further would bind a socket.
+        raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, "stop")
+
+    monkeypatch.setenv("AGENT_MGR_SERVE_TOKEN", "fleet-wide-secret")
+    monkeypatch.setattr(serve_module, "resolve_bind", resolving)
+
+    with pytest.raises(AgentMgrError):
+        serve_module.serve(Registry(tmp_path / "agents"), ROOT, "agent-host", 0)
+
+    assert seen["token"] is None
+
+
+def test_the_registry_write_happens_under_the_lock(api: _Api, monkeypatch) -> None:
+    """`registry.remove` is a read-modify-write of the whole file, so two
+    DELETEs for DIFFERENT agents could each read the rows and each write their
+    own result -- the second write restoring the row the first removed, both
+    answering 200 with one stopped agent still registered."""
+    held: dict[str, bool] = {}
+    real = Registry.remove
+
+    def traced(self, name: str) -> None:
+        # `_is_owned()` answers for THIS thread specifically, which a
+        # non-blocking acquire on an RLock cannot: the owner re-acquires it
+        # happily whether or not it was already held.
+        held[name] = api._lock._is_owned()  # type: ignore[attr-defined]
+        real(self, name)
+
+    monkeypatch.setattr(Registry, "remove", traced)
+
+    api.delete("life")
+
+    assert held["life"]
