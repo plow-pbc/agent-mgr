@@ -44,7 +44,7 @@ agent-mgr activate errands   # phone bind, then a line-scoped agent credential
 agent-mgr up errands
 agent-mgr cron-sync errands  # only if its agent.env names a cron spec
 agent-mgr sign-in errands
-agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
+agent-mgr set-latch errands  # paste Latch's static-credential JSON; only if it drives a Mac
 agent-mgr check-latch errands
 ```
 
