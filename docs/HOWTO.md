@@ -46,14 +46,14 @@ agent-mgr new errands ~/services/errands-hermes-agent
 agent-mgr register bob ~/services/life-assistant-hermes-agent
 ```
 
-Then, for either case:
+Then, for either case (`<name>` is whichever you just registered):
 
 ```sh
-agent-mgr restore errands     # the whole deploy: home, config, plugin, skills, restore hook
-agent-mgr activate errands    # prints a code — text it from THAT agent's phone
-agent-mgr up errands          # start the container
-agent-mgr cron-sync errands   # only if its agent.env names a cron spec
-agent-mgr sign-in errands     # device-code OAuth for the model credential
+agent-mgr restore <name>     # the whole deploy: home, config, plugin, skills, restore hook
+agent-mgr activate <name>    # prints a code — text it from THAT agent's phone
+agent-mgr up <name>          # start the container
+agent-mgr cron-sync <name>   # only if its agent.env names a cron spec
+agent-mgr sign-in <name>     # device-code OAuth for the model credential
 ```
 
 Rules that matter, in order of how much they cost to get wrong:
@@ -72,8 +72,9 @@ Rules that matter, in order of how much they cost to get wrong:
 - **`up` before `sign-in`** — `sign-in` runs inside the container, so it
   refuses until one is running. And **don't restart the agent while `sign-in`
   is waiting on the browser** — the session lives in the container. If
-  `activate` fails and tells you to `restart`, do that *before* starting
-  `sign-in`. A dropped `sign-in` re-runs for free; `activate` does not.
+  `activate` reports a failed follow-up, run the recovery command it prints
+  *before* starting `sign-in`. A dropped `sign-in` re-runs for free;
+  `activate` does not.
 
 On re-activation, an agent keeps its line: `activate` remembers the canonical
 `PLOW_HOME_CHANNEL` and narrows the fresh token to it, so group delivery
@@ -126,7 +127,7 @@ Then the sequence (each step finishes before the next):
 | 4 | you | `agent-mgr sign-in bob` — prints a device-code URL, waits on the browser |
 | 5 | **them** | open the URL in *their* browser, enter the code |
 | 6 | **them** | Plow Latch → Connect a client → mint an agent credential |
-| 7 | you | `set-latch bob` with that pair, `check-latch bob`, `restart bob` |
+| 7 | you | `set-latch bob` with that pair (it reloads a running agent itself), then `check-latch bob` |
 | 8 | you | `agent-mgr cron-sync bob` — only if the repo names a cron spec |
 | 9 | **them** | reply to the agent's 👋 from that handset — it runs setup (`life-assistant-hermes-agent` README § Bring-up) |
 
@@ -246,8 +247,9 @@ write one (derived image or extra mounts). Two rules for that override:
   directory. Name paths through a variable set in `agent.env`.
 - **A `build:` must carry `pull_policy: never`** (or `build`) — the default
   *pulls* the tag when absent locally, so a registry image could land over
-  what this host built and run with the agent's credentials. A digest-pinned
-  `image:` satisfies the guard too. Until one of those is there,
+  what this host built and run with the agent's credentials. (A digest-pinned
+  `image:` satisfies the guard only for a service *without* `build:`.) Until
+  the line is there,
   `resolve-guard` refuses every Compose-resolving command — everything but
   the registry bookkeeping (`ls`, `register`, `unregister`, `new`,
   `resolve`). A running container keeps running; you just lose the agent-mgr
