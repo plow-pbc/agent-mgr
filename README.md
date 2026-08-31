@@ -37,16 +37,40 @@ plugin and the pinned fleet skills (`google-workspace`, `plow-invite`) through
 own `skills.tsv` pins a fleet destination keeps its instance copy for that
 destination instead).
 
+Then the whole setup, end to end (the [HOWTO](docs/HOWTO.md) explains each
+step; `docker`, `python3` and an authenticated `gh` are the install block's
+prerequisites above):
+
 ```sh
-agent-mgr new errands ~/services/errands-hermes-agent
-agent-mgr deploy errands     # the whole deploy: config, plugin, deploy hook
-agent-mgr activate errands   # phone bind, then a line-scoped agent credential
+# 1. The agent's repo: clone an existing one — or scaffold fresh with
+#    `agent-mgr new errands ~/services/errands-hermes-agent`, which also registers it
+git clone git@github.com:plow-pbc/life-assistant-hermes-agent.git ~/services/life-assistant-hermes-agent
+agent-mgr register errands ~/services/life-assistant-hermes-agent
+
+# 2. Deploy
+agent-mgr deploy errands              # home, config, plugin, pinned skills, deploy hook
+
+# 3. Per-person config (after deploy, before up)
+agent-mgr resolve errands             # prints AGENT_HOME — put AGENT_TZ=... in the .env there
+
+# 4. Activate, start, sign in
+agent-mgr activate errands            # text the code from the owner's phone; one-time spend
 agent-mgr up errands
-agent-mgr cron-sync errands  # only if its agent.env names a cron spec
-agent-mgr sign-in errands
-agent-mgr set-latch errands  # the Mac's pair, on stdin; only if it drives one
-agent-mgr check-latch errands
+agent-mgr cron-sync errands           # only if its agent.env names a cron spec
+agent-mgr sign-in errands             # device-code OAuth in the owner's browser
+
+# 5. Smoke test
+agent-mgr agent errands "hello, who are you?"
+agent-mgr check-connectors errands
+
+# 6. (Optional) Latch — let it drive a Mac. Mint the pair in Plow Latch ON THAT MAC, then:
+agent-mgr set-latch errands           # prompts for DOMO_DEVICE_UID, then DOMO_MCP_TOKEN, on stdin
+agent-mgr check-latch errands         # "latch reachable ... (HTTP 200)"
 ```
+
+Tearing a test agent down is `down`, `unregister`, then delete its
+`~/.hermes-<name>` home — the nightly backup globs `~/.hermes*`, so a dead
+test home would be archived forever.
 
 Every command accepts `--json`. Reads return typed domain objects; operational
 commands return a versioned envelope with exit status and captured output.
@@ -149,7 +173,7 @@ these repos searchable.
 
 **A repo is not an agent — a registry row is.** Identity derives from the
 registered name rather than the directory, so a row may be named for a person
-(`sam-property`) against a repo named for a capability — and one checkout can
+(`mark-property`) against a repo named for a capability — and one checkout can
 serve several rows at once. See
 [One repo, several people](#one-repo-several-people) for what makes that safe.
 
