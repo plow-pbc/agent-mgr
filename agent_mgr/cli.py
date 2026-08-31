@@ -172,7 +172,7 @@ def _cloud_unsupported(operation: str, args: list[str], registry: Registry) -> s
     is told the truth -- exe publishes no log surface -- instead of being sent
     to a retry that refuses for a different reason.
     """
-    if operation not in CLOUD_UNSUPPORTED or not args:
+    if not args:
         return None
     try:
         entry = registry.entry(args[0])
@@ -180,8 +180,18 @@ def _cloud_unsupported(operation: str, args: list[str], registry: Registry) -> s
         return None
     if not entry.is_cloud:
         return None
+    if operation in CLOUD_UNSUPPORTED:
+        return (
+            f"{operation} is not available for cloud agent {entry.name}: "
+            f"{CLOUD_UNSUPPORTED[operation]}"
+        )
+    # Every other checkout-only verb lands here. `compose` reaches
+    # `Registry.lookup()` and refuses because a cloud agent has no checkout, so
+    # "run it without --json" is a wrong next step for the same reason `logs`
+    # was: the retry fails too, just later and for a different reason.
     return (
-        f"{operation} is not available for cloud agent {entry.name}: {CLOUD_UNSUPPORTED[operation]}"
+        f"{operation} needs a checkout, and cloud agent {entry.name} has none: "
+        "it is an exe tenant, not a directory on this host"
     )
 
 

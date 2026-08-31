@@ -367,3 +367,17 @@ def test_json_logs_on_a_cloud_agent_says_why_not_retry_without_json(run) -> None
     assert result.returncode != 0
     assert "no log surface" in result.stdout + result.stderr
     assert "run it without --json" not in result.stdout + result.stderr
+
+
+def test_json_compose_on_a_cloud_agent_does_not_prescribe_a_failing_retry(run) -> None:
+    """`compose` reaches `Registry.lookup()` and refuses because a cloud agent
+    has no checkout, so "run it without --json" is the same wrong next step
+    `logs` used to give: the retry fails, just later and for another reason."""
+    assert run("register-cloud", "mary", "abc123").returncode == 0
+
+    result = run("--json", "compose", "mary", "ps")
+
+    assert result.returncode != 0
+    combined = result.stdout + result.stderr
+    assert "has none" in combined
+    assert "run it without --json" not in combined
