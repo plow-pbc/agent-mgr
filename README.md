@@ -43,7 +43,8 @@ agent-mgr restore errands    # the whole deploy: config, plugin, restore hook
 agent-mgr activate errands   # phone bind, then a line-scoped agent credential
                              # OR, on a line this account already holds, with
                              # PLOW_API_BASE + PLOW_API_TOKEN set:
-                             #   agent-mgr provision errands ln_xxx   -- no code, no phone
+                             #   agent-mgr provision errands ln_xxx   -- no code, no phone,
+                             #   if that line already has a 1:1 with the owner
 agent-mgr up errands
 agent-mgr cron-sync errands  # only if its agent.env names a cron spec
 agent-mgr sign-in errands

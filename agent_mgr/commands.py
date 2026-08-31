@@ -179,6 +179,16 @@ class EmptyGrant(AgentMgrError):
     """The minted grant reaches no chat, so the fix is on the line itself."""
 
 
+class GroupsOnlyLine(AgentMgrError):
+    """The line carries chats, but none of them is private.
+
+    Distinct from `EmptyGrant` because the fix is distinct and, more to the
+    point, because `set-home` is WRONG here: it accepts any listed uid, and
+    every uid on this line is a group, so following a generic "then set-home"
+    would put the owner's cron and unprompted output in front of its members.
+    """
+
+
 class AmbiguousHome(AgentMgrError):
     """The line carries several 1:1 chats, so `set-home` is the recovery.
 
@@ -229,7 +239,10 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     if not isinstance(minted, dict):
         raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned invalid JSON")
     token = minted.get("token")
-    if not isinstance(token, str) or not token:
+    # `.strip()` because `upsert-env` stores the stripped value: a token that is
+    # only whitespace passed a bare truthiness check and `validate_token`, then
+    # the write refused it as empty -- after the one-time mint was spent.
+    if not isinstance(token, str) or not token.strip():
         raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned no token")
     # The transport's own rule, applied to the MINTED token before it is
     # written. A bespoke CR/LF check here accepted control and non-ASCII
@@ -258,7 +271,7 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     )
     try:
         home = _home_chat_on_line(transport.base_url, token, line_uid)
-    except (AmbiguousHome, EmptyGrant) as error:
+    except (AmbiguousHome, EmptyGrant, GroupsOnlyLine) as error:
         # Only the two failures that are actually ABOUT the line get a line
         # recovery. Catching every AgentMgrError sent an API error or a schema
         # failure to "give the line a chat", which is not the problem and not
@@ -271,12 +284,24 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
         # Both recoveries name `up` first: `set_home` reaches into a RUNNING
         # container, so prescribing it against a stopped one is a command that
         # refuses -- the second unrunnable recovery this seam has offered.
-        recovery = (
-            f"agent-mgr up {agent.name}, then 'agent-mgr set-home {agent.name} <cht_...>'"
-            if isinstance(error, AmbiguousHome)
-            else f"give {line_uid} a chat this account owns, then 'agent-mgr up {agent.name}' "
-            f"and 'agent-mgr set-home {agent.name} <cht_...>'"
-        )
+        # Each refusal carries the remediation that fits it, and discarding it
+        # for a generic one is what sent a groups-only operator to `set-home`,
+        # which would have accepted a group.
+        if isinstance(error, AmbiguousHome):
+            recovery = (
+                f"agent-mgr up {agent.name}, then 'agent-mgr set-home {agent.name} <cht_...>'"
+            )
+        elif isinstance(error, GroupsOnlyLine):
+            recovery = (
+                f"{error.remediation}, then 'agent-mgr up {agent.name}' and "
+                f"'agent-mgr set-home {agent.name} <the new cht_...>' -- not one of the group "
+                "uids already on this line"
+            )
+        else:
+            recovery = (
+                f"give {line_uid} a chat this account owns, then 'agent-mgr up {agent.name}' "
+                f"and 'agent-mgr set-home {agent.name} <cht_...>'"
+            )
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
             f"{agent.name}'s credential IS written -- do not re-run provision, the mint is "
@@ -344,7 +369,7 @@ def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
     # with no 1:1 has no private home to name, which is a different problem
     # with a different fix.
     if not ones:
-        raise EmptyGrant(
+        raise GroupsOnlyLine(
             ErrorCode.IO_ERROR,
             f"{line_uid} carries only group chats, so there is no private home on it",
             "text that number from the owner's phone to open a one-to-one, then set the home",

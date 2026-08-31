@@ -53,6 +53,13 @@ SCRUB = frozenset(
         "COMPOSE_ENV_FILE",
         "COMPOSE_ENV_FILES",
         "COMPOSE_PROFILES",
+        # The OPERATOR's account credential, not any agent's. `provision` holds
+        # it to mint, and every transition afterwards runs a repository-owned
+        # pre-transition hook that inherits this environment -- so agent-
+        # controlled code could read the token that speaks for the whole
+        # account. Nothing downstream of a transition has any use for it.
+        "PLOW_API_TOKEN",
+        "PLOW_API_BASE",
     }
 )
 

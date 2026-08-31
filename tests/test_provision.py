@@ -311,3 +311,38 @@ def test_a_groups_only_line_is_not_treated_as_an_ambiguous_home(
         f"PLOW_AGENT_TOKEN={TOKEN}"
         in (tmp_path / "home" / ".hermes-rowan" / ".env").read_text().splitlines()
     )
+
+
+def test_a_groups_only_line_does_not_recommend_a_group_uid(
+    run, instance, tmp_path, plow: _Plow
+) -> None:
+    """`set-home` accepts any listed uid, and on a groups-only line every uid is
+    a group -- so a generic "then set-home" recovery pointed the operator at
+    exactly the thing that puts private cron output in front of its members."""
+    _restored(run, instance)
+    plow.chats = [_chat("cht_group_a", 3), _chat("cht_group_b", 4)]
+
+    result = run("provision", "rowan", "ln_p3", env=plow.environment)
+
+    assert result.returncode != 0
+    assert "only group chats" in result.stderr
+    assert "text that number" in result.stderr
+    assert "not one of the group uids" in result.stderr
+
+
+def test_a_whitespace_only_token_is_refused_before_the_write(
+    run, instance, tmp_path, plow: _Plow
+) -> None:
+    """`upsert-env` stores the STRIPPED value, so a whitespace-only token passed
+    a bare truthiness check and `validate_token`, and the write then refused it
+    as empty -- after the one-time mint was already spent."""
+    _restored(run, instance)
+    plow.token = "   "
+    dotenv = tmp_path / "home" / ".hermes-rowan" / ".env"
+    before = dotenv.read_text()
+
+    result = run("provision", "rowan", "ln_p3", env=plow.environment)
+
+    assert result.returncode != 0
+    assert "returned no token" in result.stderr
+    assert dotenv.read_text() == before
