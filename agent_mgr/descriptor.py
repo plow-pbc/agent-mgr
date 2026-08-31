@@ -23,12 +23,12 @@ OWNED_KEYS = frozenset(
         "AGENT_CONFIG",
         "AGENT_LIVE",
         "AGENT_CONFIRM_TRANSITIONS",
-        "AGENT_RESTORE_HOOK",
+        "AGENT_DEPLOY_HOOK",
         "AGENT_PRE_TRANSITION",
         "AGENT_CRON_SPEC",
     }
 )
-OPTIONAL_PATH_KEYS = frozenset({"AGENT_RESTORE_HOOK", "AGENT_PRE_TRANSITION", "AGENT_CRON_SPEC"})
+OPTIONAL_PATH_KEYS = frozenset({"AGENT_DEPLOY_HOOK", "AGENT_PRE_TRANSITION", "AGENT_CRON_SPEC"})
 KEY = re.compile(r"^[A-Za-z0-9_]+$")
 
 
@@ -85,6 +85,13 @@ def parse_descriptor(file: Path) -> ParsedDescriptor:
     values: dict[str, str] = {}
     hooks: list[str] = []
     for number, key, value in _assignments(text, file):
+        if key == "AGENT_RESTORE_HOOK":
+            # A retired name passed through silently would become hook
+            # environment and the deploy hook would silently stop running.
+            raise AgentMgrError(
+                ErrorCode.INVALID_DESCRIPTOR,
+                f"{file}: line {number}: AGENT_RESTORE_HOOK is now AGENT_DEPLOY_HOOK -- rename it",
+            )
         if key in OWNED_KEYS:
             if not value and key not in OPTIONAL_PATH_KEYS:
                 raise AgentMgrError(
@@ -149,7 +156,7 @@ def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
         image=values.get("AGENT_IMAGE", reference),
         config=config,
         live=values.get("AGENT_LIVE", "0") == "1",
-        restore_hook=_repo_path(repo, values.get("AGENT_RESTORE_HOOK", "")),
+        deploy_hook=_repo_path(repo, values.get("AGENT_DEPLOY_HOOK", "")),
         pre_transition_hook=_repo_path(repo, values.get("AGENT_PRE_TRANSITION", "")),
         cron_spec=_repo_path(repo, values.get("AGENT_CRON_SPEC", "")),
         descriptor=descriptor,

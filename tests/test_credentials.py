@@ -25,7 +25,7 @@ def test_set_latch_uses_getpass_for_a_terminal_token(
     from agent_mgr.registry import Registry
 
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)), check=True)
-    run("restore", "rowan", check=True)
+    run("deploy", "rowan", check=True)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     manager_registry = Registry(registry)
     agent = resolve_agent("rowan", manager_registry, ROOT)
@@ -49,7 +49,7 @@ def test_sign_in_authenticates_against_the_installed_config_not_the_repo_copy(
     Reading the repo copy would mint a credential for a provider it is not using
     the moment the two differ."""
     run("register", "rowan", str(instance("rowan", config="model:\n  provider: openai-codex\n")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     (tmp_path / "home" / ".hermes-rowan" / "config.yaml").write_text(
         "model:\n  provider: anthropic\n"
     )
@@ -61,11 +61,11 @@ def test_sign_in_authenticates_against_the_installed_config_not_the_repo_copy(
     assert "auth add openai-codex" not in calls
 
 
-def test_sign_in_refuses_before_restore_has_run(run, instance):
+def test_sign_in_refuses_before_deploy_has_run(run, instance):
     run("register", "rowan", str(instance("rowan")))
     r = run("sign-in", "rowan")
     assert r.returncode != 0
-    assert "restore" in r.stderr
+    assert "deploy" in r.stderr
 
 
 @pytest.mark.parametrize(
@@ -181,7 +181,7 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
     with it. And whatever spelling a key arrives in, exactly one declaration may
     survive: two readers of this file disagree about which of a pair is live."""
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
     env_file.write_bytes(starting_dotenv)
     b, _ = _fake_docker(tmp_path)
@@ -236,7 +236,7 @@ def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance
     """A pair written for an agent with no latch is a credential no gateway ever
     reads, sitting in a dotenv looking like working configuration."""
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n")
     assert r.returncode != 0
     assert "declares no latch" in r.stderr
@@ -260,7 +260,7 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(
     -- manufactured by the command meant to prevent it. Refused before anything
     reaches the dotenv, so there is nothing to undo."""
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     r = run("set-latch", "rowan", input=stdin)
     assert r.returncode != 0
     assert f"{missing} was empty" in r.stderr
@@ -278,10 +278,10 @@ def test_set_latch_refuses_an_empty_value_rather_than_writing_it(
         # it away first and owes only its own diagnosis.
         ("symlink-out", ["cannot read"]),
         # Named with the .env path, because eight `die` sites in this file share
-        # "run 'agent-mgr restore" -- two of them inside set-latch. A bare
+        # "run 'agent-mgr deploy" -- two of them inside set-latch. A bare
         # fragment would be satisfied by the config.yaml gate at :237, so a
         # setup regression that never reached the plant would keep this green.
-        ("fifo", [".env -- run 'agent-mgr restore"]),
+        ("fifo", [".env -- run 'agent-mgr deploy"]),
     ],
 )
 def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(
@@ -303,7 +303,7 @@ def test_set_latch_will_not_read_a_dotenv_the_gateway_swapped(
     secret = tmp_path / "host-only-secret"
     secret.write_text("BEGIN OPENSSH PRIVATE KEY\n")
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     env_file = tmp_path / "home" / ".hermes-rowan" / ".env"
     env_file.unlink()
     if plant == "symlink-out":
@@ -336,13 +336,13 @@ def test_set_latch_accepts_a_home_symlinked_onto_another_disk(run, instance, tmp
     through that.
 
     Mirrors test_a_home_symlinked_onto_another_disk_still_works, which guards the
-    same setup for restore."""
+    same setup for deploy."""
     target = tmp_path / "srv" / "rowan"
     target.mkdir(parents=True)
     (tmp_path / "home").mkdir(exist_ok=True)
     (tmp_path / "home" / ".hermes-rowan").symlink_to(target)
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     r = run("set-latch", "rowan", input="dev_abc\ntok_xyz\n")
     assert r.returncode == 0, f"a symlinked home was refused: {r.stderr}"
     assert "DOMO_MCP_TOKEN=tok_xyz" in (target / ".env").read_text().splitlines()
@@ -389,7 +389,7 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     # convention as the unreadable-dotenv test above -- asserted, not skipped.
     assert os.geteuid() != 0, "run the suite unprivileged; root ignores the mode bits"
     run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
     original = b"HOSTEX_TOKEN=keep-me\n"
     (home / ".env").write_bytes(original)
@@ -427,7 +427,7 @@ def test_activate_narrows_bootstrap_to_line_granted_canonical_credential(
     """The frozen upstream activation remains the phone bind; agent-mgr only
     narrows its broad result through Plow's existing key endpoint."""
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
     if preexisting:
         (home / ".env").write_text(preexisting)
@@ -470,7 +470,7 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
     run, instance, tmp_path, credential_api
 ):
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
     (home / ".env").write_text(
         "PLOW_CHAT_CHAT_UID=cht_home\n"
@@ -501,7 +501,7 @@ def test_scope_chat_credential_finishes_an_interrupted_activation_publication(
     run, instance, tmp_path, credential_api
 ):
     run("register", "rowan", str(instance("rowan")))
-    run("restore", "rowan")
+    run("deploy", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
     (home / ".env").write_text(
         "PLOW_HOME_CHANNEL=cht_existing\n"

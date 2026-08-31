@@ -44,7 +44,7 @@ SCRUB = frozenset(
         "AGENT_CONFIG",
         "AGENT_LIVE",
         "AGENT_CONFIRM_TRANSITIONS",
-        "AGENT_RESTORE_HOOK",
+        "AGENT_DEPLOY_HOOK",
         "AGENT_PRE_TRANSITION",
         "AGENT_CRON_SPEC",
         "AGENT_DESCRIPTOR",

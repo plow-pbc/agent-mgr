@@ -25,7 +25,7 @@ then check it works:
 agent-mgr ls
 ```
 
-You need **`gh`, authenticated** (`gh auth status`) — `restore` installs the
+You need **`gh`, authenticated** (`gh auth status`) — `deploy` installs the
 Plow Chat plugin and fleet skills through `gh api`.
 
 ## Set up a new agent
@@ -49,7 +49,7 @@ agent-mgr register bob ~/services/life-assistant-hermes-agent
 Then, for either case (`<name>` is whichever you just registered):
 
 ```sh
-agent-mgr restore <name>     # the whole deploy: home, config, plugin, skills, restore hook
+agent-mgr deploy <name>     # the whole deploy: home, config, plugin, skills, deploy hook
 agent-mgr activate <name>    # prints a code — text it from THAT agent's phone
 agent-mgr up <name>          # start the container
 agent-mgr cron-sync <name>   # only if its agent.env names a cron spec
@@ -63,10 +63,10 @@ Rules that matter, in order of how much they cost to get wrong:
   texts the code back. Wrong handset = wrong owner, permanently. The code has
   a short TTL and cannot be minted ahead of time; `activate` polls until the
   text arrives.
-- **Per-person values go in the instance dotenv, after `restore` and before
+- **Per-person values go in the instance dotenv, after `deploy` and before
   `up`.** e.g. `AGENT_TZ=America/Chicago` in the `.env` inside the home that
-  `agent-mgr resolve <name>` prints. Before `restore` there is no home (don't
-  create it yourself — `restore` writes the dotenv `0600` only when absent);
+  `agent-mgr resolve <name>` prints. Before `deploy` there is no home (don't
+  create it yourself — `deploy` writes the dotenv `0600` only when absent);
   after `up` a change needs a `restart` to reach the container. Verify with
   `agent-mgr resolve <name>`, which reads the dotenv back.
 - **`up` before `sign-in`** — `sign-in` runs inside the container, so it
@@ -122,7 +122,7 @@ Then the sequence (each step finishes before the next):
 
 | | who | what |
 |---|---|---|
-| 1 | you | `register` (or `new`), `restore`, set `AGENT_TZ` in their dotenv, `up` |
+| 1 | you | `register` (or `new`), `deploy`, set `AGENT_TZ` in their dotenv, `up` |
 | 2 | you | `agent-mgr activate bob` — prints the code and number, then polls |
 | 3 | **them** | text the code **from the handset that should own the agent** |
 | 4 | you | `agent-mgr sign-in bob` — prints a device-code URL, waits on the browser |
@@ -152,7 +152,7 @@ and that network namespace.
 
 ## Backups
 
-The repo is the image and the home is the volume: `restore` rebuilds the
+The repo is the image and the home is the volume: `deploy` rebuilds the
 image half from git any time, but nothing rebuilds the home — `auth.json`,
 the dotenv, sessions, memories. So back the homes up nightly.
 
@@ -221,7 +221,7 @@ Step 2, in the same shell:
 ```sh
 mkdir "$home" \
   && tar -C "$home" -xzf "$a" \
-  && agent-mgr restore errands \
+  && agent-mgr deploy errands \
   && agent-mgr up errands
 ```
 
@@ -286,17 +286,17 @@ agent on the next upstream push.
 
 ## Bumping pins
 
-The shared pins live in `runtime/stack.json`. `agent-mgr restore <name>`
+The shared pins live in `runtime/stack.json`. `agent-mgr deploy <name>`
 applies them as part of the whole deploy — the normal path. When only one
 thing changed:
 
 - `agent-mgr install-plugin <name>` — after bumping
-  `artifacts.plow_chat_plugin.revision`; skips an expensive restore hook.
+  `artifacts.plow_chat_plugin.revision`; skips an expensive deploy hook.
 - `agent-mgr install-skill <name>` — the fleet skills
   (`google_workspace_skill`, `plow_invite_skill`); also the first fix for an
   agent reporting `NOT_AUTHENTICATED` from the image-bundled
   `google-workspace` copy. A destination the agent's own `skills.tsv` pins is
-  authoritative and skipped — bump that row and re-run `restore` instead.
+  authoritative and skipped — bump that row and re-run `deploy` instead.
 
 **Two SHA pins exist and only one may move** — before bumping either, read
 *What this builds on* in the [README](../README.md), which owns that rule.

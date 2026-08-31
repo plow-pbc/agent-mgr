@@ -37,7 +37,7 @@ def test_resolve_json_is_a_versioned_typed_object(run, instance):
             "config": str(repo / "config.yaml"),
             "live": False,
             "transition_confirmation_required": False,
-            "restore_hook": None,
+            "deploy_hook": None,
             "pre_transition_hook": None,
             "cron_spec": None,
         },

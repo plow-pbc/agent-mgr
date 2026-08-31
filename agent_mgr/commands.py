@@ -77,7 +77,7 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
     require_own_home(agent, registry)
     if not agent.home.is_dir():
         raise AgentMgrError(
-            ErrorCode.IO_ERROR, f"no {agent.home} -- run 'agent-mgr restore {agent.name}' first"
+            ErrorCode.IO_ERROR, f"no {agent.home} -- run 'agent-mgr deploy {agent.name}' first"
         )
     dotenv = agent.home / ".env"
     existing_home = (
@@ -129,7 +129,7 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
     dotenv = agent.home / ".env"
     if not dotenv.is_file():
         raise AgentMgrError(
-            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr restore {agent.name}' first"
+            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr deploy {agent.name}' first"
         )
     home_uid = dotenv_read(dotenv, "PLOW_HOME_CHANNEL")
     token = dotenv_read(dotenv, "PLOW_AGENT_TOKEN")
@@ -203,7 +203,7 @@ def sign_in(agent: ResolvedAgent, registry: Registry) -> int:
     installed = agent.home / "config.yaml"
     if not installed.is_file():
         raise AgentMgrError(
-            ErrorCode.IO_ERROR, f"no {installed} -- run 'agent-mgr restore {agent.name}' first"
+            ErrorCode.IO_ERROR, f"no {installed} -- run 'agent-mgr deploy {agent.name}' first"
         )
     require_running(agent, registry)
     result = compose(
@@ -302,7 +302,7 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
     if not installed.is_file() or not dotenv.is_file():
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
-            f"no {installed if not installed.is_file() else dotenv} -- run 'agent-mgr restore {agent.name}' first",
+            f"no {installed if not installed.is_file() else dotenv} -- run 'agent-mgr deploy {agent.name}' first",
         )
     if not config_declares_latch(installed):
         raise AgentMgrError(
@@ -333,7 +333,7 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
     if not dotenv.is_file() or not installed.is_file():
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
-            f"no {dotenv if not dotenv.is_file() else installed} -- run restore first",
+            f"no {dotenv if not dotenv.is_file() else installed} -- run deploy first",
         )
     if not config_declares_latch(installed):
         print(f"no latch configured for {agent.name} -- its config declares no latch server")

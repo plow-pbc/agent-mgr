@@ -9,7 +9,7 @@ from conftest import fake_curl, install_fake_gh
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def test_release_zipapp_contains_every_resource_needed_for_restore(tmp_path):
+def test_release_zipapp_contains_every_resource_needed_for_deploy(tmp_path):
     artifact = tmp_path / "agent-mgr.pyz"
     subprocess.run(
         [sys.executable, str(ROOT / "scripts" / "build_zipapp.py"), str(artifact)],
@@ -33,14 +33,14 @@ def test_release_zipapp_contains_every_resource_needed_for_restore(tmp_path):
         check=False,
     )
     assert created.returncode == 0, created.stderr
-    restored = subprocess.run(
-        [str(artifact), "restore", "rowan"],
+    deployed = subprocess.run(
+        [str(artifact), "deploy", "rowan"],
         env=environment,
         text=True,
         capture_output=True,
         check=False,
     )
-    assert restored.returncode == 0, restored.stderr
+    assert deployed.returncode == 0, deployed.stderr
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").is_file()
     assert (
         tmp_path

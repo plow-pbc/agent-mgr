@@ -76,7 +76,7 @@ def load_spec(text, env):
         # an expanded deliver lands in hermes argv AND is persisted verbatim in
         # jobs.json -- so only delivery identifiers, names ending in _UID or
         # _CHANNEL, may be referenced at all. A blank resolved value refuses
-        # too: restore writes PLOW_HOME_CHANNEL= empty until activate runs, and
+        # too: deploy writes PLOW_HOME_CHANNEL= empty until activate runs, and
         # "plow_chat:" is the silent-drop target this field exists to close.
         tmpl = string.Template(r["deliver"])
         if not tmpl.is_valid():

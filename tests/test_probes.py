@@ -26,7 +26,7 @@ NO_LATCH_CONFIG = ("model:\n  provider: openai-codex\nmcp_servers:\n  hostex:\n"
 def test_check_latch_skips_when_the_config_declares_no_latch_server(run, instance, tmp_path):
     """An agent that drives no Mac is not a failure."""
     run("register", "str", str(instance("str", config=NO_LATCH_CONFIG)))
-    run("restore", "str")
+    run("deploy", "str")
     r = run("check-latch", "str", env=_bin(tmp_path, "str"))
     assert r.returncode == 0, r.stderr
     assert "no latch configured" in r.stdout
@@ -38,7 +38,7 @@ def test_a_leftover_credential_does_not_make_an_agent_look_latch_enabled(run, in
     Keying off the credential probed a relay it cannot reach and reported a
     revoked token as a failure of an agent that never used one."""
     run("register", "str", str(instance("str", config=NO_LATCH_CONFIG)))
-    run("restore", "str")
+    run("deploy", "str")
     (tmp_path / "home" / ".hermes-str" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_stale\nDOMO_MCP_TOKEN=tok_revoked\n")
     r = run("check-latch", "str", env=_bin(tmp_path, "str", exec_output="401"))
@@ -49,7 +49,7 @@ def test_a_leftover_credential_does_not_make_an_agent_look_latch_enabled(run, in
 
 def test_check_latch_reports_reachable_when_the_relay_answers(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
     assert r.returncode == 0, r.stderr
@@ -59,7 +59,7 @@ def test_check_latch_reports_reachable_when_the_relay_answers(run, instance, tmp
 def test_a_revoked_credential_is_named_as_revoked_not_as_unreachable(run, instance, tmp_path):
     """A dead credential and a dead network need different fixes."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="401"))
     assert r.returncode != 0
@@ -68,7 +68,7 @@ def test_a_revoked_credential_is_named_as_revoked_not_as_unreachable(run, instan
 
 def test_no_answer_is_distinguished_from_a_bad_credential(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="000"))
     assert r.returncode != 0
@@ -77,7 +77,7 @@ def test_no_answer_is_distinguished_from_a_bad_credential(run, instance, tmp_pat
 
 def test_the_token_is_never_printed_in_full(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property", tok="supersecrettokenvalue")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="401"))
     assert "supersecrettokenvalue" not in (r.stdout + r.stderr)
@@ -112,7 +112,7 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
     to anything -- an exit-code assertion pins that a line was found, never that
     the right one was."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(dotenv)
     log = tmp_path / "docker.log"
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
@@ -131,7 +131,7 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
 
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=\n")
     r = run("check-latch", "property", env=_bin(tmp_path, "property"))
@@ -143,7 +143,7 @@ def test_check_latch_will_not_answer_from_the_host_when_the_gateway_is_down(run,
     """A host answer is exactly the evidence entering the namespace exists to
     stop accepting."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", running=False))
     assert r.returncode != 0
@@ -250,7 +250,7 @@ def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, ins
     empty bearer and reports the 401 as REVOKED, which sends the operator to
     replace a credential that was never set."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=   \n")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
@@ -260,7 +260,7 @@ def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, ins
 
 def test_a_swapped_dotenv_cannot_send_a_sibling_token_into_the_container(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     secret = tmp_path / "sibling.env"
     secret.write_text("DOMO_DEVICE_UID=dev_sibling\nDOMO_MCP_TOKEN=tok_sibling\n")
     dotenv = tmp_path / "home" / ".hermes-property" / ".env"
@@ -292,7 +292,7 @@ def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credent
     # pass while proving nothing, and a skip hides that.
     assert os.geteuid() != 0, "run the suite unprivileged; root reads a 000 file"
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
     env_file.chmod(0o000)
@@ -349,9 +349,9 @@ def _chats_response(*uids_and_names):
 
 
 def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
-    """Register + restore `property` and give it a Plow credential pair."""
+    """Register + deploy `property` and give it a Plow credential pair."""
     run("register", "property", str(instance("property")))
-    run("restore", "property")
+    run("deploy", "property")
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
     env_file.write_text(
         f"HOSTEX_TOKEN=keepme\nPLOW_AGENT_TOKEN=tok_plow\nPLOW_HOME_CHANNEL={home_uid}\n")
