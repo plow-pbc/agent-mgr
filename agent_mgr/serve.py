@@ -48,9 +48,16 @@ from .cloud_models import (
     FailureCode,
     UpdateCloudAgentLineRequest,
 )
+from .commands import dotenv_read
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
-from .local import compose, require_own_home, resolve_guard, transition
+from .local import (
+    compose,
+    require_container_ours,
+    require_own_home,
+    resolve_guard,
+    transition,
+)
 from .models import JsonValue, ResolvedAgent
 from .registry import Registry
 
@@ -87,24 +94,22 @@ def _dotenv_chats(agent: ResolvedAgent) -> tuple[str, ...]:
 
 
 def _dotenv_value(agent: ResolvedAgent, keys: tuple[str, ...]) -> str:
-    """First key in `keys` that the dotenv declares, last value winning.
+    """First key in `keys` that the dotenv declares, through the canonical seam.
 
-    Last value wins to match `upsert`'s own rule: a file that arrived with two
-    declarations is read the way the gateway reads it.
+    This parsed the file itself and swallowed read failures as "", which the
+    callers then read as "uncredentialed" -- so an unreadable dotenv made POST
+    skip line validation entirely and answer 202 for a line it never checked.
+    It also matched keys with `.strip()`, disagreeing with `dotenv_read` about
+    whitespace, so the two could see different values in the same file.
+
+    `dotenv_read` is that one definition, and it fails loudly on an unreadable
+    file. One reader, one spelling, one failure mode.
     """
     path = agent.home / ".env"
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except OSError:
-        return ""
-    found: dict[str, str] = {}
-    for line in lines:
-        key, separator, value = line.partition("=")
-        if separator and key.strip() in keys and value.strip():
-            found[key.strip()] = value.strip()
     for key in keys:
-        if key in found:
-            return found[key]
+        value = dotenv_read(path, key)
+        if value:
+            return value
     return ""
 
 
@@ -122,8 +127,18 @@ def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
     (nothing to compare, proceed), and an API failure raises `ApiError` (refuse,
     because a mismatch cannot be ruled out).
     """
-    home = _dotenv_value(agent, HOME_CHAT_KEYS)
-    token = _dotenv_value(agent, ("PLOW_AGENT_TOKEN", "PLOW_CHAT_TOKEN"))
+    dotenv = agent.home / ".env"
+    if not dotenv.exists():
+        # ABSENT is uncredentialed: a fresh home before `restore` has one, and
+        # that is a legitimate state, not a failure.
+        raise LineUnknown
+    try:
+        home = _dotenv_value(agent, HOME_CHAT_KEYS)
+        token = _dotenv_value(agent, ("PLOW_AGENT_TOKEN", "PLOW_CHAT_TOKEN"))
+    except AgentMgrError as error:
+        # PRESENT but unreadable is not. Collapsing the two let POST skip line
+        # validation on a file it could not read and answer 202 regardless.
+        raise ApiError(502, f"could not read {agent.name}'s dotenv: {error.message}") from None
     # `PLOW_API_BASE` absent is the ordinary case, not a failure: the gateway
     # falls back to the public API and so does this.
     base = _dotenv_value(agent, ("PLOW_API_BASE", "PLOW_CHAT_BASE_URL")) or "https://api.plow.co"
@@ -208,7 +223,10 @@ class LocalCloudApi:
         with self._lock:
             recorded = self._failed.get(agent.name)
             starting = agent.name in self._starting
-        if not deleted and recorded is not None and status is not CloudStatus.RUNNING:
+        if not deleted and recorded is not None:
+            # A recorded failure outranks `compose ps`. It used to be suppressed
+            # whenever docker reported RUNNING -- which is exactly the case a
+            # foreign container in a reused project produces.
             status, failure = CloudStatus.FAILED, recorded
         elif not deleted and starting and status is not CloudStatus.RUNNING:
             status, failure = CloudStatus.PROVISIONING, None
@@ -334,6 +352,11 @@ class LocalCloudApi:
         try:
             require_own_home(agent, self.registry)
             resolve_guard(agent, self.registry)
+            # Container identity too. Without it a reused Compose project
+            # mounting ANOTHER agent's home was admitted here, the background
+            # transition then refused it, and `_status()` read `compose ps` and
+            # reported that foreign container as this agent RUNNING.
+            require_container_ours(agent)
         except AgentMgrError as error:
             raise ApiError(409, error.message) from None
 
@@ -414,6 +437,18 @@ class LocalCloudApi:
             return resource.to_json()
         finally:
             self._deleting.discard(agent.name)
+
+
+def _without_control_token() -> None:
+    """Drop the server's bearer from this process's environment.
+
+    `transition` runs an agent's own pre-transition hook, which inherits the
+    server's environment -- so the fleet-wide control token was handed to
+    agent-specific code on every create and delete. The handler compares the
+    header against the value it captured at startup, so the variable itself is
+    not needed after that.
+    """
+    os.environ.pop("AGENT_MGR_SERVE_TOKEN", None)
 
 
 def build_handler(api: LocalCloudApi, token: str) -> type[BaseHTTPRequestHandler]:
@@ -562,6 +597,7 @@ def serve(registry: Registry, root: Any, host: str, port: int) -> int:
         )
     host = resolve_bind(host)
     handler = build_handler(LocalCloudApi(registry, root), token)
+    _without_control_token()
     with ThreadingHTTPServer((host, port), handler) as httpd:
         print(
             f"serving Plow's cloud-agent API for local agents on http://{host}:{httpd.server_address[1]}"

@@ -8,6 +8,7 @@ contract, and a test that skips the transport asserts none of them.
 from __future__ import annotations
 
 import json
+import os
 import threading
 import urllib.error
 import urllib.request
@@ -498,3 +499,55 @@ def test_an_uncredentialed_resource_still_parses(tmp_path, monkeypatch) -> None:
 
     assert payload["chat_uids"] == ["line:ln_home"]
     CloudAgentResource.from_json(payload)
+
+
+def test_an_unreadable_dotenv_is_not_read_as_uncredentialed(tmp_path, monkeypatch) -> None:
+    """Collapsing a read failure into "" let POST skip line validation on a file
+    it could not read and answer 202 for a line it never checked."""
+    import agent_mgr.serve as serve_module
+    from agent_mgr.errors import AgentMgrError, ErrorCode
+
+    def unreadable(path, key):  # noqa: ANN001, ANN202
+        raise AgentMgrError(ErrorCode.IO_ERROR, "permission denied")
+
+    monkeypatch.setattr(serve_module, "dotenv_read", unreadable)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".env").write_text("PLOW_AGENT_TOKEN=x\n")
+    agent = SimpleNamespace(name="life", container="hermes-life", home=home)
+
+    with pytest.raises(serve_module.ApiError) as raised:
+        serve_module._agent_line(agent)
+
+    assert raised.value.status == 502
+
+
+def test_a_recorded_failure_outranks_what_docker_reports(tmp_path, monkeypatch) -> None:
+    """A reused project mounting another agent's home makes `compose ps` report
+    RUNNING. Suppressing the recorded failure there reported a foreign container
+    as this agent, healthy."""
+    import agent_mgr.serve as serve_module
+
+    registry = Registry(tmp_path / "agents")
+    api = serve_module.LocalCloudApi(registry, ROOT)
+    agent = SimpleNamespace(name="life", container="hermes-life", home=Path("/nowhere"))
+    monkeypatch.setattr(serve_module, "_dotenv_chats", lambda a: ("cht_home",))
+    monkeypatch.setattr(serve_module, "_status", lambda a: (serve_module.CloudStatus.RUNNING, None))
+    api._failed["life"] = serve_module.FailureCode.SETUP_FAILED
+
+    payload = api._resource(agent).to_json()
+
+    assert payload["status"] == "failed"
+    assert payload["failure_code"] == "setup_failed"
+
+
+def test_the_control_bearer_does_not_reach_agent_hooks(monkeypatch) -> None:
+    """`transition` runs the agent's own pre-transition hook, which inherits
+    this process's environment -- so the fleet-wide control token was handed to
+    agent-specific code on every create and delete."""
+    import agent_mgr.serve as serve_module
+
+    monkeypatch.setenv("AGENT_MGR_SERVE_TOKEN", "fleet-secret")
+    serve_module._without_control_token()
+
+    assert "AGENT_MGR_SERVE_TOKEN" not in os.environ
