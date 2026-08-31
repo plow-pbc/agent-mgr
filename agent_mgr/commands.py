@@ -175,6 +175,10 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
     return 0
 
 
+class EmptyGrant(AgentMgrError):
+    """The minted grant reaches no chat, so the fix is on the line itself."""
+
+
 class AmbiguousHome(AgentMgrError):
     """The line carries several 1:1 chats, so `set-home` is the recovery.
 
@@ -205,7 +209,11 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr restore {agent.name}' first"
         )
-    if dotenv_read(dotenv, "PLOW_AGENT_TOKEN"):
+    # Both spellings, because either one means a gateway is holding a live
+    # credential: an agent whose dotenv predates the canonical name carries only
+    # `PLOW_CHAT_TOKEN`, and checking the canonical one alone let a second mint
+    # through -- which strands the credential the gateway is actually using.
+    if dotenv_read(dotenv, "PLOW_AGENT_TOKEN") or dotenv_read(dotenv, "PLOW_CHAT_TOKEN"):
         # Refused rather than overwritten: a second mint strands the credential
         # the gateway is holding, and the running agent goes deaf on a line it
         # still believes it serves.
@@ -223,6 +231,16 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     token = minted.get("token")
     if not isinstance(token, str) or not token:
         raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "relay mint returned no token")
+    # `upsert-env` reads one value per LINE, so a token carrying a newline would
+    # shift its own tail into the next key and the base URL into a credential
+    # field -- corrupting the dotenv after a one-time mint is already spent.
+    # Checked before anything is written, not after.
+    if any(character in token for character in "\r\n"):
+        raise AgentMgrError(
+            ErrorCode.INVALID_RESPONSE,
+            "relay mint returned a token containing a line break",
+            "nothing was written; report this response to Plow rather than retrying",
+        )
     # The token lands BEFORE the home is resolved, and that order is the whole
     # point: the mint is one-time, so anything that raises between receiving it
     # and writing it destroys a credential nobody can get back. Home discovery
@@ -236,20 +254,24 @@ def provision(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
     )
     try:
         home = _home_chat_on_line(transport.base_url, token, line_uid)
-    except AgentMgrError as error:
-        # Two different failures, and pointing both at `set-home` was wrong:
-        # it validates the uid against the SAME listing, so on an empty grant
-        # every uid it could be given is rejected -- a recovery that cannot
-        # succeed, offered to an operator holding a spent credential.
+    except (AmbiguousHome, EmptyGrant) as error:
+        # Only the two failures that are actually ABOUT the line get a line
+        # recovery. Catching every AgentMgrError sent an API error or a schema
+        # failure to "give the line a chat", which is not the problem and not
+        # the fix; those propagate now, and the operator sees what really broke.
         #
         # Ambiguity is the set-home case: the chats exist, this tool just may
         # not choose between them. An empty grant is not; nothing is reachable
         # yet, and the fix is on the line, after which set-home works.
+        #
+        # Both recoveries name `up` first: `set_home` reaches into a RUNNING
+        # container, so prescribing it against a stopped one is a command that
+        # refuses -- the second unrunnable recovery this seam has offered.
         recovery = (
-            f"agent-mgr set-home {agent.name} <cht_...>"
+            f"agent-mgr up {agent.name}, then 'agent-mgr set-home {agent.name} <cht_...>'"
             if isinstance(error, AmbiguousHome)
-            else f"give {line_uid} a chat this account owns, then "
-            f"'agent-mgr set-home {agent.name} <cht_...>'"
+            else f"give {line_uid} a chat this account owns, then 'agent-mgr up {agent.name}' "
+            f"and 'agent-mgr set-home {agent.name} <cht_...>'"
         )
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
@@ -296,7 +318,7 @@ def _home_chat_on_line(base: str, token: str, line_uid: str) -> str:
     listing = transport.request("GET", "/v1/chats")
     rows = listing.get("data") if isinstance(listing, dict) else None
     if not isinstance(rows, list) or not rows:
-        raise AgentMgrError(
+        raise EmptyGrant(
             ErrorCode.IO_ERROR,
             f"the minted grant reaches no chat on {line_uid}",
             "that line must carry a chat this account owns before the agent has a home",

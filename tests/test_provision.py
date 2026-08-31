@@ -26,6 +26,7 @@ class _Plow:
         self.requests: list[tuple[str, str, object]] = []
         self.chats: list[dict[str, object]] = []
         self.mint_status = 200
+        self.token = TOKEN
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -46,7 +47,7 @@ class _Plow:
                 if owner.mint_status != 200:
                     self._send(owner.mint_status, {"detail": "Line not found"})
                     return
-                self._send(200, {"token": TOKEN, "name": "agent-mgr:rowan"})
+                self._send(200, {"token": owner.token, "name": "agent-mgr:rowan"})
 
             def do_GET(self) -> None:
                 owner.requests.append(("GET", self.path, self.headers.get("Authorization")))
@@ -185,7 +186,7 @@ def test_help_lists_provision(run) -> None:
 @pytest.mark.parametrize(
     ("chats", "diagnostic", "recovery"),
     [
-        ([_chat("cht_someone", 1), _chat("cht_owner", 1)], "ambiguous", "set-home"),
+        ([_chat("cht_someone", 1), _chat("cht_owner", 1)], "ambiguous", "up rowan"),
         ([], "reaches no chat", "give ln_p3 a chat"),
     ],
     ids=["two-one-to-ones", "empty-grant"],
@@ -245,3 +246,40 @@ def test_a_failed_reload_does_not_read_as_a_failed_mint(
         assert "credential IS written" in result.stderr
         assert "do not re-run provision" in result.stderr
     assert f"PLOW_AGENT_TOKEN={TOKEN}" in dotenv.splitlines()
+
+
+def test_a_legacy_only_dotenv_still_blocks_a_second_mint(
+    run, instance, tmp_path, plow: _Plow
+) -> None:
+    """An agent whose dotenv predates the canonical name carries only
+    `PLOW_CHAT_TOKEN`. Checking `PLOW_AGENT_TOKEN` alone let a second mint
+    through, stranding the credential the gateway is actually holding."""
+    _restored(run, instance)
+    dotenv = tmp_path / "home" / ".hermes-rowan" / ".env"
+    dotenv.write_text("PLOW_CHAT_TOKEN=legacy_live\n")
+
+    result = run("provision", "rowan", "ln_p3", env=plow.environment)
+
+    assert result.returncode != 0
+    assert "already holds a Plow credential" in result.stderr
+    assert plow.requests == [], "the refusal still called the mint"
+    assert dotenv.read_text() == "PLOW_CHAT_TOKEN=legacy_live\n"
+
+
+def test_a_token_with_a_line_break_is_refused_before_anything_is_written(
+    run, instance, tmp_path, plow: _Plow
+) -> None:
+    """`upsert-env` reads one value per line, so a newline in the token would
+    shift its tail into the next key and the base URL into a credential field --
+    corrupting the dotenv after a one-time mint is already spent."""
+    _restored(run, instance)
+    plow.token = "plow_broken\ninjected"
+    plow.chats = [_chat("cht_home", 1)]
+    dotenv = tmp_path / "home" / ".hermes-rowan" / ".env"
+    before = dotenv.read_text()
+
+    result = run("provision", "rowan", "ln_p3", env=plow.environment)
+
+    assert result.returncode != 0
+    assert "line break" in result.stderr
+    assert dotenv.read_text() == before
