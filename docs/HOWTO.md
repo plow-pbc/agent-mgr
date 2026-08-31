@@ -72,9 +72,10 @@ Rules that matter, in order of how much they cost to get wrong:
 - **`up` before `sign-in`** — `sign-in` runs inside the container, so it
   refuses until one is running. And **don't restart the agent while `sign-in`
   is waiting on the browser** — the session lives in the container. If
-  `activate` reports a failed follow-up, run the recovery command it prints
-  *before* starting `sign-in`. A dropped `sign-in` re-runs for free;
-  `activate` does not.
+  `activate` reports a failed follow-up, recover *before* starting `sign-in`:
+  run the command it prints, or — when it only says not to re-run
+  `activate` — fix whatever refused its reload, then `restart`. A dropped
+  `sign-in` re-runs for free; `activate` does not.
 
 On re-activation, an agent keeps its line: `activate` remembers the canonical
 `PLOW_HOME_CHANNEL` and narrows the fresh token to it, so group delivery
