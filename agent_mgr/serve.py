@@ -31,6 +31,8 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
+import subprocess
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -432,6 +434,49 @@ def build_handler(api: LocalCloudApi, token: str) -> type[BaseHTTPRequestHandler
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 
 
+def _tailscale_addresses() -> frozenset[str]:
+    """This machine's own Tailscale addresses, or empty when there is no tailnet.
+
+    Asked of `tailscale` rather than matched on `100.64/10`: that range is
+    shared CGNAT, not Tailscale's alone, so a prefix test would also accept a
+    carrier-assigned address on an ordinary network -- exactly the cleartext
+    path the loopback rule exists to keep a replayable bearer off.
+    """
+    try:
+        result = subprocess.run(
+            ["tailscale", "ip"], capture_output=True, text=True, timeout=5, check=False
+        )
+    except (OSError, subprocess.SubprocessError):
+        return frozenset()
+    if result.returncode:
+        return frozenset()
+    return frozenset(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+
+def _bind_is_allowed(host: str) -> bool:
+    """Loopback, or an address of this machine's own tailnet.
+
+    A tailnet is the one non-loopback case where the objection does not hold:
+    the bearer still travels in plain HTTP, but the transport underneath is
+    WireGuard between two authenticated peers, so there is no on-path position
+    to replay from. Everything else -- `0.0.0.0`, a LAN address, a public
+    one -- stays refused, because a token cannot fix a cleartext path.
+    """
+    if host in LOOPBACK_HOSTS:
+        return True
+    own = _tailscale_addresses()
+    if host in own:
+        return True
+    # A MagicDNS name is the spelling clients prefer (and some require, since a
+    # bare 100.x cannot be told apart from carrier CGNAT), so resolve it and
+    # accept it only when it lands on one of our own tailnet addresses.
+    try:
+        resolved = {info[4][0] for info in socket.getaddrinfo(host, None)}
+    except OSError:
+        return False
+    return bool(resolved & own)
+
+
 def serve(registry: Registry, root: Any, host: str, port: int) -> int:
     token = os.environ.get("AGENT_MGR_SERVE_TOKEN", "").strip()
     if not token:
@@ -440,17 +485,13 @@ def serve(registry: Registry, root: Any, host: str, port: int) -> int:
             "AGENT_MGR_SERVE_TOKEN is unset",
             "these routes start and stop containers; set a bearer token before serving",
         )
-    # Loopback, with no way to opt out. The escape hatch was the mistake: this
-    # speaks plain HTTP and the bearer is reusable, so a non-loopback bind puts
-    # container start/stop in front of any on-path peer who replays a request --
-    # and a token does not fix a transport that carries it in the clear.
-    # Reaching it from another machine is what SSH forwarding is for, which
-    # moves the exposure onto a transport that is actually encrypted.
-    if host not in LOOPBACK_HOSTS:
+    if not _bind_is_allowed(host):
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            f"refusing to bind {host}: this serves plain HTTP with a replayable bearer",
-            "forward the loopback port instead: ssh -L <port>:127.0.0.1:<port> <host>",
+            f"refusing to bind {host}: this serves plain HTTP with a replayable bearer, and "
+            "these routes start and stop containers",
+            "bind loopback or this machine's tailnet address, or forward the port: "
+            "ssh -L <port>:127.0.0.1:<port> <host>",
         )
     handler = build_handler(LocalCloudApi(registry, root), token)
     with ThreadingHTTPServer((host, port), handler) as httpd:

@@ -347,3 +347,30 @@ def test_delete_refuses_while_a_start_is_in_flight(base: str, api: _Api) -> None
     assert status == 409
     assert "still provisioning" in body["detail"]
     assert [entry.name for entry in api.registry.entries()] == ["life"]
+
+
+def test_a_tailnet_bind_is_allowed_and_a_lan_one_is_not(run, monkeypatch) -> None:
+    """The objection is a replayable bearer on a cleartext path, and a tailnet
+    is the one non-loopback case where that does not hold: WireGuard between two
+    authenticated peers leaves no on-path position to replay from. A LAN or
+    wildcard bind still does, so it stays refused."""
+    import agent_mgr.serve as serve_module
+
+    monkeypatch.setattr(serve_module, "_tailscale_addresses", lambda: frozenset({"100.98.135.0"}))
+
+    assert serve_module._bind_is_allowed("127.0.0.1")
+    assert serve_module._bind_is_allowed("100.98.135.0")
+    assert not serve_module._bind_is_allowed("0.0.0.0")
+    assert not serve_module._bind_is_allowed("192.168.15.12")
+
+
+def test_without_a_tailnet_only_loopback_is_allowed(monkeypatch) -> None:
+    """`100.64/10` is shared CGNAT, not Tailscale's alone -- asking `tailscale`
+    rather than matching the prefix is what keeps a carrier-assigned address on
+    an ordinary network from passing as a tailnet one."""
+    import agent_mgr.serve as serve_module
+
+    monkeypatch.setattr(serve_module, "_tailscale_addresses", lambda: frozenset())
+
+    assert serve_module._bind_is_allowed("localhost")
+    assert not serve_module._bind_is_allowed("100.98.135.0")

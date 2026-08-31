@@ -89,10 +89,14 @@ worse than one that says it cannot.
 
 `agent-mgr serve [host] [port]` answers the same `/v1/agents/cloud` routes
 against local containers, so a client written for Plow drives this host without
-knowing the difference. It requires `AGENT_MGR_SERVE_TOKEN` and binds loopback only, with no opt-out:
-the routes start and stop containers over plain HTTP with a replayable bearer,
-and a token does not fix a transport that carries it in the clear. Reach it from
-another machine with `ssh -L <port>:127.0.0.1:<port> <host>`.
+knowing the difference. It requires `AGENT_MGR_SERVE_TOKEN`, and binds loopback or this machine's own
+tailnet address -- nothing else. The routes start and stop containers over plain
+HTTP with a replayable bearer, so a LAN or wildcard bind hands an on-path peer a
+container control plane; a tailnet is the one exception, because WireGuard
+between two authenticated peers leaves no on-path position to replay from. The
+address is asked of `tailscale` rather than matched on `100.64/10`, which is
+shared CGNAT and not Tailscale's alone. Anywhere else, forward the port:
+`ssh -L <port>:127.0.0.1:<port> <host>`.
 
 ## Why it exists
 
