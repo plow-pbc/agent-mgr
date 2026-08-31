@@ -37,6 +37,7 @@ import subprocess
 import threading
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -104,8 +105,19 @@ def _dotenv_value(agent: ResolvedAgent, keys: tuple[str, ...]) -> str:
 
     `dotenv_read` is that one definition, and it fails loudly on an unreadable
     file. One reader, one spelling, one failure mode.
+
+    ABSENT and UNREADABLE are decided here, once, because the callers disagreed:
+    `_agent_line` checked `exists()` first and read a fresh home as
+    uncredentialed, while `_resource` went straight to the reader and turned the
+    ENOENT into a failed request -- so POSTing a registered checkout that had
+    never run `restore` could not be provisioned at all. A missing file is the
+    ordinary pre-credential state and answers ""; a file that is THERE and will
+    not read still raises, which is what keeps POST from skipping line
+    validation on a dotenv it cannot see.
     """
     path = agent.home / ".env"
+    if not path.exists():
+        return ""
     for key in keys:
         value = dotenv_read(path, key)
         if value:
@@ -127,12 +139,9 @@ def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
     (nothing to compare, proceed), and an API failure raises `ApiError` (refuse,
     because a mismatch cannot be ruled out).
     """
-    dotenv = agent.home / ".env"
-    if not dotenv.exists():
-        # ABSENT is uncredentialed: a fresh home before `restore` has one, and
-        # that is a legitimate state, not a failure.
-        raise LineUnknown
     try:
+        # ABSENT is uncredentialed -- `_dotenv_value` answers "" for a fresh
+        # home, and the `not home or not token` check below raises LineUnknown.
         home = _dotenv_value(agent, HOME_CHAT_KEYS)
         token = _dotenv_value(agent, ("PLOW_AGENT_TOKEN", "PLOW_CHAT_TOKEN"))
     except AgentMgrError as error:
@@ -175,8 +184,23 @@ def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
     raise ApiError(502, f"{agent.name}'s home chat does not identify exactly one agent line")
 
 
-def _container_is_ours(agent: ResolvedAgent) -> bool:
-    """Whether the container Compose found is this agent's own.
+class Ownership(StrEnum):
+    """What the identity check actually answered.
+
+    A boolean collapsed two different answers into one: a container mounting
+    SOMEONE ELSE's home, and docker declining to say whose home it mounts. The
+    first is a misconfiguration a caller must act on; the second is an outage,
+    and reporting it as `validation_failed` tells a polling client the wrong
+    thing about its own agent.
+    """
+
+    OURS = "ours"
+    FOREIGN = "foreign"
+    UNKNOWN = "unknown"
+
+
+def _ownership(agent: ResolvedAgent) -> Ownership:
+    """Whose home the running container mounts, through the canonical check.
 
     GET and list trusted `compose ps` alone, so a reused project mounting
     another agent's home read as this one RUNNING -- the same confusion the
@@ -184,9 +208,13 @@ def _container_is_ours(agent: ResolvedAgent) -> bool:
     """
     try:
         require_container_ours(agent)
-    except AgentMgrError:
-        return False
-    return True
+    except AgentMgrError as error:
+        # `require_container_ours` already separates them: a foreign mount is
+        # INVALID_DESCRIPTOR, an unanswerable docker is IO_ERROR.
+        return (
+            Ownership.FOREIGN if error.code is ErrorCode.INVALID_DESCRIPTOR else Ownership.UNKNOWN
+        )
+    return Ownership.OURS
 
 
 def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
@@ -202,9 +230,14 @@ def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
     if running.stdout.strip():
         # Identity, not just presence: a reused project can put another agent's
         # container here, and reporting it RUNNING would answer for a home this
-        # agent does not own.
-        if not _container_is_ours(agent):
+        # agent does not own. The two non-ours answers are different diagnoses:
+        # a foreign mount failed validation, an unanswerable docker is the
+        # provider being unreachable.
+        owner = _ownership(agent)
+        if owner is Ownership.FOREIGN:
             return CloudStatus.FAILED, FailureCode.VALIDATION_FAILED
+        if owner is Ownership.UNKNOWN:
+            return CloudStatus.FAILED, FailureCode.PROVIDER_UNREACHABLE
         return CloudStatus.RUNNING, None
     existing = compose(agent, ["ps", "--all", "--quiet", "hermes"], capture=True)
     if existing.returncode:
@@ -257,7 +290,9 @@ class LocalCloudApi:
             # container that has since been repaired -- brought up by hand, or
             # by a later successful create -- must not stay FAILED forever, so
             # a RUNNING container whose identity we own clears the record.
-            if status is CloudStatus.RUNNING and _container_is_ours(agent):
+            # `_status` only answers RUNNING for a container it has already
+            # confirmed is ours, so this needs no second `docker inspect`.
+            if status is CloudStatus.RUNNING:
                 with self._lock:
                     self._failed.pop(agent.name, None)
             else:

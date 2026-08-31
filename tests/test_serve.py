@@ -523,19 +523,18 @@ def test_an_unreadable_dotenv_is_not_read_as_uncredentialed(tmp_path, monkeypatc
 
 
 def test_a_recorded_failure_outranks_what_docker_reports(tmp_path, monkeypatch) -> None:
-    """A reused project mounting another agent's home makes `compose ps` report
-    RUNNING. Suppressing the recorded failure there reported a foreign container
-    as this agent, healthy."""
+    """A pull that failed leaves no container at all, so `_status` answers
+    PROVISIONING. Letting that win reported an agent that will never come up as
+    still coming up, and the caller polls forever."""
     import agent_mgr.serve as serve_module
 
     registry = Registry(tmp_path / "agents")
     api = serve_module.LocalCloudApi(registry, ROOT)
     agent = SimpleNamespace(name="life", container="hermes-life", home=Path("/nowhere"))
     monkeypatch.setattr(serve_module, "_dotenv_chats", lambda a: ("cht_home",))
-    monkeypatch.setattr(serve_module, "_status", lambda a: (serve_module.CloudStatus.RUNNING, None))
-    # Not ours: a reused project mounting another agent's home is exactly the
-    # case `compose ps` cannot tell apart, and the recorded failure must win.
-    monkeypatch.setattr(serve_module, "_container_is_ours", lambda a: False)
+    monkeypatch.setattr(
+        serve_module, "_status", lambda a: (serve_module.CloudStatus.PROVISIONING, None)
+    )
     api._failed["life"] = serve_module.FailureCode.SETUP_FAILED
 
     payload = api._resource(agent).to_json()
@@ -546,15 +545,18 @@ def test_a_recorded_failure_outranks_what_docker_reports(tmp_path, monkeypatch) 
 
 def test_a_repaired_container_clears_a_recorded_failure(tmp_path, monkeypatch) -> None:
     """A container brought back by hand, or by a later successful create, must
-    not stay FAILED forever because an earlier pull failed."""
+    not stay FAILED forever because an earlier pull failed -- and identity is
+    already settled inside `_status`, so clearing the record must not inspect
+    the same container a second time."""
     import agent_mgr.serve as serve_module
 
     registry = Registry(tmp_path / "agents")
     api = serve_module.LocalCloudApi(registry, ROOT)
     agent = SimpleNamespace(name="life", container="hermes-life", home=Path("/nowhere"))
+    inspected: list[object] = []
     monkeypatch.setattr(serve_module, "_dotenv_chats", lambda a: ("cht_home",))
     monkeypatch.setattr(serve_module, "_status", lambda a: (serve_module.CloudStatus.RUNNING, None))
-    monkeypatch.setattr(serve_module, "_container_is_ours", lambda a: True)
+    monkeypatch.setattr(serve_module, "require_container_ours", inspected.append)
     api._failed["life"] = serve_module.FailureCode.SETUP_FAILED
 
     payload = api._resource(agent).to_json()
@@ -562,6 +564,67 @@ def test_a_repaired_container_clears_a_recorded_failure(tmp_path, monkeypatch) -
     assert payload["status"] == "running"
     assert payload["failure_code"] is None
     assert "life" not in api._failed
+    assert inspected == []
+
+
+def test_a_foreign_container_and_a_docker_outage_are_different_diagnoses(
+    monkeypatch,
+) -> None:
+    """A Boolean ownership check made both of these `validation_failed`, so a
+    polling client told to fix its descriptor was really looking at a docker
+    that could not answer."""
+    import agent_mgr.serve as serve_module
+    from agent_mgr.errors import AgentMgrError, ErrorCode
+
+    agent = SimpleNamespace(name="life", container="hermes-life", home=Path("/nowhere"))
+    monkeypatch.setattr(
+        serve_module,
+        "compose",
+        lambda a, argv, capture=False: SimpleNamespace(returncode=0, stdout="abc123\n"),
+    )
+
+    def raiser(code):  # noqa: ANN001, ANN202
+        def refuse(a):  # noqa: ANN001, ANN202
+            raise AgentMgrError(code, "no")
+
+        return refuse
+
+    monkeypatch.setattr(
+        serve_module, "require_container_ours", raiser(ErrorCode.INVALID_DESCRIPTOR)
+    )
+    assert serve_module._status(agent) == (
+        serve_module.CloudStatus.FAILED,
+        serve_module.FailureCode.VALIDATION_FAILED,
+    )
+
+    monkeypatch.setattr(serve_module, "require_container_ours", raiser(ErrorCode.IO_ERROR))
+    assert serve_module._status(agent) == (
+        serve_module.CloudStatus.FAILED,
+        serve_module.FailureCode.PROVIDER_UNREACHABLE,
+    )
+
+
+def test_a_registered_checkout_with_no_dotenv_can_be_provisioned(tmp_path, monkeypatch) -> None:
+    """A fresh checkout that has never run `restore` has no `.env` at all.
+    `_agent_line` read that as uncredentialed, but the projection went straight
+    to the reader and turned the ENOENT into a failed request -- so the one
+    state every new agent starts in could not be provisioned."""
+    import agent_mgr.serve as serve_module
+
+    registry = Registry(tmp_path / "agents")
+    api = serve_module.LocalCloudApi(registry, ROOT)
+    home = tmp_path / "home"
+    home.mkdir()
+    agent = SimpleNamespace(name="life", container="hermes-life", home=home)
+    monkeypatch.setattr(
+        serve_module, "_status", lambda a: (serve_module.CloudStatus.PROVISIONING, None)
+    )
+    api._requested_line["life"] = "ln_home"
+
+    with pytest.raises(serve_module.LineUnknown):
+        serve_module._agent_line(agent)
+
+    assert api._resource(agent).to_json()["chat_uids"] == ["line:ln_home"]
 
 
 def test_the_control_bearer_does_not_reach_agent_hooks(monkeypatch) -> None:
