@@ -197,13 +197,13 @@ def _cloud_agent_id(name: str, registry: Registry) -> str:
         if error.code is not ErrorCode.AGENT_NOT_FOUND:
             raise
         return name
-    if not entry.is_cloud:
-        raise AgentMgrError(
-            ErrorCode.INVALID_ARGUMENT,
-            f"{name} is a local agent at {entry.location}",
-            "this verb targets cloud agents; use the local lifecycle for a checkout",
-        )
-    return entry.location
+    # A local row does NOT refuse. `agent-mgr serve` publishes an agent's name
+    # as its `agent_id`, so against a same-host endpoint the id a cloud verb is
+    # given is legitimately the name of a local row -- refusing it rejected
+    # every id this repo's own server hands out, before any request was sent.
+    # The verb and the id are both explicit; the row is not more authoritative
+    # than the caller about which endpoint they meant.
+    return entry.location if entry.is_cloud else name
 
 
 def _delete_cloud_agent(target: str, registry: Registry) -> CloudAgentResource:

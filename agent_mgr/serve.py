@@ -155,16 +155,24 @@ def _agent_line(agent: ResolvedAgent) -> tuple[str, ...]:
         ) from None
     if not isinstance(chat, dict):
         raise ApiError(502, f"Plow returned no readable chat for {agent.name}'s home")
-    for participant in chat.get("participants") or []:
-        if not isinstance(participant, dict) or participant.get("type") != "agent":
-            continue
-        line = participant.get("line")
-        uid = line.get("uid") if isinstance(line, dict) else None
-        if isinstance(uid, str) and uid:
-            return (uid,)
-    # A home chat with no agent participant is malformed, not "no line": saying
-    # unknown here would let a wrong line through the same way the collapse did.
-    raise ApiError(502, f"{agent.name}'s home chat names no agent line")
+    # The SELF participant, the way `narrow_chat_credential` already selects it.
+    # Taking the first agent participant picked a sibling's line in any chat
+    # holding more than one agent -- and a wrong line makes a valid POST or PUT
+    # 409 against a number the agent really does serve.
+    agents = [
+        participant
+        for participant in chat.get("participants") or []
+        if isinstance(participant, dict) and participant.get("type") == "agent"
+    ]
+    mine = [participant for participant in agents if participant.get("relationship") == "self"]
+    current = mine[0] if len(mine) == 1 else agents[0] if len(agents) == 1 else None
+    line = current.get("line") if current is not None else None
+    uid = line.get("uid") if isinstance(line, dict) else None
+    if isinstance(uid, str) and uid:
+        return (uid,)
+    # Malformed, or several agents with no `self` among them: either way this
+    # cannot say which line is ours, and guessing is what the probe caught.
+    raise ApiError(502, f"{agent.name}'s home chat does not identify exactly one agent line")
 
 
 def _status(agent: ResolvedAgent) -> tuple[CloudStatus, FailureCode | None]:
@@ -318,6 +326,11 @@ class LocalCloudApi:
                 # the caller polls the same GET either way.
                 return self._provisioning(agent)
             self._requested_line[agent.name] = request.line_uid
+            # Build the ANSWER before starting anything. Serialization reads the
+            # dotenv, and on a fresh home that raised after `_bring_up` was
+            # already running -- the container came up and the caller was told
+            # 400, with nothing naming what had started.
+            answer = self._provisioning(agent)
             self._starting.add(agent.name)
             self._failed.pop(agent.name, None)
         # Then answer, and bring it up behind the response. `POST` is 202 in
@@ -329,7 +342,7 @@ class LocalCloudApi:
         threading.Thread(
             target=self._bring_up, args=(agent,), name=f"up:{agent.name}", daemon=True
         ).start()
-        return self._provisioning(agent)
+        return answer
 
     def _created_grant(self, agent: ResolvedAgent) -> tuple[str, ...]:
         with self._lock:
