@@ -88,19 +88,23 @@ once, in place.
 
 ## Set up Latch (let it drive a Mac)
 
-Mint the credential pair **on the Mac the agent should drive** — minting
-needs the `relay:device` scope only that Mac's Latch holds, so this is the one
-credential `agent-mgr` cannot fetch for you. Then:
+Mint the credential **on the Mac the agent should drive** — in Plow Latch,
+*Agents → can't use OAuth? create a static credential*. Minting needs the
+`relay:device` scope only that Mac's Latch holds, so this is the one
+credential `agent-mgr` cannot fetch for you. It shows a JSON client config,
+once. Then:
 
 ```sh
-agent-mgr set-latch errands     # prompts for DOMO_DEVICE_UID, then DOMO_MCP_TOKEN
+agent-mgr set-latch errands     # paste that whole JSON at the prompt
 agent-mgr check-latch errands   # "latch reachable ... (HTTP 200)"
 ```
 
-Both values are read on **stdin**, never argv (a flag would put a live relay
-credential in the shared host's process table). `set-latch` preserves every
-other key in the dotenv. The *token* is what binds — reusing someone else's
-pair points the agent at their Mac.
+`set-latch` pulls `DOMO_DEVICE_UID` and `DOMO_MCP_TOKEN` out of the blob (a
+bare UID + token pair on two lines still works). Everything is read on
+**stdin**, never argv (a flag would put a live relay credential in the shared
+host's process table). `set-latch` preserves every other key in the dotenv.
+The *token* is what binds — reusing someone else's pair points the agent at
+their Mac.
 
 **An agent that drives no Mac deletes the `latch:` block from its
 `config.yaml`.** The config is the declaration `check-latch` reads: block
@@ -130,8 +134,8 @@ Then the sequence (each step finishes before the next):
 | 3 | **them** | text the code **from the handset that should own the agent** |
 | 4 | you | `agent-mgr sign-in bob` — prints a device-code URL, waits on the browser |
 | 5 | **them** | open the URL in *their* browser, enter the code |
-| 6 | **them** | Plow Latch → Connect a client → mint an agent credential |
-| 7 | you | `set-latch bob` with that pair (it reloads a running agent itself), then `check-latch bob` |
+| 6 | **them** | Plow Latch → Agents → *can't use OAuth? create a static credential* |
+| 7 | you | `set-latch bob`, paste the JSON it showed (it reloads a running agent itself), then `check-latch bob` |
 | 8 | you | `agent-mgr cron-sync bob` — only if the repo names a cron spec |
 | 9 | **them** | reply to the agent's 👋 from that handset — it runs setup (`life-assistant-hermes-agent` README § Bring-up) |
 

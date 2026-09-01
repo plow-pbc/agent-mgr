@@ -16,9 +16,9 @@ def _fake_docker(tmp_path, name="rowan"):
     return b, log
 
 
-def test_set_latch_uses_getpass_for_a_terminal_token(
-    monkeypatch, run, instance, registry, tmp_path
-):
+def test_set_latch_hides_terminal_input(monkeypatch, run, instance, registry, tmp_path):
+    """A terminal read goes through the echo-off wrapper -- the JSON form of the
+    paste carries the live token, and the operator may be screen-sharing."""
     monkeypatch.syspath_prepend(str(ROOT))
     from agent_mgr import commands
     from agent_mgr.descriptor import resolve_agent
@@ -29,15 +29,20 @@ def test_set_latch_uses_getpass_for_a_terminal_token(
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     manager_registry = Registry(registry)
     agent = resolve_agent("rowan", manager_registry, ROOT)
-    terminal = io.StringIO("dev_abc\nwould-echo\n")
+    terminal = io.StringIO("dev_abc\ntok_secret\nwould-echo\n")
     monkeypatch.setattr(terminal, "isatty", lambda: True)
-    written = []
+    written, hidden = [], []
     monkeypatch.setattr(commands.sys, "stdin", terminal)
     monkeypatch.setattr(commands, "reload_if_running", lambda *_: None)
     monkeypatch.setattr(commands, "upsert", lambda _agent, _keys, values: written.extend(values))
-    monkeypatch.setattr(commands.getpass, "getpass", lambda *_, **__: "tok_secret")
+    monkeypatch.setattr(
+        commands,
+        "read_hidden_latch_pair",
+        lambda: (hidden.append(True), commands.read_latch_pair())[1],
+    )
 
     assert commands.set_latch(agent, manager_registry) == 0
+    assert hidden == [True]
     assert written == ["dev_abc", "tok_secret"]
     assert terminal.readline() == "would-echo\n"
 
@@ -109,8 +114,18 @@ def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instanc
 
 # The two axes are independent, so a product would run redundant CLIs. One row
 # per dotenv shape, with the padded stdin -- the axis that pins the value strip
-# -- on one of them.
+# -- on one of them, and the JSON paste -- the shape Latch actually hands the
+# operator -- on another.
 CLEAN = "dev_abc\ntok_xyz\n"
+
+
+def _latch_json(uid="dev_abc", auth="Bearer tok_xyz", url=None):
+    server = {
+        "type": "http",
+        "url": f"https://api.plow.co/v1/relay/devices/{uid}/mcp" if url is None else url,
+        "headers": {"Authorization": auth},
+    }
+    return json.dumps({"mcpServers": {"plow": server}}, indent=2) + "\n"
 
 
 @pytest.mark.parametrize(
@@ -124,8 +139,9 @@ CLEAN = "dev_abc\ntok_xyz\n"
             (b"HOSTEX_TOKEN=keep-me",),
             "  dev_abc \n\ttok_xyz  \n",
         ),
-        # No DOMO_* at all -- the append arm.
-        (b"HOSTEX_TOKEN=keep-me\n", (b"HOSTEX_TOKEN=keep-me",), CLEAN),
+        # No DOMO_* at all -- the append arm -- fed the whole JSON blob from
+        # Latch's static-credential screen, which set-latch takes as one paste.
+        (b"HOSTEX_TOKEN=keep-me\n", (b"HOSTEX_TOKEN=keep-me",), _latch_json()),
         # Two canonical declarations, which is what appending a line at the
         # bottom produces. The upsert must leave exactly one, no stale value.
         (
@@ -230,6 +246,37 @@ def test_set_latch_writes_the_pair_and_carries_every_other_key_through(
     # Even a suffix is credential-derived data and must not reach shared logs.
     assert "xyz" not in r.stdout
     assert "xyz" not in r.stderr
+    # The one prompt names where the blob comes from.
+    assert "static credential" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "stdin,diagnosis",
+    [
+        # Opens like JSON, ends before it parses -- a partial paste.
+        ('{\n  "mcpServers": {\n', "not valid JSON"),
+        # Parses, but carries no relay-device URL to take a UID from --
+        # including any wrong-clipboard JSON with no mcpServers shape at all.
+        (_latch_json(url="https://api.plow.co/v1/other"), "no devices/<uid>/mcp URL"),
+        ('{"foo": 1}\n', "no devices/<uid>/mcp URL"),
+        # Parses, but the header is not the Bearer form the relay mints.
+        (_latch_json(auth="Basic abc"), "no 'Bearer' Authorization"),
+    ],
+    ids=["truncated", "no-device-url", "wrong-clipboard", "no-bearer"],
+)
+def test_set_latch_refuses_json_it_cannot_take_a_pair_from(
+    run, instance, tmp_path, stdin, diagnosis
+):
+    """A blob that half-parses must refuse loudly, not write a fragment the
+    gateway later 401s on."""
+    run("register", "rowan", str(instance("rowan", config=LATCH_CONFIG)))
+    run("deploy", "rowan")
+    r = run("set-latch", "rowan", input=stdin)
+    assert r.returncode != 0
+    assert diagnosis in r.stderr
+    body = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+    assert "dev_abc" not in body
+    assert "tok_xyz" not in body
 
 
 def test_set_latch_refuses_an_agent_whose_config_declares_no_latch(run, instance):

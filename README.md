@@ -63,8 +63,9 @@ agent-mgr sign-in errands             # device-code OAuth in the owner's browser
 agent-mgr agent errands "hello, who are you?"
 agent-mgr check-connectors errands
 
-# 6. (Optional) Latch — let it drive a Mac. Mint the pair in Plow Latch ON THAT MAC, then:
-agent-mgr set-latch errands           # prompts for DOMO_DEVICE_UID, then DOMO_MCP_TOKEN, on stdin
+# 6. (Optional) Latch — let it drive a Mac. In Plow Latch ON THAT MAC, mint the
+#    JSON via "can't use OAuth? create a static credential", then:
+agent-mgr set-latch errands           # paste that whole JSON at the prompt (input hidden)
 agent-mgr check-latch errands         # "latch reachable ... (HTTP 200)"
 ```
 
