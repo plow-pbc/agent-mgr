@@ -114,15 +114,15 @@ def test_home_expansion_still_works_because_the_template_documents_it(run, insta
 
 def test_an_instances_own_variables_reach_its_hook(run, instance, tmp_path):
     """An override-only variable like STR_VAULT is what an instance's compose
-    override and its restore hook are written against. Exporting it here is what
+    override and its deploy hook are written against. Exporting it here is what
     lets the hook stop keeping a second copy of a path the descriptor owns."""
     out = tmp_path / "seen"
-    repo = instance("str", descriptor=f"STR_VAULT=$HOME/hermes-vault\nAGENT_RESTORE_HOOK=h.sh\n")
+    repo = instance("str", descriptor=f"STR_VAULT=$HOME/hermes-vault\nAGENT_DEPLOY_HOOK=h.sh\n")
     hook = repo / "h.sh"
     hook.write_text(f'#!/usr/bin/env bash\nprintf "%s" "$STR_VAULT" > {out}\n')
     hook.chmod(0o755)
     run("register", "str", str(repo))
-    r = run("restore", "str")
+    r = run("deploy", "str")
     assert r.returncode == 0, r.stderr
     assert out.read_text() == f"{tmp_path / 'home'}/hermes-vault"
 
@@ -268,7 +268,7 @@ def test_one_repos_malformed_key_blocks_writes_on_every_other_agent(run, instanc
     """
     run("register", "rowan", str(instance("rowan")))
     run("register", "broken", str(instance("broken", descriptor="AGENT_TZ AGENT_IMAGE=x\n")))
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode != 0
     assert "could not resolve broken" in r.stderr
     assert "malformed key" in r.stderr
@@ -483,18 +483,18 @@ def test_which_dotenv_lines_reach_another_agent(
         assert expected_error in r.stderr
         assert "sk-notreal" not in r.stderr and "America/Chicago" not in r.stderr
 
-    # restore, not resolve: require_own_home runs on direct-write commands only,
+    # deploy, not resolve: require_own_home runs on direct-write commands only,
     # so `resolve` cannot observe the amplification either way.
-    other = run("restore", "other")
+    other = run("deploy", "other")
     assert (other.returncode != 0) is reaches_siblings, other.stderr
     assert ("could not resolve rowan" in other.stderr) is reaches_siblings
 
 
 @pytest.mark.parametrize("line, accepted", [
     ("AGENT_IMAGE=", False),
-    ("AGENT_RESTORE_HOOK=", True),
+    ("AGENT_DEPLOY_HOOK=", True),
     ("AGENT_PRE_TRANSITION=", True),
-], ids=["a-key-that-defaults-to-a-value", "the-restore-hook", "the-pre-transition-hook"])
+], ids=["a-key-that-defaults-to-a-value", "the-deploy-hook", "the-pre-transition-hook"])
 def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
     run, instance, line, accepted
 ):
@@ -502,8 +502,8 @@ def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
 
     Both hooks default to empty -- load_agent defines them from AGENT_REPO_PATHS, the
     path loop has an explicit '' arm, and pre_transition short-circuits on
-    `[ -n "$X" ] || return 0` -- so `AGENT_RESTORE_HOOK=`
-    is the natural way to write "this agent has no restore step", and nothing is
+    `[ -n "$X" ] || return 0` -- so `AGENT_DEPLOY_HOOK=`
+    is the natural way to write "this agent has no deploy step", and nothing is
     substituted behind the operator's back. Refusing it would brick that agent
     and, through require_own_home's fail-closed arm, every other one.
     """
@@ -518,6 +518,25 @@ def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
         assert f"{line}\n" in r.stdout
     else:
         assert "empty value for" in r.stderr
+
+
+@pytest.mark.parametrize("line, replacement", [
+    ("AGENT_RESTORE_HOOK=h.sh", "AGENT_DEPLOY_HOOK"),
+    ("AGENT_RESTORE_HOOK=", "AGENT_DEPLOY_HOOK"),
+    ("AGENT_CONFIRM_TRANSITIONS=1", "AGENT_LIVE"),
+    ("AGENT_CONFIRM_TRANSITIONS=", "AGENT_LIVE"),
+], ids=["deploy-hook", "deploy-hook-empty", "live-guard", "live-guard-empty"])
+def test_a_retired_key_is_refused_by_name(run, instance, line, replacement):
+    """A retired key must fail loudly, not pass through silently.
+
+    Unknown keys become hook environment, so without the tombstone a stale
+    descriptor written for the old name would resolve fine while the renamed
+    behavior (the deploy hook, a live agent's guard) silently stopped
+    applying. Empty assignments die too -- the key's presence is the bug."""
+    run("register", "rowan", str(instance("rowan", descriptor=f"{line}\n")))
+    r = run("resolve", "rowan")
+    assert r.returncode != 0
+    assert f"is now {replacement}" in r.stderr
 
 
 def test_the_dotenv_follows_a_declared_home(run, instance, tmp_path):

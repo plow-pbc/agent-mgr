@@ -1,13 +1,19 @@
 import contextlib
+import json
 import os
 import pathlib
 import shutil
 import subprocess
+import sys
+import threading
+from collections.abc import Iterator
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
 # The PATH the suite inherited, before it was made docker-free. Only
 # tests/test_compose.py uses it -- see the fixture below.
@@ -175,7 +181,7 @@ def run(registry, tmp_path):
         e["AGENT_MGR_REGISTRY"] = str(registry)
         e["HOME"] = str(tmp_path / "home")
         (tmp_path / "home").mkdir(exist_ok=True)
-        # restore installs the plugin through the same fetch-tree the skills
+        # deploy installs the plugin through the same fetch-tree the skills
         # use, and activate curls the activation script from an earlier SHA of
         # that same repo -- so both a hermetic `gh` and a hermetic `curl` are on
         # PATH for every invocation unless a test overrides PATH deliberately.
@@ -292,7 +298,7 @@ def shlex_quote(s):
 def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
     """A `curl -o <path>` that writes a no-op plugin installer.
 
-    restore installs the plugin, so the real path curls upstream. Stubbing curl
+    deploy installs the plugin, so the real path curls upstream. Stubbing curl
     keeps the suite hermetic while still exercising agent-mgr's own fetch,
     ref-validation and `bash <installer>` steps.
     """
@@ -311,6 +317,54 @@ def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
     (b / "curl").write_text(script)
     (b / "curl").chmod(0o755)
     return b
+
+
+class CredentialAPI:
+    def __init__(self) -> None:
+        self.requests: list[tuple[str, str, object | None, str | None]] = []
+        owner = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _handle(self) -> None:
+                length = int(self.headers.get("Content-Length", "0"))
+                body = json.loads(self.rfile.read(length)) if length else None
+                owner.requests.append(
+                    (self.command, self.path, body, self.headers.get("Authorization"))
+                )
+                payload: object = (
+                    {"participants": [{"type": "agent", "line": {"uid": "ln_elm"}}]}
+                    if self.command == "GET"
+                    else {"chat_uids": ["line:ln_elm"]}
+                )
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(json.dumps(payload).encode())
+
+            do_GET = _handle
+            do_PUT = _handle
+
+            def log_message(self, format: str, *args: object) -> None:
+                return None
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever)
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.server.server_port}"
+
+
+@pytest.fixture
+def credential_api() -> Iterator[CredentialAPI]:
+    server = CredentialAPI()
+    server.thread.start()
+    try:
+        yield server
+    finally:
+        server.server.shutdown()
+        server.server.server_close()
+        server.thread.join()
 
 
 
@@ -339,21 +393,41 @@ PLUGIN_TARBALL = {
         "def register(ctx):\n    pass\n",
 }
 
-# The fleet google-workspace skill every agent gets, at the path the canonical
-# copy keeps in plow-pbc/plow. Restore fetches it unconditionally, so the
-# default `gh` serves it the way it serves the plugin -- otherwise every plain
-# `run("restore", ...)` in the suite would fail on a fetch it never asked about.
-FLEET_SKILL_SRC = "cloud-agents/hermes/image/seed/skills/productivity/google-workspace"
+# The fleet skills every agent gets, at the paths the public mirror keeps in
+# plow-pbc/hermes-plow-chat. Deploy fetches them unconditionally, so the
+# default `gh` serves them the way it serves the plugin -- otherwise every
+# plain `run("deploy", ...)` in the suite would fail on a fetch it never asked
+# about. One tarball carries both trees: the real fetch is a whole-repo
+# snapshot fetch-tree extracts a src subtree from.
+FLEET_SEED = "seed-skills"
+FLEET_SKILL_SRC = f"{FLEET_SEED}/productivity/google-workspace"
 FLEET_SKILL_TARBALL = {
-    f"plow-pbc-plow-abc1234/{FLEET_SKILL_SRC}/SKILL.md":
+    f"plow-pbc-repo-abc1234/{FLEET_SKILL_SRC}/SKILL.md":
         "---\nname: google-workspace\n---\n# google-workspace\n",
+    f"plow-pbc-repo-abc1234/{FLEET_SEED}/growth/plow-invite/SKILL.md":
+        "---\nname: plow-invite\n---\n# plow-invite\n",
+    f"plow-pbc-repo-abc1234/{FLEET_SEED}/growth/plow-invite/scripts/mint_invite.py":
+        "#!/usr/bin/env python3\n",
 }
+
+
+def fleet_revision():
+    """The SHA the fleet skills are pinned to, read from the real stack.json.
+
+    The plugin and the fleet skills now live in the SAME repo, so the fake `gh`
+    can no longer tell them apart by repo the way the real argv let it. It
+    dispatches on this revision instead -- which is the only thing that differs
+    in `gh api repos/<repo>/tarball/<ref>`, and so is what a real GitHub
+    distinguishes them by too.
+    """
+    stack = json.loads((ROOT / "runtime" / "stack.json").read_text())
+    return stack["artifacts"]["plow_invite_skill"]["revision"]
 
 
 def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
     """A `gh` that answers by repo, because one invocation can need either.
 
-    A skill test restores first -- which installs the plugin and the fleet
+    A skill test deploys first -- which installs the plugin and the fleet
     skill -- and then adds a skill, so a `gh` that served one tarball to all
     would fail whichever came second on fetch-tree's manifest name check.
     Dispatching on the argv is what the real `gh api repos/<repo>/tarball/<ref>`
@@ -363,11 +437,11 @@ def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
     (b / "gh").write_text(
         "#!/usr/bin/env bash\n"
         "case \"$*\" in\n"
+        # The fleet SHA first: it is in hermes-plow-chat too, so the broader
+        # repo pattern below would otherwise swallow it and serve the plugin
+        # tarball, failing fetch-tree's manifest name check confusingly.
+        f"  *tarball/{fleet_revision()}*) cat {fleet_tgz} ;;\n"
         f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
-        # Matches the repo alone, so a test adding a DIFFERENT skill sourced
-        # from plow-pbc/plow would be served this tarball and fail fetch-tree's
-        # name check confusingly -- give such a test its own dispatching gh.
-        f"  *repos/plow-pbc/plow/tarball*) cat {fleet_tgz} ;;\n"
         f"  *) {other} ;;\n"
         "esac\n"
     )
@@ -381,7 +455,7 @@ def _write_fleet_tgz(tmp_path):
 
 
 def install_fake_gh(tmp_path, b):
-    """The default: a `gh` that serves what every restore fetches and nothing else.
+    """The default: a `gh` that serves what every deploy fetches and nothing else.
 
     Never overwrites one already there. This runs inside `run()`, so it fires on
     every invocation -- including the ones a skill test set up with a richer,
@@ -414,7 +488,7 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
     write_tarball(skill_tgz, members)
     plugin_tgz = tmp_path / "plugin.tgz"
     write_tarball(plugin_tgz, PLUGIN_TARBALL)
-    # All three, because a skill test restores before it adds, and restore
+    # All three, because a skill test deploys before it adds, and deploy
     # installs the plugin and the fleet skill through this same installer.
     install_gh_dispatching(b, plugin_tgz=plugin_tgz,
                            fleet_tgz=_write_fleet_tgz(tmp_path), skill_tgz=skill_tgz)

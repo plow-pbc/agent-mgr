@@ -70,11 +70,11 @@ def test_a_pattern_is_a_name_that_matches_nothing_not_a_wildcard(run, instance, 
     rows = run("ls").stdout
     assert "str" in rows and "rowan" in rows, "a refused unregister dropped rows"
 
-    # Same on the read path, which failed differently: `restore 's.r'` selected
+    # Same on the read path, which failed differently: `deploy 's.r'` selected
     # str's ROW while deriving its home from the PATTERN, so the deploy landed
     # in ~/.hermes-s.r and reported success with the live agent untouched.
-    r = run("restore", name)
-    assert r.returncode != 0, f"restore {name!r} resolved to some other agent's row"
+    r = run("deploy", name)
+    assert r.returncode != 0, f"deploy {name!r} resolved to some other agent's row"
     assert not (tmp_path / "home" / f".hermes-{name}").exists(), "a phantom home was created"
 
 

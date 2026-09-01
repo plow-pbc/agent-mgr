@@ -26,7 +26,7 @@ NO_LATCH_CONFIG = ("model:\n  provider: openai-codex\nmcp_servers:\n  hostex:\n"
 def test_check_latch_skips_when_the_config_declares_no_latch_server(run, instance, tmp_path):
     """An agent that drives no Mac is not a failure."""
     run("register", "str", str(instance("str", config=NO_LATCH_CONFIG)))
-    run("restore", "str")
+    run("deploy", "str")
     r = run("check-latch", "str", env=_bin(tmp_path, "str"))
     assert r.returncode == 0, r.stderr
     assert "no latch configured" in r.stdout
@@ -38,7 +38,7 @@ def test_a_leftover_credential_does_not_make_an_agent_look_latch_enabled(run, in
     Keying off the credential probed a relay it cannot reach and reported a
     revoked token as a failure of an agent that never used one."""
     run("register", "str", str(instance("str", config=NO_LATCH_CONFIG)))
-    run("restore", "str")
+    run("deploy", "str")
     (tmp_path / "home" / ".hermes-str" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_stale\nDOMO_MCP_TOKEN=tok_revoked\n")
     r = run("check-latch", "str", env=_bin(tmp_path, "str", exec_output="401"))
@@ -49,7 +49,7 @@ def test_a_leftover_credential_does_not_make_an_agent_look_latch_enabled(run, in
 
 def test_check_latch_reports_reachable_when_the_relay_answers(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
     assert r.returncode == 0, r.stderr
@@ -59,7 +59,7 @@ def test_check_latch_reports_reachable_when_the_relay_answers(run, instance, tmp
 def test_a_revoked_credential_is_named_as_revoked_not_as_unreachable(run, instance, tmp_path):
     """A dead credential and a dead network need different fixes."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="401"))
     assert r.returncode != 0
@@ -68,7 +68,7 @@ def test_a_revoked_credential_is_named_as_revoked_not_as_unreachable(run, instan
 
 def test_no_answer_is_distinguished_from_a_bad_credential(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="000"))
     assert r.returncode != 0
@@ -77,11 +77,11 @@ def test_no_answer_is_distinguished_from_a_bad_credential(run, instance, tmp_pat
 
 def test_the_token_is_never_printed_in_full(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property", tok="supersecrettokenvalue")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="401"))
     assert "supersecrettokenvalue" not in (r.stdout + r.stderr)
-    assert "lue" in r.stderr, "the last 3 characters identify it without disclosing it"
+    assert "lue" not in r.stderr, "credential-derived suffixes must not reach shared logs"
 
 
 @pytest.mark.parametrize(
@@ -112,7 +112,7 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
     to anything -- an exit-code assertion pins that a line was found, never that
     the right one was."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(dotenv)
     log = tmp_path / "docker.log"
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200", log=log))
@@ -131,7 +131,7 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
 
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=\n")
     r = run("check-latch", "property", env=_bin(tmp_path, "property"))
@@ -143,7 +143,7 @@ def test_check_latch_will_not_answer_from_the_host_when_the_gateway_is_down(run,
     """A host answer is exactly the evidence entering the namespace exists to
     stop accepting."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", running=False))
     assert r.returncode != 0
@@ -219,15 +219,11 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     table learned about it. That table is the single owner of the agent-repo
     contract, so the next hook must not be able to land without a row."""
     import pathlib
-    import re
+    import sys
+
     root = pathlib.Path(__file__).resolve().parent.parent
-    # The resolver's own list, not a name heuristic: it is what decides which
-    # keys are agent-supplied repo-relative paths rather than derived values,
-    # and the path loop walks it, so a path key cannot reach the resolver
-    # without passing through here.
-    loop = re.search(r'^AGENT_REPO_PATHS="([A-Z_ ]+)"$',
-                     (root / "lib" / "common.sh").read_text(), re.M)
-    assert loop, "AGENT_REPO_PATHS moved -- this probe reads it to know what to check"
+    sys.path.insert(0, str(root))
+    from agent_mgr.descriptor import OPTIONAL_PATH_KEYS
     # The TABLE, not the file: a hook mentioned only in prose or an example block
     # would satisfy a whole-README grep while the row the contract lives in stays
     # missing -- which is the way a third hook would realistically land.
@@ -239,7 +235,7 @@ def test_every_hook_the_resolver_declares_is_named_in_the_readmes_file_table():
     # No AGENT_KEYS membership check: AGENT_KEYS interpolates $AGENT_REPO_PATHS,
     # so a path key is carried by construction and the drift this used to police
     # cannot be written.
-    for hook in loop.group(1).split():
+    for hook in sorted(OPTIONAL_PATH_KEYS):
         assert f"`{hook}`" in rows, (
             f"{hook} is a declared repo path but the agent-repo table does not name it")
         # The descriptor is where an author actually meets the hook: AGENT_PRE_TRANSITION
@@ -254,12 +250,27 @@ def test_a_value_that_is_only_whitespace_is_reported_missing_not_probed(run, ins
     empty bearer and reports the 401 as REVOKED, which sends the operator to
     replace a credential that was never set."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=   \n")
     r = run("check-latch", "property", env=_bin(tmp_path, "property", exec_output="200"))
     assert r.returncode != 0
     assert "DOMO_MCP_TOKEN is empty" in r.stderr
+
+
+def test_a_swapped_dotenv_cannot_send_a_sibling_token_into_the_container(run, instance, tmp_path):
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("deploy", "property")
+    secret = tmp_path / "sibling.env"
+    secret.write_text("DOMO_DEVICE_UID=dev_sibling\nDOMO_MCP_TOKEN=tok_sibling\n")
+    dotenv = tmp_path / "home" / ".hermes-property" / ".env"
+    dotenv.unlink()
+    dotenv.symlink_to(secret)
+    log = tmp_path / "docker.log"
+    r = run("check-latch", "property",
+            env=_bin(tmp_path, "property", log=log, exec_output="200"))
+    assert r.returncode != 0
+    assert not log.exists() or "tok_sibling" not in log.read_text()
 
 
 def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credential(
@@ -281,7 +292,7 @@ def test_an_unreadable_dotenv_is_named_as_such_not_reported_as_a_missing_credent
     # pass while proving nothing, and a skip hides that.
     assert os.geteuid() != 0, "run the suite unprivileged; root reads a 000 file"
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
-    run("restore", "property")
+    run("deploy", "property")
     _with_latch(tmp_path, "property")
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
     env_file.chmod(0o000)
@@ -338,9 +349,9 @@ def _chats_response(*uids_and_names):
 
 
 def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
-    """Register + restore `property` and give it a Plow credential pair."""
+    """Register + deploy `property` and give it a Plow credential pair."""
     run("register", "property", str(instance("property")))
-    run("restore", "property")
+    run("deploy", "property")
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
     env_file.write_text(
         f"HOSTEX_TOKEN=keepme\nPLOW_AGENT_TOKEN=tok_plow\nPLOW_HOME_CHANNEL={home_uid}\n")

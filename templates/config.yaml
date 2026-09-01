@@ -2,6 +2,11 @@
 # choice for this deployment. Keys equal to the image's own defaults are
 # deliberately absent, so the pinned image supplies its current defaults rather
 # than a frozen snapshot of them.
+# One session per group chat, shared by every participant. Present despite the
+# "absent keys mean image defaults" rule above: the image default (true) splits
+# a group thread into per-sender sessions, and the plow-chat plugin's
+# config.extra flag never reaches the gateway session store.
+group_sessions_per_user: false
 model:
   default: gpt-5.5
   provider: openai-codex

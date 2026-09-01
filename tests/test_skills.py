@@ -1,7 +1,8 @@
 import base64
 import os
 
-from conftest import fake_docker, fake_skill_gh
+import pytest
+from conftest import ROOT, fake_docker, fake_skill_gh
 
 
 def _fake_bin(tmp_path, skill_name="property-hunt", files=(), agent="property", src=None):
@@ -42,6 +43,19 @@ def test_adding_the_same_skill_again_updates_the_pin_rather_than_duplicating(run
     tsv = (repo / "skills.tsv").read_text()
     assert tsv.count("plow-pbc/property-hunt") == 1
     assert "b" * 40 in tsv and "a" * 40 not in tsv
+
+
+def test_a_failed_manifest_publish_preserves_existing_pins(monkeypatch, tmp_path):
+    monkeypatch.syspath_prepend(str(ROOT))
+    from agent_mgr import commands
+
+    manifest = tmp_path / "skills.tsv"
+    manifest.write_text("existing\n")
+    monkeypatch.setattr(commands, "atomic_write",
+                        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("full")))
+    with pytest.raises(commands.AgentMgrError, match="full"):
+        commands._write_manifest(manifest, "replacement\n")
+    assert manifest.read_text() == "existing\n"
 
 
 def test_a_branch_ref_is_refused(run, instance, tmp_path):
@@ -220,7 +234,7 @@ def test_a_failed_publish_leaves_the_previous_skill_installed(run, instance, tmp
 
 def test_two_skills_from_one_monorepo_keep_both_pins(run, instance, tmp_path):
     """The manifest was keyed on the REPO, so adding the second skill from one
-    monorepo deleted the first's pin and a clean restore silently omitted it."""
+    monorepo deleted the first's pin and a clean deploy silently omitted it."""
     repo = instance("property")
     run("register", "property", str(repo))
     for dest, src in (("first", "ref/a"), ("second", "ref/b")):
@@ -232,28 +246,35 @@ def test_two_skills_from_one_monorepo_keep_both_pins(run, instance, tmp_path):
     assert any("\tfirst\t" in r for r in rows) and any("\tsecond\t" in r for r in rows)
 
 
-def test_restore_installs_the_fleet_google_workspace_skill(run, instance, tmp_path):
-    """Every agent gets the redirect skill: the image-bundled copy of the same
-    name teaches a local-OAuth path no instance has, so restore replaces it."""
+@pytest.mark.parametrize(
+    ("dest", "name"),
+    [
+        ("productivity/google-workspace", "google-workspace"),
+        ("growth/plow-invite", "plow-invite"),
+    ],
+)
+def test_deploy_installs_every_fleet_skill(run, instance, tmp_path, dest, name):
+    """Every agent gets every pinned fleet skill: google-workspace replaces the
+    image-bundled copy whose local-OAuth path no instance has; plow-invite is
+    the delight-triggered referral capability (plow-pbc/agent-mgr#72)."""
     run("register", "rowan", str(instance("rowan")))
-    r = run("restore", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode == 0, r.stderr
-    installed = (tmp_path / "home" / ".hermes-rowan" / "skills"
-                 / "productivity" / "google-workspace" / "SKILL.md")
+    installed = tmp_path / "home" / ".hermes-rowan" / "skills" / dest / "SKILL.md"
     assert installed.exists()
-    assert "name: google-workspace" in installed.read_text()
+    assert f"name: {name}" in installed.read_text()
 
 
-def test_restore_skips_the_fleet_skill_when_the_instance_pins_it(run, instance, tmp_path):
+def test_deploy_skips_the_fleet_skill_when_the_instance_pins_it(run, instance, tmp_path):
     """Installing the fleet copy first would leave it deployed over a working
-    instance copy whenever the later replay's fetch fails mid-restore, so
-    restore does not install the fleet copy at all for an instance-owned dest."""
+    instance copy whenever the later replay's fetch fails mid-deploy, so
+    deploy does not install the fleet copy at all for an instance-owned dest."""
     repo = instance("property")
     (repo / "skills.tsv").write_text(
         f"plow-pbc/property-hunt\t{'a' * 40}\tproductivity/google-workspace\t\n"
     )
     run("register", "property", str(repo))
-    r = run("restore", "property",
+    r = run("deploy", "property",
             env=_fake_bin(tmp_path, skill_name="google-workspace",
                           files=(("INSTANCE.md", "instance copy"),)))
     assert r.returncode == 0, r.stderr
@@ -263,18 +284,22 @@ def test_restore_skips_the_fleet_skill_when_the_instance_pins_it(run, instance, 
     assert (installed / "INSTANCE.md").exists()
 
 
-def test_install_skill_refuses_an_instance_pinned_google_workspace(run, instance):
-    """restore deliberately installs an instance's own skills.tsv copy last;
-    a standalone fleet install over it would contradict the reviewed pin
-    until the next restore silently flipped it back."""
+def test_install_skill_skips_an_instance_pinned_dest_and_installs_the_rest(run, instance, tmp_path):
+    """deploy deliberately installs an instance's own skills.tsv copy last; a
+    standalone fleet install over it would contradict the reviewed pin until
+    the next deploy silently flipped it back. With more than one fleet skill,
+    the owned dest is skipped per skill while the others still install."""
     repo = instance("rowan")
     (repo / "skills.tsv").write_text(
         f"plow-pbc/x\t{'a' * 40}\tproductivity/google-workspace\t\n"
     )
     run("register", "rowan", str(repo))
+    run("deploy", "rowan", env=_fake_bin(tmp_path, skill_name="google-workspace", agent="rowan"))
     r = run("install-skill", "rowan")
-    assert r.returncode != 0
-    assert "authoritative" in r.stderr
+    assert r.returncode == 0, r.stderr
+    assert "skipped" in r.stdout and "google-workspace" in r.stdout
+    installed = tmp_path / "home" / ".hermes-rowan" / "skills" / "growth" / "plow-invite" / "SKILL.md"
+    assert installed.exists()
 
 
 def test_a_dotted_destination_does_not_accept_a_different_skill(run, instance, tmp_path):
