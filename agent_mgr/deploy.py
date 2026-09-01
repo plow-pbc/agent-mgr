@@ -178,7 +178,7 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
         _publish_home_file(skeleton, agent.home, ".env")
     install_plugin(agent, "The dotenv skeleton IS written; config.yaml and skills are NOT.")
     install_fleet_skills(
-        agent, "The dotenv skeleton and the plugin ARE installed; config.yaml is NOT."
+        agent, "The dotenv skeleton and the plugin ARE installed; config.yaml was not updated."
     )
     _publish_home_file(agent.config, agent.home, "config.yaml")
     print(f"deployed config.yaml to {agent.home}")

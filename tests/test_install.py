@@ -844,12 +844,49 @@ def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path):
     assert "fleet google-workspace skill" in r.stderr, "name the skill that failed"
     assert "gh auth status" in r.stderr, "the likeliest cause must be named"
     assert "the plugin ARE installed" in r.stderr
-    assert "config.yaml is NOT" in r.stderr
+    assert "config.yaml was not updated" in r.stderr
+    assert "config.yaml is NOT" not in r.stderr, "re-deploy keeps its config; do not claim it is gone"
 
     # The message must match the home it describes, not just read well.
     home = tmp_path / "home" / ".hermes-rowan"
     assert (home / "plugins" / "plow-chat-platform").is_dir(), "the plugin did land"
     assert not (home / "config.yaml").exists(), "config.yaml did not"
+
+
+def test_a_fleet_failure_on_re_deploy_does_not_claim_the_config_is_gone(run, instance, tmp_path):
+    """The same failure over a HEALTHY home, which is the documented re-run path.
+
+    The fetch raises before `_publish_home_file`, so an already-deployed agent
+    keeps the config it had. Wording that says config.yaml is absent sends the
+    operator looking for a home that was never damaged -- and the fresh-deploy
+    test above cannot catch it, because from an empty home the claim is true.
+    """
+    from conftest import PLUGIN_TARBALL, fleet_revision, write_tarball
+
+    run("register", "rowan", str(instance("rowan")))
+    run("deploy", "rowan")  # a healthy, fully deployed home
+    home = tmp_path / "home" / ".hermes-rowan"
+    before = (home / "config.yaml").read_text()
+
+    b = tmp_path / "redeploy-failing-bin"
+    b.mkdir()
+    plugin_tgz = tmp_path / "redeploy-plugin.tgz"
+    write_tarball(plugin_tgz, PLUGIN_TARBALL)
+    (b / "gh").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        f"  *tarball/{fleet_revision()}*) exit 1 ;;\n"
+        f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
+    (b / "gh").chmod(0o755)
+
+    r = run("deploy", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "config.yaml was not updated" in r.stderr
+    assert "config.yaml is NOT" not in r.stderr, "the config is still there"
+    assert (home / "config.yaml").read_text() == before, "the message must match the home"
 
 
 def test_the_fleet_failure_does_not_borrow_install_plugins_wording(run, instance, tmp_path):
@@ -877,6 +914,7 @@ def test_the_fleet_failure_does_not_borrow_install_plugins_wording(run, instance
     assert "gh auth status" in r.stderr
     assert "untouched" in r.stderr
     assert "is NOT" not in r.stderr, "install-skill must not claim the config is gone"
+    assert "was not updated" not in r.stderr, "nor borrow deploy's wording"
 
 
 def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
