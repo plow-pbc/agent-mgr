@@ -32,7 +32,7 @@ def test_resolve_json_is_a_versioned_typed_object(run, instance):
             "timezone": "America/Chicago",
             "image": (
                 "nousresearch/hermes-agent@sha256:"
-                "c84f3494f86ae32d6a82a3b7d56111d712f3d82f75f9744e8ae07668889714c2"
+                "8f4e8677281eca188bc9d2fda90806646ba19941fce55fa8fda2d63112ff48a8"
             ),
             "config": str(repo / "config.yaml"),
             "live": False,
