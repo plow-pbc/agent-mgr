@@ -88,9 +88,13 @@ def own_skill_destinations(agent: ResolvedAgent) -> set[str]:
     }
 
 
-def install_fleet_skills(agent: ResolvedAgent) -> None:
+def install_fleet_skills(
+    agent: ResolvedAgent,
+    landed: str = "This agent's config and plugin are untouched.",
+) -> None:
     owned = own_skill_destinations(agent)
     artifacts = stack()
+    done: list[str] = []
     for key in ("google_workspace_skill", "plow_invite_skill"):
         artifact = artifacts[key]
         dest = artifact.destination.removeprefix("skills/")
@@ -105,7 +109,23 @@ def install_fleet_skills(agent: ResolvedAgent) -> None:
             artifact = Artifact(
                 artifact.repository, override, artifact.source, artifact.destination
             )
-        fetch(agent, "skills", "SKILL.md", artifact, destination=dest)
+        try:
+            fetch(agent, "skills", "SKILL.md", artifact, destination=dest)
+        except AgentMgrError as error:
+            # Say what landed, like install_plugin and the deploy hook do. This
+            # was the one step in deploy that did not, and it is the step most
+            # likely to fail on a fresh machine -- where the bare fetch error
+            # ("could not install <repo> at <sha>") is also indistinguishable
+            # from an unauthenticated `gh`, which refuses even a public repo.
+            raise AgentMgrError(
+                error.code,
+                f"could not install the fleet {dest.rsplit('/', 1)[-1]} skill from "
+                f"{artifact.repository} at {artifact.revision[:7]} -- is 'gh' installed "
+                f"and authenticated (gh auth status)? "
+                + (f"Fleet skills already installed: {', '.join(done)}. " if done else "")
+                + landed,
+            ) from error
+        done.append(dest)
 
 
 def replay_skills(agent: ResolvedAgent) -> None:
@@ -157,7 +177,9 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
             skeleton = ROOT / "templates" / "env.example"
         _publish_home_file(skeleton, agent.home, ".env")
     install_plugin(agent, "The dotenv skeleton IS written; config.yaml and skills are NOT.")
-    install_fleet_skills(agent)
+    install_fleet_skills(
+        agent, "The dotenv skeleton and the plugin ARE installed; config.yaml is NOT."
+    )
     _publish_home_file(agent.config, agent.home, "config.yaml")
     print(f"deployed config.yaml to {agent.home}")
     replay_skills(agent)
