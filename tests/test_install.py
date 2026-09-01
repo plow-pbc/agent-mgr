@@ -809,6 +809,93 @@ def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
     assert "are NOT" not in r.stderr, "install-plugin must not claim the config is gone"
 
 
+@pytest.mark.parametrize("predeployed", [False, True])
+def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path, predeployed):
+    """The fleet-skill step was the one step in deploy that did not say.
+
+    deploy installs the plugin, then the fleet skills, then publishes
+    config.yaml -- config last on purpose, so a half-installed home refuses to
+    come up rather than running against the image-bundled google-workspace copy
+    it exists to replace. That ordering is fine; what was missing was the
+    operator being told which half they are in. A bare `could not install <repo>
+    at <sha>` is also indistinguishable from an unauthenticated `gh`, which
+    refuses even a public repo -- the likeliest failure on a fresh machine.
+
+    Run from both homes, because the wording is only true of one of them. The
+    fetch raises before `_publish_home_file`, so a re-deploy -- the documented
+    re-run path -- keeps the config it had; from an empty home "config.yaml is
+    NOT installed" happens to be true, which is why the fresh case alone cannot
+    catch a message that sends the operator looking for a home nothing damaged.
+    """
+    from conftest import PLUGIN_TARBALL, fleet_revision, write_tarball
+
+    run("register", "rowan", str(instance("rowan")))
+    home = tmp_path / "home" / ".hermes-rowan"
+    before = None
+    if predeployed:
+        run("deploy", "rowan")  # a healthy, fully deployed home
+        before = (home / "config.yaml").read_text()
+
+    b = tmp_path / "fleet-failing-bin"
+    b.mkdir()
+    plugin_tgz = tmp_path / "plugin.tgz"
+    write_tarball(plugin_tgz, PLUGIN_TARBALL)
+    # Serves the plugin, refuses the fleet skills: fails deploy at exactly the
+    # step under test, with the plugin genuinely on disk.
+    (b / "gh").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        f"  *tarball/{fleet_revision()}*) exit 1 ;;\n"
+        f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
+        "  *) exit 1 ;;\n"
+        "esac\n"
+    )
+    (b / "gh").chmod(0o755)
+
+    r = run("deploy", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "fleet google-workspace skill" in r.stderr, "name the skill that failed"
+    assert "gh auth status" in r.stderr, "the likeliest cause must be named"
+    assert "the plugin ARE installed" in r.stderr
+    assert "config.yaml was not updated" in r.stderr
+    assert "config.yaml is NOT" not in r.stderr, "re-deploy keeps its config; do not claim it is gone"
+
+    # The message must match the home it describes, not just read well.
+    assert (home / "plugins" / "plow-chat-platform").is_dir(), "the plugin did land"
+    if before is None:
+        assert not (home / "config.yaml").exists(), "config.yaml did not"
+    else:
+        assert (home / "config.yaml").read_text() == before, "the re-deploy kept its config"
+
+
+def test_the_fleet_failure_does_not_borrow_install_plugins_wording(run, instance, tmp_path):
+    """install-skill leaves config and plugin alone, so it must not claim otherwise.
+
+    Same split install_plugin already keeps between deploy and install-plugin:
+    one sentence for both callers told whichever operator was not deploying that
+    their config was gone, and the obvious response is to re-run deploy over a
+    healthy agent.
+    """
+    from conftest import fleet_revision
+
+    b = tmp_path / "skill-failing-bin"
+    b.mkdir()
+    (b / "gh").write_text(
+        "#!/usr/bin/env bash\n"
+        f"case \"$*\" in\n  *tarball/{fleet_revision()}*) exit 1 ;;\n  *) exit 1 ;;\nesac\n"
+    )
+    (b / "gh").chmod(0o755)
+
+    run("register", "rowan", str(instance("rowan")))
+    run("deploy", "rowan")  # a healthy home first, so install-skill clears its gate
+    r = run("install-skill", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "gh auth status" in r.stderr
+    assert "untouched" in r.stderr
+    assert "is NOT" not in r.stderr, "install-skill must not claim the config is gone"
+    assert "was not updated" not in r.stderr, "nor borrow deploy's wording"
+
+
 def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
     run, instance, tmp_path
 ):
