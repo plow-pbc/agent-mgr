@@ -36,7 +36,9 @@ def test_set_latch_hides_terminal_input(monkeypatch, run, instance, registry, tm
     monkeypatch.setattr(commands, "reload_if_running", lambda *_: None)
     monkeypatch.setattr(commands, "upsert", lambda _agent, _keys, values: written.extend(values))
     monkeypatch.setattr(
-        commands, "hidden_on_tty", lambda read: (hidden.append(True), read())[1]
+        commands,
+        "read_hidden_latch_pair",
+        lambda: (hidden.append(True), commands.read_latch_pair())[1],
     )
 
     assert commands.set_latch(agent, manager_registry) == 0

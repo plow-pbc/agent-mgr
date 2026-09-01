@@ -7,7 +7,6 @@ import subprocess
 import sys
 import tempfile
 import termios
-from collections.abc import Callable
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
@@ -306,16 +305,17 @@ def read_latch_pair() -> tuple[str, str]:
     return first.strip(), sys.stdin.readline().strip()
 
 
-def hidden_on_tty(read: Callable[[], tuple[str, str]]) -> tuple[str, str]:
-    """Run `read` with terminal echo off -- the JSON paste carries a live token,
-    and getpass can only hide a single line. The operator may be screen-sharing."""
+def read_hidden_latch_pair() -> tuple[str, str]:
+    """read_latch_pair with terminal echo off -- the JSON paste carries a live
+    token, and getpass can only hide a single line. The operator may be
+    screen-sharing."""
     fd = sys.stdin.fileno()
     saved = termios.tcgetattr(fd)
     hidden = termios.tcgetattr(fd)
     hidden[3] &= ~termios.ECHO
     termios.tcsetattr(fd, termios.TCSADRAIN, hidden)
     try:
-        return read()
+        return read_latch_pair()
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, saved)
         print(file=sys.stderr)
@@ -385,7 +385,7 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
         file=sys.stderr,
         flush=True,
     )
-    uid, token = hidden_on_tty(read_latch_pair) if sys.stdin.isatty() else read_latch_pair()
+    uid, token = read_hidden_latch_pair() if sys.stdin.isatty() else read_latch_pair()
     if not uid or not token:
         missing = "DOMO_DEVICE_UID" if not uid else "DOMO_MCP_TOKEN"
         raise AgentMgrError(
