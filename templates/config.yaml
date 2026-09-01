@@ -10,6 +10,14 @@ group_sessions_per_user: false
 model:
   default: gpt-5.5
   provider: openai-codex
+# Outcome memories need room: the image default (2200 chars, ~800 tokens)
+# fills with durable technique notes, so one-line records of consequential
+# actions (payments, sends, bookings) lose the consolidation fight, and a
+# sibling session later answers "did that happen?" from stale session
+# memory. ~3x gives the outcome journal room; the write-an-outcome rule
+# lives in life-assistant-hermes-agent's SOUL.md.
+memory:
+  memory_char_limit: 6000
 mcp_servers:
   # Plow Latch, reached over the Plow relay: the browser and filesystem this
   # agent works on are the operator's Mac, not this container. The relay
