@@ -809,7 +809,8 @@ def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
     assert "are NOT" not in r.stderr, "install-plugin must not claim the config is gone"
 
 
-def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path):
+@pytest.mark.parametrize("predeployed", [False, True])
+def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path, predeployed):
     """The fleet-skill step was the one step in deploy that did not say.
 
     deploy installs the plugin, then the fleet skills, then publishes
@@ -819,8 +820,21 @@ def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path):
     operator being told which half they are in. A bare `could not install <repo>
     at <sha>` is also indistinguishable from an unauthenticated `gh`, which
     refuses even a public repo -- the likeliest failure on a fresh machine.
+
+    Run from both homes, because the wording is only true of one of them. The
+    fetch raises before `_publish_home_file`, so a re-deploy -- the documented
+    re-run path -- keeps the config it had; from an empty home "config.yaml is
+    NOT installed" happens to be true, which is why the fresh case alone cannot
+    catch a message that sends the operator looking for a home nothing damaged.
     """
     from conftest import PLUGIN_TARBALL, fleet_revision, write_tarball
+
+    run("register", "rowan", str(instance("rowan")))
+    home = tmp_path / "home" / ".hermes-rowan"
+    before = None
+    if predeployed:
+        run("deploy", "rowan")  # a healthy, fully deployed home
+        before = (home / "config.yaml").read_text()
 
     b = tmp_path / "fleet-failing-bin"
     b.mkdir()
@@ -838,7 +852,6 @@ def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path):
     )
     (b / "gh").chmod(0o755)
 
-    run("register", "rowan", str(instance("rowan")))
     r = run("deploy", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert "fleet google-workspace skill" in r.stderr, "name the skill that failed"
@@ -848,45 +861,11 @@ def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path):
     assert "config.yaml is NOT" not in r.stderr, "re-deploy keeps its config; do not claim it is gone"
 
     # The message must match the home it describes, not just read well.
-    home = tmp_path / "home" / ".hermes-rowan"
     assert (home / "plugins" / "plow-chat-platform").is_dir(), "the plugin did land"
-    assert not (home / "config.yaml").exists(), "config.yaml did not"
-
-
-def test_a_fleet_failure_on_re_deploy_does_not_claim_the_config_is_gone(run, instance, tmp_path):
-    """The same failure over a HEALTHY home, which is the documented re-run path.
-
-    The fetch raises before `_publish_home_file`, so an already-deployed agent
-    keeps the config it had. Wording that says config.yaml is absent sends the
-    operator looking for a home that was never damaged -- and the fresh-deploy
-    test above cannot catch it, because from an empty home the claim is true.
-    """
-    from conftest import PLUGIN_TARBALL, fleet_revision, write_tarball
-
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")  # a healthy, fully deployed home
-    home = tmp_path / "home" / ".hermes-rowan"
-    before = (home / "config.yaml").read_text()
-
-    b = tmp_path / "redeploy-failing-bin"
-    b.mkdir()
-    plugin_tgz = tmp_path / "redeploy-plugin.tgz"
-    write_tarball(plugin_tgz, PLUGIN_TARBALL)
-    (b / "gh").write_text(
-        "#!/usr/bin/env bash\n"
-        "case \"$*\" in\n"
-        f"  *tarball/{fleet_revision()}*) exit 1 ;;\n"
-        f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
-        "  *) exit 1 ;;\n"
-        "esac\n"
-    )
-    (b / "gh").chmod(0o755)
-
-    r = run("deploy", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "config.yaml was not updated" in r.stderr
-    assert "config.yaml is NOT" not in r.stderr, "the config is still there"
-    assert (home / "config.yaml").read_text() == before, "the message must match the home"
+    if before is None:
+        assert not (home / "config.yaml").exists(), "config.yaml did not"
+    else:
+        assert (home / "config.yaml").read_text() == before, "the re-deploy kept its config"
 
 
 def test_the_fleet_failure_does_not_borrow_install_plugins_wording(run, instance, tmp_path):
