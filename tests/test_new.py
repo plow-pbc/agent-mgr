@@ -17,13 +17,30 @@ def test_the_scaffolded_config_has_baseline_integrations_and_group_scope(run, tm
     visible iMessage thread into per-person agent contexts — the 2026-08-30
     life-assistant incident. The plow-chat plugin's config.extra flag never
     reaches the gateway session store, so the template's gateway-level key is
-    what actually holds the line."""
+    what actually holds the line.
+
+    Compression gets a fallback for the same reason: an empty chain leaves an
+    oversized session with nowhere to land when the primary times out, and it
+    re-stalls every turn (the ~30h freeze on 2026-08-31). The relationships
+    matter, not the values — a fallback equal to the primary is discarded by
+    the (provider, model)-scoped skip, one on another provider needs a
+    credential a new agent has not got, and a primary outliving the fallback
+    just delays the only thing that can still succeed. Each is inert while
+    looking configured."""
     target = tmp_path / "acme-hermes-agent"
     run("new", "acme", str(target))
     text = (target / "config.yaml").read_text()
     assert "plow-chat-platform" in text
     assert "latch:" in text and "DOMO_DEVICE_UID" in text
-    assert yaml.safe_load(text)["group_sessions_per_user"] is False
+    cfg = yaml.safe_load(text)
+    assert cfg["group_sessions_per_user"] is False
+
+    compression = cfg["auxiliary"]["compression"]
+    chain = compression["fallback_chain"]
+    assert chain
+    assert all(e["model"] != cfg["model"]["default"] for e in chain)
+    assert all(e["provider"] == cfg["model"]["provider"] for e in chain)
+    assert compression["timeout"] < chain[0]["timeout"]
 
 
 def test_new_does_not_create_the_home_that_deploy_owns(run, tmp_path):

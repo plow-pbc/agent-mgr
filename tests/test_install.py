@@ -190,34 +190,6 @@ def test_the_shipped_config_template_wires_both_platforms():
     assert "latch:" in cfg and "DOMO_DEVICE_UID" in cfg
 
 
-def test_the_template_fallback_is_not_the_model_it_falls_back_from():
-    """A chain entry naming the primary model is inert.
-
-    The aux client's skip is (provider, model)-scoped, so a fallback equal to
-    the model that just timed out is discarded and compression is left with
-    nowhere to land -- the ~30h freeze the chain exists to prevent, wearing a
-    configured-looking disguise. Copying another agent's block is exactly how
-    that happens: the fleet agents run gpt-5.6-sol primary, this template runs
-    gpt-5.5, so their fallbacks are each other's primaries.
-    """
-    import yaml
-
-    cfg = yaml.safe_load((ROOT / "templates" / "config.yaml").read_text())
-    chain = cfg["auxiliary"]["compression"]["fallback_chain"]
-
-    assert chain, "an empty chain is the incident"
-    assert all(e["model"] != cfg["model"]["default"] for e in chain)
-    assert all(e["provider"] == cfg["model"]["provider"] for e in chain), (
-        "the fallback rides the agent's own auth -- a different provider needs "
-        "a credential a scaffolded agent does not have, so it would resolve to "
-        "nothing while looking configured"
-    )
-    assert cfg["auxiliary"]["compression"]["timeout"] < chain[0]["timeout"], (
-        "the primary must give up sooner than the fallback runs, or widening "
-        "its budget just delays the only thing that can still succeed"
-    )
-
-
 def test_no_template_carries_a_literal_credential():
     for name in ("config.yaml", "env.example", "agent.env"):
         text = (ROOT / "templates" / name).read_text()
