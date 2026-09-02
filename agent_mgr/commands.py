@@ -571,7 +571,7 @@ def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
             "hermes",
             "test",
             "-f",
-            "/opt/data/skills/plow-connectors/plow_connector.py",
+            "/opt/data/skills/productivity/plow-connectors/plow_connector.py",
         ],
         capture=True,
     )
@@ -579,8 +579,9 @@ def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
             f"the plow-connectors skill is not installed in {agent.name} -- run: "
-            f"agent-mgr add-skill {agent.name} plow-pbc/plow --dest plow-connectors "
-            "--src cloud-agents/hermes/image/seed/skills/productivity/plow-connectors",
+            f"agent-mgr add-skill {agent.name} plow-pbc/plow-hermes-agent "
+            "--dest productivity/plow-connectors "
+            "--src image/seed/skills/productivity/plow-connectors",
         )
     status = 0
     for connector in ("gmail", "slack"):
@@ -593,7 +594,7 @@ def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
                 uid,
                 "hermes",
                 "python3",
-                "/opt/data/skills/plow-connectors/plow_connector.py",
+                "/opt/data/skills/productivity/plow-connectors/plow_connector.py",
                 connector,
                 "status",
             ],

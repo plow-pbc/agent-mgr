@@ -283,8 +283,9 @@ code — it lives in that agent's repo, mounted read-only via
 example.)
 
 ```sh
-agent-mgr add-skill errands plow-pbc/plow --dest plow-connectors \
-    --src cloud-agents/hermes/image/seed/skills/productivity/plow-connectors
+agent-mgr add-skill errands plow-pbc/plow-hermes-agent \
+    --dest productivity/plow-connectors \
+    --src image/seed/skills/productivity/plow-connectors
 ```
 
 The pin lands in the agent repo's `skills.tsv`, reviewable beside its config.
