@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import pytest
@@ -21,8 +22,6 @@ def test_the_image_defaults_to_the_fleet_wide_pinned_digest(run, instance):
     place to edit, and moving the fleet onto the shared cloud base broke this
     test for no reason other than that duplication.
     """
-    import json
-
     ref = json.loads(
         (pathlib.Path(__file__).resolve().parent.parent / "runtime" / "stack.json").read_text()
     )["images"]["hermes_local"]["reference"]
