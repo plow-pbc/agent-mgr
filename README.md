@@ -327,6 +327,12 @@ branch re-resolves on the next pull, which silently changes a large unreviewed
 surface under a running agent that holds live credentials — and for the plugin,
 one that holds the chat token.
 
+The `Propose Hermes image update` workflow checks the latest stable Hermes
+release daily. It verifies the release commit against the OCI provenance of
+both supported platform images, refuses a downgrade or diverged history, and
+opens a digest-pinned pull request. It never changes or restarts a running
+agent; a maintainer still reviews and merges each runtime update.
+
 **The two SHA pins name one repo at two points in its history, and must not be
 collapsed into one.** `Strip the SEED ceremony` deleted `ref/scripts/`, so the
 plugin pin moves forward past that commit while `create_plow_chat_curl.sh`

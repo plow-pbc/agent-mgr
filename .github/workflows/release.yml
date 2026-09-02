@@ -14,10 +14,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
       - run: uv run --no-project --python 3.13 --with pytest==8.4.2 --with pyyaml==6.0.2 pytest -q
-      - run: uv run --no-project --python 3.13 --with mypy==1.17.1 mypy agent_mgr scripts/build_zipapp.py __main__.py
+      - run: uv run --no-project --python 3.13 --with mypy==1.17.1 mypy agent_mgr scripts/*.py __main__.py
       - run: uv run --no-project --python 3.13 --with mypy==1.17.1 mypy lib/fetch-tree
-      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff check agent_mgr scripts/build_zipapp.py __main__.py lib/fetch-tree
-      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff format --check agent_mgr scripts/build_zipapp.py __main__.py lib/fetch-tree
+      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff check agent_mgr scripts/*.py __main__.py lib/fetch-tree
+      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff format --check agent_mgr scripts/*.py __main__.py lib/fetch-tree
       - run: python3 scripts/build_zipapp.py agent-mgr.pyz
       - run: sha256sum agent-mgr.pyz > agent-mgr.pyz.sha256
       - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65
