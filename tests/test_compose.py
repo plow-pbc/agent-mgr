@@ -110,6 +110,12 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
         "    image: sams-str-hermes-agent:local\n"
         "    volumes:\n"
         "      - ${STR_VAULT:?}:/opt/data/repo/vault\n"
+        # An override can replace anything the template set, identity
+        # included -- which is why resolve_guard checks AGENT_ID after
+        # the merge. A forged one attributes a person's usage to a
+        # sibling, and says nothing while doing it.
+        "    environment:\n"
+        "      - AGENT_ID=someone-else\n"
     )
     r = compose_config(tmp_path, tmp_path / ".hermes", "str", override=override,
                        extra_env={"STR_REPO": str(build_ctx), "STR_VAULT": str(vault)})
@@ -117,6 +123,8 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
     svc = json.loads(r.stdout)["services"]["hermes"]
     assert svc["build"]["context"] == str(build_ctx)
     assert svc["image"] == "sams-str-hermes-agent:local"
+    assert svc["environment"]["AGENT_ID"] == "someone-else", \
+        "the override no longer wins; resolve_guard's premise is gone"
     assert {v["target"] for v in svc["volumes"]} == {"/opt/data", "/opt/data/repo/vault"}
 
 
@@ -129,20 +137,3 @@ def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):
     assert "STR_VAULT" in r.stderr
 
 
-def test_an_override_cannot_forge_the_agents_identity(tmp_path):
-    """compose.override.yml merges AFTER the template and can replace AGENT_ID.
-
-    Measured, not assumed: an override naming AGENT_ID wins the render. That
-    file is shared by every instance registered against the checkout, so an
-    unchecked value attributes one person's usage to a sibling -- and the
-    misattribution is silent, because the wrong agent simply looks busier.
-    resolve_guard is what refuses it.
-    """
-    override = tmp_path / "compose.override.yml"
-    override.write_text(
-        "services:\n  hermes:\n    environment:\n      - AGENT_ID=someone-else\n"
-    )
-    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", override=override)
-    assert r.returncode == 0, r.stderr
-    env = json.loads(r.stdout)["services"]["hermes"]["environment"]
-    assert env["AGENT_ID"] == "someone-else", "the override no longer wins; the guard's premise is gone"

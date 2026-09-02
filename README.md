@@ -304,13 +304,12 @@ To hand a person back to the repo's zone, **delete the line** — do not blank i
 from never declaring one: it would clear the repo's zone, let the convention
 default fill in, and run that container on a third zone neither file named.
 
-`AGENT_TZ` and `AGENT_INDEX`, deliberately — that file holds credentials, so the
-allowlist is explicit and short. Both are non-secret and both are per-person:
-one is whose clock the agent runs on, the other is whether its usage is
-reported. They reach the container through `environment:`, so nothing from the
-dotenv itself goes to Compose and the fleet's no-credential-through-compose
-contract is untouched. Any other key there is ignored, including one
-`agent-mgr` owns.
+`AGENT_TZ` alone, deliberately — that file holds credentials. One non-secret
+value is taken into `agent-mgr`'s process; `TZ` still reaches the container
+through `environment:`, so nothing from the dotenv goes to Compose and the
+fleet's no-credential-through-compose contract is untouched. Any other key
+there is ignored, including one `agent-mgr` owns — `AGENT_INDEX` among them,
+which the container reads for itself rather than receiving through Compose.
 
 ### Usage reporting is per person
 
