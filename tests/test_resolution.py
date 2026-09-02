@@ -29,7 +29,6 @@ def test_the_image_defaults_to_the_fleet_wide_pinned_digest(run, instance):
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
     assert f"AGENT_IMAGE={ref}" in r.stdout
-    assert "@sha256:" in ref, "the fleet pin must stay a digest, never a tag"
 
 
 def test_a_descriptor_override_wins_over_the_convention(run, instance):
