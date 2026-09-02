@@ -10,7 +10,9 @@ def test_new_scaffolds_an_instance_repo_and_registers_it(run, tmp_path):
     assert "acme" in run("ls").stdout
 
 
-def test_the_scaffolded_config_has_baseline_integrations_and_group_scope(run, tmp_path):
+def test_the_scaffolded_config_has_baseline_integrations_group_scope_and_fallback(
+    run, tmp_path
+):
     """Plow Chat and Latch are baseline, so a new agent is ready to configure,
     not ready to be wired. Group sessions are shared per chat: the image
     default (group_sessions_per_user: true) keys them per sender, splitting one
@@ -37,7 +39,7 @@ def test_the_scaffolded_config_has_baseline_integrations_and_group_scope(run, tm
 
     compression = cfg["auxiliary"]["compression"]
     chain = compression["fallback_chain"]
-    assert chain
+    assert chain, "an empty chain is the incident"
     assert all(e["model"] != cfg["model"]["default"] for e in chain)
     assert all(e["provider"] == cfg["model"]["provider"] for e in chain)
     assert compression["timeout"] < chain[0]["timeout"]
