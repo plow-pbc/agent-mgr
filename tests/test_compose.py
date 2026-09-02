@@ -30,6 +30,9 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
         # agent-mgr always resolves this (models.py environment()); the
         # template requires it so an unnamed agent cannot report anonymously.
         "AGENT_NAME": name,
+        # Always resolved by agent-mgr from the instance's own dotenv;
+        # the template requires it so no agent renders without an answer.
+        "AGENT_INDEX": "0",
     })
     if extra_env:
         env.update(extra_env)
@@ -46,6 +49,11 @@ def test_the_template_resolves_one_service_bound_to_the_agents_home(tmp_path):
     assert r.returncode == 0, r.stderr
     cfg = json.loads(r.stdout)
     assert cfg["name"] == "hermes-test-rowan"
+    env = cfg["services"]["hermes"]["environment"]
+    # Identity is the registry name, so two instances of one repo report as
+    # two agents. Reporting is off unless that instance's dotenv opts in.
+    assert env["AGENT_ID"] == "rowan"
+    assert env["AGENT_INDEX"] == "0"
     svc = cfg["services"]["hermes"]
     assert svc["container_name"] == "hermes-test-rowan"
     assert svc["command"] == ["gateway", "run"]
@@ -126,30 +134,47 @@ def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):
     assert "STR_VAULT" in r.stderr
 
 
-def test_the_agent_reports_under_its_registry_name(tmp_path):
-    """Two instances of one repo must not collapse into a single index row."""
-    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
-    assert r.returncode == 0, r.stderr
-    env = json.loads(r.stdout)["services"]["hermes"]["environment"]
-    assert env["AGENT_ID"] == "rowan"
-
-
-def test_usage_reporting_is_off_unless_asked_for(tmp_path):
-    """Adding the variable must not enable telemetry for the whole fleet.
-
-    The image ships the reporter but leaves the slot down unless this is
-    truthy, so the default here is what decides whether every agent starts
-    reporting. An agent opts in from its own compose.override.yml.
-    """
-    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
-    assert r.returncode == 0, r.stderr
-    env = json.loads(r.stdout)["services"]["hermes"]["environment"]
-    assert env["AGENT_INDEX"] == "0"
-
-
 def test_an_agent_can_opt_in_to_usage_reporting(tmp_path):
     r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan",
                        extra_env={"AGENT_INDEX": "1"})
     assert r.returncode == 0, r.stderr
     env = json.loads(r.stdout)["services"]["hermes"]["environment"]
     assert env["AGENT_INDEX"] == "1"
+
+
+def test_one_instance_opting_in_does_not_opt_in_its_sibling(tmp_path):
+    """Two names, one checkout -- the leak this switch invites.
+
+    agent.env is read by every instance registered against a repo, and the
+    operator's shell is inherited by every agent they bring up. Either as the
+    source of AGENT_INDEX reports someone's usage without them asking, which is
+    the failure the timezone comment already describes: a per-person value in a
+    shared place is given to people who did not choose it.
+    """
+    from agent_mgr.descriptor import resolve_agent
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "config.yaml").write_text("{}\n")
+
+    class _Reg:
+        def lookup(self, _name):
+            return repo
+
+    def resolve(who, dotenv):
+        home = tmp_path / f".hermes-{who}"
+        home.mkdir(exist_ok=True)
+        (home / ".env").write_text(dotenv)
+        (repo / "agent.env").write_text(f"AGENT_CONFIG=config.yaml\nAGENT_HOME={home}\n")
+        return resolve_agent(who, _Reg(), ROOT).environment()["AGENT_INDEX"]
+
+    assert resolve("ana", "AGENT_INDEX=1\n") == "1"
+    assert resolve("bo", "AGENT_TZ=UTC\n") == "0", \
+        "a sibling sharing this repo was opted in by someone else's choice"
+
+
+def test_an_exported_value_cannot_opt_anybody_in():
+    """SCRUB is what stops one shell export reaching every agent brought up."""
+    from agent_mgr.local import SCRUB
+
+    assert "AGENT_INDEX" in SCRUB

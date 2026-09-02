@@ -52,6 +52,10 @@ SCRUB = frozenset(
         "COMPOSE_ENV_FILE",
         "COMPOSE_ENV_FILES",
         "COMPOSE_PROFILES",
+        # Per-instance, resolved from that instance's own dotenv. Inheriting
+        # it would let one exported value in the operator's shell turn on
+        # telemetry for every agent they bring up, including other people's.
+        "AGENT_INDEX",
     }
 )
 

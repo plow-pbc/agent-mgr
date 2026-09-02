@@ -115,15 +115,21 @@ def _repo_path(repo: Path, value: str) -> Path | None:
     return path if path.is_absolute() else repo / path
 
 
-def _read_timezone(file: Path) -> str | None:
-    timezone: str | None = None
-    for number, _, value in _assignments(read_regular_text(file), file, frozenset({"AGENT_TZ"})):
-        timezone = value
-        if not timezone:
+def _read_dotenv_key(file: Path, key: str) -> str | None:
+    """Read one key from an instance's OWN dotenv.
+
+    Per-person by construction. A value that belongs to one person -- their
+    timezone, whether their agent reports usage -- cannot live in agent.env,
+    because every instance registered against that repo reads that one file.
+    """
+    found: str | None = None
+    for number, _, value in _assignments(read_regular_text(file), file, frozenset({key})):
+        found = value
+        if not found:
             raise AgentMgrError(
-                ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for AGENT_TZ"
+                ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for {key}"
             )
-    return timezone
+    return found
 
 
 def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
@@ -139,9 +145,16 @@ def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
     values = parsed.values
     home = Path(values.get("AGENT_HOME", str(Path.home() / f".hermes-{name}"))).absolute()
     timezone = values.get("AGENT_TZ")
+    # Usage reporting is per-person, so it is read ONLY here. Sourcing it from
+    # agent.env would give it to every instance sharing that checkout, and
+    # letting it through from the operator's shell would give it to every agent
+    # they bring up -- either way somebody's agent reports without being asked.
+    # AGENT_INDEX is scrubbed from the inherited environment for that reason.
+    report_usage = False
     dotenv = home / ".env"
     if dotenv.is_file():
-        timezone = _read_timezone(dotenv) or timezone
+        timezone = _read_dotenv_key(dotenv, "AGENT_TZ") or timezone
+        report_usage = _read_dotenv_key(dotenv, "AGENT_INDEX") == "1"
     reference = image_reference(root)
     config = _repo_path(repo, values.get("AGENT_CONFIG", "config.yaml"))
     assert config is not None
@@ -155,6 +168,7 @@ def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
         image=values.get("AGENT_IMAGE", reference),
         config=config,
         live=values.get("AGENT_LIVE", "0") == "1",
+        report_usage=report_usage,
         deploy_hook=_repo_path(repo, values.get("AGENT_DEPLOY_HOOK", "")),
         pre_transition_hook=_repo_path(repo, values.get("AGENT_PRE_TRANSITION", "")),
         cron_spec=_repo_path(repo, values.get("AGENT_CRON_SPEC", "")),

@@ -310,6 +310,29 @@ through `environment:`, so nothing from the dotenv goes to Compose and the
 fleet's no-credential-through-compose contract is untouched. Any other key there
 is ignored, including one `agent-mgr` owns.
 
+### Usage reporting is per person
+
+An agent can report its own token usage to the Agent Index. It is off unless
+that instance's **own** dotenv opts in:
+
+```sh
+echo AGENT_INDEX=1 >> "$AGENT_HOME/.env"
+agent-mgr restart <agent>
+```
+
+`$AGENT_HOME/.env` is the seam, for the same reason `AGENT_TZ` uses it. Two
+places that look like they would work do not, and both are quiet:
+
+- **`agent.env`** is read by *every* instance registered against that repo, so
+  one person opting in reports their sibling's usage too.
+- **an exported `AGENT_INDEX`** would be inherited by every agent that operator
+  brings up. It is in `SCRUB` for that reason, so exporting it does nothing.
+
+Whose usage is reported is a per-person answer, like whose clock the agent runs
+on. The image ships the reporter and leaves it down; `AGENT_ID` needs no
+setting, since it comes from the registry name.
+
+
 ## What this builds on
 
 | dependency | what it is | pinned as |
