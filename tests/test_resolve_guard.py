@@ -47,6 +47,26 @@ def test_the_guard_refuses_when_an_override_retargets_the_home(run, instance, tm
     assert "refusing to act" in r.stderr
 
 
+def test_the_guard_refuses_when_an_override_forges_the_agents_identity(run, instance, tmp_path):
+    """An override naming AGENT_ID must be caught.
+
+    compose.override.yml merges after the template and wins, and that file is
+    shared by every instance registered against the checkout. A forged
+    AGENT_ID attributes one person's usage to a sibling on the index, and the
+    misattribution is silent -- nothing fails, the wrong agent just looks
+    busier than it is. Identity is the one value the container cannot derive
+    for itself, so the guard is what makes it trustworthy.
+    """
+    _agent(run, instance, "rowan")
+    env = _mismatched(tmp_path, "rowan")
+    docker = tmp_path / "bin" / "docker"
+    docker.write_text(docker.read_text().replace('"AGENT_ID": "rowan"', '"AGENT_ID": "someone-else"'))
+    r = run("resolve-guard", "rowan", env=env)
+    assert r.returncode != 0
+    assert "refusing to act" in r.stderr
+    assert "agent id" in r.stderr
+
+
 def test_the_guard_refuses_when_an_override_renames_the_container(run, instance, tmp_path):
     _agent(run, instance, "rowan")
     env = _mismatched(tmp_path, "rowan", container="hermes")

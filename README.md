@@ -307,8 +307,38 @@ default fill in, and run that container on a third zone neither file named.
 `AGENT_TZ` alone, deliberately — that file holds credentials. One non-secret
 value is taken into `agent-mgr`'s process; `TZ` still reaches the container
 through `environment:`, so nothing from the dotenv goes to Compose and the
-fleet's no-credential-through-compose contract is untouched. Any other key there
-is ignored, including one `agent-mgr` owns.
+fleet's no-credential-through-compose contract is untouched. Any other key
+there is ignored, including one `agent-mgr` owns — `AGENT_INDEX` among them,
+which the container reads for itself rather than receiving through Compose.
+
+### Usage reporting is per person
+
+An agent can report its own token usage to the Agent Index. It is off unless
+that instance's **own** dotenv opts in:
+
+```sh
+AGENT_HOME=$(agent-mgr resolve <agent> | sed -n 's/^AGENT_HOME=//p')
+printf '\nAGENT_INDEX=1\n' >> "${AGENT_HOME:?resolve printed no home}/.env"
+agent-mgr restart <agent>
+```
+
+The leading newline for the same reason as `AGENT_TZ` above, and the same
+stake: a bare `>>` onto a file not ending in one welds the key to the last
+line, turning `PLOW_AGENT_TOKEN=…` into `PLOW_AGENT_TOKEN=…AGENT_INDEX=1`.
+
+`agent-mgr` does not read this key and does not pass it to Compose. The agent's
+home is already mounted at `/opt/data`, so the reporter reads the switch from
+that file itself. That is deliberate: `compose.override.yml` merges after the
+template and can replace anything the template sets — measured, an override
+naming `AGENT_INDEX` wins — and that override is shared by every instance
+registered against the checkout. A switch there opts in siblings who never
+asked. Kept in the per-person file, nothing in Compose can forge it.
+
+`AGENT_ID` is the one value the container cannot derive for itself, so it does
+come from the template, resolved from the registry name — and `resolve_guard`
+checks it, because an override can forge that too. A forged one attributes a
+person's usage to a sibling, silently: nothing fails, the wrong agent just
+looks busier.
 
 ## What this builds on
 

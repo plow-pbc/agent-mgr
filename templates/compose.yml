@@ -5,7 +5,9 @@
 # matters when several instances share one checkout:
 #
 #   the repo's agent.env      what is true of EVERY instance of that agent
-#   $AGENT_HOME/.env          what belongs to one PERSON -- AGENT_TZ
+#   $AGENT_HOME/.env          what belongs to one PERSON -- AGENT_TZ here,
+#                             plus keys the container reads for itself;
+#                             the README's dotenv section is the contract
 #
 # That second path is the instance's OWN home, not `~/.hermes-<name>` by
 # spelling: an instance whose descriptor declares AGENT_HOME keeps its dotenv
@@ -68,6 +70,11 @@ services:
       - HERMES_GID=${HERMES_GID:?run this through agent-mgr, which sets it}
       - TZ=${AGENT_TZ:?set by agent-mgr, defaulting to America/Los_Angeles}
       - S6_SERVICES_GRACETIME=30000
+      # Who this agent is in the agent index. AGENT_NAME is the registry
+      # name, which is what already distinguishes instances sharing one
+      # checkout -- so two instances of the same repo report separately
+      # instead of collapsing into one row.
+      - AGENT_ID=${AGENT_NAME:?set by agent-mgr from the instance descriptor}
       # No credentials here, deliberately, and this is the whole contract for
       # them: the gateway reads /opt/data/.env, which is the agent's own home
       # through the mount above. Passing them here would interpolate from the
