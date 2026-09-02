@@ -37,7 +37,7 @@ def test_the_scaffolded_config_has_baseline_integrations_group_scope_and_fallbac
     run("new", "acme", str(target))
     text = (target / "config.yaml").read_text()
     assert "plow-chat-platform" in text
-    assert "latch:" in text and "DOMO_DEVICE_UID" in text
+    assert "plow:" in text and "DOMO_DEVICE_UID" in text
     cfg = yaml.safe_load(text)
     assert cfg["group_sessions_per_user"] is False
 

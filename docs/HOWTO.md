@@ -106,7 +106,7 @@ host's process table). `set-latch` preserves every other key in the dotenv.
 The *token* is what binds — reusing someone else's pair points the agent at
 their Mac.
 
-**An agent that drives no Mac deletes the `latch:` block from its
+**An agent that drives no Mac deletes the `plow:` block from its
 `config.yaml`.** The config is the declaration `check-latch` reads: block
 present with blank `DOMO_*` is reported as broken; block gone is a clean
 "no latch configured".

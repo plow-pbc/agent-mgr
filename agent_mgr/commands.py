@@ -30,7 +30,29 @@ def dotenv_read(file: Path, key: str) -> str:
     return value
 
 
+# The relay endpoint a Latch server is reached at. Matched on the PATH, not the
+# host: a self-hosted relay serves the same route from somewhere else, and the
+# route is what makes it a relay.
+RELAY_MCP_PATH = re.compile(r"/v1/relay/devices/\S*/mcp")
+
+
 def config_declares_latch(file: Path) -> bool:
+    """True when the config declares a Latch relay server, found by its URL.
+
+    Keyed on the URL rather than the entry's name, because the name is not
+    agent-mgr's to choose. Hermes prefixes the model's tool names with it --
+    `mcp__plow__plow_run_command` -- so the shipped agents key the relay `plow`
+    to match the base image, and renaming it would rename every tool a skill
+    calls.
+
+    This used to match the literal key `latch:`, which only this repo's own
+    fixture uses. So `set-latch` refused every real agent with "declares no
+    latch server" on a config that works, and an entrant following the
+    quickstart hit it before anything else.
+
+    The URL is the thing that makes an entry a Latch server, and it is the same
+    URL `check-latch` then POSTs to -- one fact, read the same way twice.
+    """
     inside = False
     for line in read_regular_text(file).splitlines():
         if line == "mcp_servers:":
@@ -38,7 +60,7 @@ def config_declares_latch(file: Path) -> bool:
             continue
         if line and not line[0].isspace():
             inside = False
-        if inside and line.strip().startswith("latch:"):
+        if inside and RELAY_MCP_PATH.search(line):
             return True
     return False
 

@@ -187,7 +187,7 @@ def test_install_refuses_a_ref_that_is_not_a_sha(run, instance, command, env_key
 def test_the_shipped_config_template_wires_both_platforms():
     cfg = (ROOT / "templates" / "config.yaml").read_text()
     assert "plow-chat-platform" in cfg
-    assert "latch:" in cfg and "DOMO_DEVICE_UID" in cfg
+    assert "plow:" in cfg and "DOMO_DEVICE_UID" in cfg
 
 
 def test_no_template_carries_a_literal_credential():

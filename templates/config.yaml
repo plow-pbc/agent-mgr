@@ -60,7 +60,16 @@ mcp_servers:
   #
   # Baseline rather than optional because most agents want it: a new one is
   # wired for Latch and you remove this if it drives nothing.
-  latch:
+  #
+  # Keyed `plow`, and that name is a contract rather than a label: Hermes
+  # prefixes the model's tool names with it, so this entry is what makes the
+  # relay's tools arrive as `mcp__plow__plow_run_command`. The base image keys
+  # it `plow` (plow-hermes-agent #15) and every shipped agent matches. A
+  # scaffold that said `latch` handed new agents `mcp__latch__*` instead, and
+  # a skill sheet naming the plow-prefixed tool would then find nothing --
+  # silently, because an unregistered tool is not an error, just a step that
+  # never runs.
+  plow:
     url: https://api.plow.co/v1/relay/devices/${DOMO_DEVICE_UID}/mcp
     headers:
       Authorization: Bearer ${DOMO_MCP_TOKEN}
