@@ -18,6 +18,30 @@ model:
 # lives in life-assistant-hermes-agent's SOUL.md.
 memory:
   memory_char_limit: 6000
+# On a full-budget timeout the aux client skips the same-provider retry for
+# compression and falls back -- but with no chain configured there is nowhere to
+# land, so an oversized session freezes and every turn re-stalls. That cost a
+# fleet agent ~30h on 2026-08-31 (plow-pbc/life-assistant-hermes-agent#71).
+#
+# A second model on the agent's OWN codex auth closes it -- no new credential,
+# because the skip is (provider, model)-scoped. Note this is gpt-5.6-sol while
+# `model.default` above is gpt-5.5: the two MUST differ, or the skip discards
+# the fallback and the chain is inert. Change one and check the other.
+#
+# A ChatGPT-account codex serves ONLY those two ids; every other one 400s. Verify
+# a swap by the fallback log lines, never the return value -- the implicit
+# main-model fallback reports success for a model the account actually rejected.
+#
+# Primary gives up first (180s) because reaching the fallback fast is the point;
+# the chain entry keeps 300s since by then it is the only hope left.
+auxiliary:
+  compression:
+    timeout: 180
+    fallback_chain:
+    - provider: openai-codex
+      model: gpt-5.6-sol
+      timeout: 300
+
 mcp_servers:
   # Plow Latch, reached over the Plow relay: the browser and filesystem this
   # agent works on are the operator's Mac, not this container. The relay
