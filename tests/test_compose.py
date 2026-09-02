@@ -142,37 +142,6 @@ def test_an_agent_can_opt_in_to_usage_reporting(tmp_path):
     assert env["AGENT_INDEX"] == "1"
 
 
-def test_one_instance_opting_in_does_not_opt_in_its_sibling(tmp_path):
-    """Two names, one checkout -- the leak this switch invites.
-
-    agent.env is read by every instance registered against a repo, and the
-    operator's shell is inherited by every agent they bring up. Either as the
-    source of AGENT_INDEX reports someone's usage without them asking, which is
-    the failure the timezone comment already describes: a per-person value in a
-    shared place is given to people who did not choose it.
-    """
-    from agent_mgr.descriptor import resolve_agent
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / "config.yaml").write_text("{}\n")
-
-    class _Reg:
-        def lookup(self, _name):
-            return repo
-
-    def resolve(who, dotenv):
-        home = tmp_path / f".hermes-{who}"
-        home.mkdir(exist_ok=True)
-        (home / ".env").write_text(dotenv)
-        (repo / "agent.env").write_text(f"AGENT_CONFIG=config.yaml\nAGENT_HOME={home}\n")
-        return resolve_agent(who, _Reg(), ROOT).environment()["AGENT_INDEX"]
-
-    assert resolve("ana", "AGENT_INDEX=1\n") == "1"
-    assert resolve("bo", "AGENT_TZ=UTC\n") == "0", \
-        "a sibling sharing this repo was opted in by someone else's choice"
-
-
 def test_an_exported_value_cannot_opt_anybody_in():
     """SCRUB is what stops one shell export reaching every agent brought up."""
     from agent_mgr.local import SCRUB

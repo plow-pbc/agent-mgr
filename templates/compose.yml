@@ -5,7 +5,8 @@
 # matters when several instances share one checkout:
 #
 #   the repo's agent.env      what is true of EVERY instance of that agent
-#   $AGENT_HOME/.env          what belongs to one PERSON -- AGENT_TZ
+#   $AGENT_HOME/.env          what belongs to one PERSON -- AGENT_TZ,
+#                             AGENT_INDEX
 #
 # That second path is the instance's OWN home, not `~/.hermes-<name>` by
 # spelling: an instance whose descriptor declares AGENT_HOME keeps its dotenv

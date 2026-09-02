@@ -304,11 +304,13 @@ To hand a person back to the repo's zone, **delete the line** — do not blank i
 from never declaring one: it would clear the repo's zone, let the convention
 default fill in, and run that container on a third zone neither file named.
 
-`AGENT_TZ` alone, deliberately — that file holds credentials. One non-secret
-value is taken into `agent-mgr`'s process; `TZ` still reaches the container
-through `environment:`, so nothing from the dotenv goes to Compose and the
-fleet's no-credential-through-compose contract is untouched. Any other key there
-is ignored, including one `agent-mgr` owns.
+`AGENT_TZ` and `AGENT_INDEX`, deliberately — that file holds credentials, so the
+allowlist is explicit and short. Both are non-secret and both are per-person:
+one is whose clock the agent runs on, the other is whether its usage is
+reported. They reach the container through `environment:`, so nothing from the
+dotenv itself goes to Compose and the fleet's no-credential-through-compose
+contract is untouched. Any other key there is ignored, including one
+`agent-mgr` owns.
 
 ### Usage reporting is per person
 
@@ -316,9 +318,17 @@ An agent can report its own token usage to the Agent Index. It is off unless
 that instance's **own** dotenv opts in:
 
 ```sh
-echo AGENT_INDEX=1 >> "$AGENT_HOME/.env"
+AGENT_HOME=$(agent-mgr resolve <agent> | sed -n 's/^AGENT_HOME=//p')
+printf '\nAGENT_INDEX=1\n' >> "${AGENT_HOME:?resolve printed no home}/.env"
 agent-mgr restart <agent>
 ```
+
+The leading newline for the same reason as `AGENT_TZ` above, and the stake is
+the same: a bare `>>` onto a file not ending in one welds the key to the last
+line, turning `PLOW_AGENT_TOKEN=…` into `PLOW_AGENT_TOKEN=…AGENT_INDEX=1`. That
+takes the instance off its chat, and `_assignments` cannot see the opt-in
+either — so the visible symptom is "reporting did not turn on" while the real
+damage is a corrupted credential.
 
 `$AGENT_HOME/.env` is the seam, for the same reason `AGENT_TZ` uses it. Two
 places that look like they would work do not, and both are quiet:

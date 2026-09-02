@@ -342,15 +342,21 @@ def test_two_instances_of_one_repo_take_their_own_zones(run, instance, tmp_path)
     repo = str(instance("life"))
     run("register", "life", repo)
     run("register", "rowan", repo)
-    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\n")
+    _home_env(tmp_path, "rowan", "AGENT_TZ=America/Chicago\nAGENT_INDEX=1\n")
     life, rowan = run("resolve", "life").stdout, run("resolve", "rowan").stdout
     assert "AGENT_TZ=America/Los_Angeles" in life and "/.hermes-life" in life
     assert "AGENT_TZ=America/Chicago" in rowan and "/.hermes-rowan" in rowan
+    # Both per-person values isolate the same way. Usage reporting especially:
+    # a checkout-scoped switch would report the sibling's usage without asking,
+    # and this is the shape where that would happen.
+    assert "AGENT_INDEX=1" in rowan
+    assert "AGENT_INDEX=0" in life
 
 
-def test_the_dotenv_cannot_set_anything_but_the_zone(run, instance, tmp_path):
-    """It holds credentials. Exactly one non-secret value is taken from it, and
-    identity is already derived before it is read, so it cannot move its home."""
+def test_the_dotenv_cannot_set_anything_off_its_allowlist(run, instance, tmp_path):
+    """It holds credentials. Only the per-person allowlist -- AGENT_TZ and
+    AGENT_INDEX -- is taken from it, and identity is already derived before it
+    is read, so it cannot move its home."""
     run("register", "rowan", str(instance("rowan")))
     _home_env(tmp_path, "rowan",
               "AGENT_TZ=America/Chicago\nAGENT_HOME=/opt/hijack\n"
