@@ -41,6 +41,12 @@ services:
     # until the orphaned lease expires. Bound cleanup at 30s, and keep Docker's
     # outer deadline beyond it so s6 remains the owner of escalation.
     stop_grace_period: 35s
+    # Named rather than inherited. `command` below is arguments FOR the image's
+    # entrypoint, not a program -- and the shared cloud image clears ENTRYPOINT
+    # so its host can boot /sbin/init, which leaves `gateway` to be exec'd as a
+    # binary that does not exist. This is upstream's own entrypoint, so it is a
+    # no-op on an image that still declares one.
+    entrypoint: ["/opt/hermes/docker/entrypoint-dispatch.sh"]
     command: ["gateway", "run"]
     volumes:
       # This agent's own home, and the only mount the template makes.

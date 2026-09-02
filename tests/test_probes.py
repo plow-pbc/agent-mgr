@@ -157,7 +157,10 @@ def _connectors_bin(tmp_path, name="rowan", *, script_present=True, gmail="ok", 
     (b / "docker").write_text(
         (b / "docker").read_text().replace(
             "esac",
-            '  *"test -f /opt/data/skills/plow-connectors/plow_connector.py"*)\n'
+            # Matched on the presence test, not the skill's directory: this
+            # fixture mirrors a behaviour -- "missing skill is named once" --
+            # and pinning the path here only re-breaks it on the next move.
+            '  *"test -f "*plow_connector.py*)\n'
             f'    exit {0 if script_present else 1} ;;\n'
             f'  *gmail*) echo \'{gmail}\'; exit {0 if gmail != "FAIL" else 1} ;;\n'
             f'  *slack*) echo \'{slack}\'; exit {0 if slack != "FAIL" else 1} ;;\n'
