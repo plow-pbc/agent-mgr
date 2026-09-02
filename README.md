@@ -277,7 +277,7 @@ read.
 
 Almost nothing needs `agent-mgr` involved at all: the gateway interpolates
 `${VAR}` in `config.yaml` from that same dotenv at runtime, which is how
-`mcp_servers.latch` already reaches a different Mac per instance. A per-person
+`mcp_servers.plow` already reaches a different Mac per instance. A per-person
 model, locale or endpoint is a line in that file and a `${VAR}` in the shared
 `config.yaml`. No fork, no second config, nothing here to change.
 

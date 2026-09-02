@@ -47,6 +47,40 @@ def test_a_leftover_credential_does_not_make_an_agent_look_latch_enabled(run, in
     assert "REVOKED" not in r.stderr
 
 
+SELF_HOSTED_CONFIG = (
+    "model:\n  provider: openai-codex\nmcp_servers:\n  plow:\n"
+    "    url: https://relay.example.test/v1/relay/devices/${DOMO_DEVICE_UID}/mcp\n"
+)
+
+
+def test_the_probe_goes_to_the_relay_the_config_names(run, instance, tmp_path):
+    """A self-hosted relay's credential must not be posted to api.plow.co.
+
+    The detector accepts any relay URL, so a config may name a relay this repo
+    does not own. `check-latch` used a hardcoded api.plow.co, which sends that
+    relay's bearer to a host the operator never configured -- a disclosure, not
+    a failed probe, and invisible because the probe still returns a plausible
+    HTTP code.
+    """
+    log = tmp_path / "argv.log"
+    b = fake_docker(
+        tmp_path,
+        home=tmp_path / "home" / ".hermes-str",
+        name="str",
+        exec_output="200",
+        log=log,
+    )
+    run("register", "str", str(instance("str", config=SELF_HOSTED_CONFIG)))
+    run("deploy", "str")
+    _with_latch(tmp_path, "str", uid="dev_selfhosted")
+    r = run("check-latch", "str", env={"PATH": f"{b}:{os.environ['PATH']}"})
+
+    assert r.returncode == 0, r.stderr
+    argv = log.read_text()
+    assert "https://relay.example.test/v1/relay/devices/dev_selfhosted/mcp" in argv
+    assert "api.plow.co" not in argv, "the credential was sent to a host the config never named"
+
+
 def test_check_latch_reports_reachable_when_the_relay_answers(run, instance, tmp_path):
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
     run("deploy", "property")

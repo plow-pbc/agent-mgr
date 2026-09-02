@@ -36,22 +36,24 @@ def dotenv_read(file: Path, key: str) -> str:
 RELAY_MCP_PATH = re.compile(r"/v1/relay/devices/\S*/mcp")
 
 
-def config_declares_latch(file: Path) -> bool:
-    """True when the config declares a Latch relay server, found by its URL.
+def latch_endpoint(file: Path, dotenv: Path | None = None) -> str | None:
+    """The relay URL this config actually declares, with ${VARS} resolved.
 
-    Keyed on the URL rather than the entry's name, because the name is not
-    agent-mgr's to choose. Hermes prefixes the model's tool names with it --
-    `mcp__plow__plow_run_command` -- so the shipped agents key the relay `plow`
-    to match the base image, and renaming it would rename every tool a skill
-    calls.
+    Returns the endpoint rather than a yes/no, because a boolean is what let
+    the two halves disagree: the detector accepted any relay URL -- a
+    self-hosted one included -- while `check-latch` posted the credential to a
+    hardcoded api.plow.co. That sends one relay's bearer to a different host,
+    which is a disclosure rather than a failed probe.
 
-    This used to match the literal key `latch:`, which only this repo's own
-    fixture uses. So `set-latch` refused every real agent with "declares no
-    latch server" on a config that works, and an entrant following the
-    quickstart hit it before anything else.
+    Keyed on the URL rather than the entry's name. The name is not agent-mgr's
+    to choose: Hermes prefixes the model's tool names with it --
+    `mcp__plow__plow_run_command` -- so shipped agents key the relay `plow` to
+    match the base image, and matching the literal `latch:` refused every one
+    of them.
 
-    The URL is the thing that makes an entry a Latch server, and it is the same
-    URL `check-latch` then POSTs to -- one fact, read the same way twice.
+    A commented line is not a declaration. Hermes does not load it, so treating
+    `# url: ...` as configuration would have `set-latch` write a credential
+    nothing reads.
     """
     inside = False
     for line in read_regular_text(file).splitlines():
@@ -60,9 +62,27 @@ def config_declares_latch(file: Path) -> bool:
             continue
         if line and not line[0].isspace():
             inside = False
-        if inside and RELAY_MCP_PATH.search(line):
-            return True
-    return False
+        if not inside:
+            continue
+        stripped = line.strip()
+        if stripped.startswith("#"):
+            continue
+        key, separator, raw = stripped.partition(":")
+        if not separator or key.strip() != "url":
+            continue
+        value = raw.strip().strip("\"'")
+        if not RELAY_MCP_PATH.search(value):
+            continue
+        if dotenv is not None and dotenv.is_file():
+            for name in set(re.findall(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", value)):
+                value = value.replace("${%s}" % name, dotenv_read(dotenv, name))
+        return value
+    return None
+
+
+def config_declares_latch(file: Path) -> bool:
+    """Whether this agent drives a Mac at all -- `latch_endpoint` is the fact."""
+    return latch_endpoint(file) is not None
 
 
 def cron_sync(agent: ResolvedAgent, registry: Registry) -> int:
@@ -427,7 +447,8 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
             ErrorCode.IO_ERROR,
             f"no {dotenv if not dotenv.is_file() else installed} -- run deploy first",
         )
-    if not config_declares_latch(installed):
+    endpoint = latch_endpoint(installed, dotenv)
+    if endpoint is None:
         print(f"no latch configured for {agent.name} -- its config declares no latch server")
         return 0
     uid, token = dotenv_read(dotenv, "DOMO_DEVICE_UID"), dotenv_read(dotenv, "DOMO_MCP_TOKEN")
@@ -456,7 +477,10 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
             "-",
             "-X",
             "POST",
-            f"https://api.plow.co/v1/relay/devices/{uid}/mcp",
+            # The endpoint the config declares, never a hardcoded host: this
+            # request carries the relay's bearer, and posting it anywhere the
+            # config did not name hands one relay's credential to another host.
+            endpoint,
             "-H",
             "Content-Type: application/json",
             "-H",
@@ -476,7 +500,7 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
     if code == "000":
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
-            f"no answer from api.plow.co -- the credential was NOT tested: {response.stderr.strip()}",
+            f"no answer from {endpoint} -- the credential was NOT tested: {response.stderr.strip()}",
         )
     raise AgentMgrError(
         ErrorCode.IO_ERROR, f"relay returned HTTP {code or '<none>'}: {response.stderr.strip()}"
