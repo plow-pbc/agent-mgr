@@ -25,10 +25,14 @@ def test_the_scaffolded_config_has_baseline_integrations_group_scope_and_fallbac
     oversized session with nowhere to land when the primary times out, and it
     re-stalls every turn (the ~30h freeze on 2026-08-31). The relationships
     matter, not the values — a fallback equal to the primary is discarded by
-    the (provider, model)-scoped skip, one on another provider needs a
-    credential a new agent has not got, and a primary outliving the fallback
-    just delays the only thing that can still succeed. Each is inert while
-    looking configured."""
+    the (provider, model)-scoped skip, and one on another provider needs a
+    credential a new agent has not got. Each is inert while looking configured.
+
+    No task-level `timeout`: the image floors a config-derived compression
+    timeout at 300s (#54915), so a lower value is silently raised and a value
+    that DID bite would cut a slow summary off into the deterministic context
+    marker. The chain entry needs its own budget because that floor does not
+    reach it — without one it inherits the 30s auxiliary default."""
     target = tmp_path / "acme-hermes-agent"
     run("new", "acme", str(target))
     text = (target / "config.yaml").read_text()
@@ -42,7 +46,14 @@ def test_the_scaffolded_config_has_baseline_integrations_group_scope_and_fallbac
     assert chain, "an empty chain is the incident"
     assert all(e["model"] != cfg["model"]["default"] for e in chain)
     assert all(e["provider"] == cfg["model"]["provider"] for e in chain)
-    assert compression["timeout"] < chain[0]["timeout"]
+    assert "timeout" not in compression, (
+        "a task-level compression timeout is floored to 300s by the image, so "
+        "one below it is inert and one above it only lengthens the stall"
+    )
+    assert chain[0]["timeout"] >= 300, (
+        "the floor applies to the task-level key, not to a chain entry, so "
+        "without an explicit budget the fallback inherits the 30s default"
+    )
 
 
 def test_new_does_not_create_the_home_that_deploy_owns(run, tmp_path):

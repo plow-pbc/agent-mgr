@@ -32,11 +32,15 @@ memory:
 # a swap by the fallback log lines, never the return value -- the implicit
 # main-model fallback reports success for a model the account actually rejected.
 #
-# Primary gives up first (180s) because reaching the fallback fast is the point;
-# the chain entry keeps 300s since by then it is the only hope left.
+# No task-level `timeout` on purpose. The image floors a config-derived
+# compression timeout at 300s so a slow reasoning summary is not cut off into
+# the deterministic context marker (#54915) -- a lower value is silently raised,
+# and setting one that DID bite would re-introduce that bug. A genuinely dead
+# stream is caught at 60s by the no-progress timeout, not by this budget.
+# The chain entry keeps its own 300s: without one it inherits the 30s auxiliary
+# default, far too short for a summary.
 auxiliary:
   compression:
-    timeout: 180
     fallback_chain:
     - provider: openai-codex
       model: gpt-5.6-sol
