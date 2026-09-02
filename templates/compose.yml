@@ -68,6 +68,18 @@ services:
       - HERMES_GID=${HERMES_GID:?run this through agent-mgr, which sets it}
       - TZ=${AGENT_TZ:?set by agent-mgr, defaulting to America/Los_Angeles}
       - S6_SERVICES_GRACETIME=30000
+      # Who this agent is in the agent index. AGENT_NAME is the registry
+      # name, which is what already distinguishes instances sharing one
+      # checkout -- so two instances of the same repo report separately
+      # instead of collapsing into one row.
+      - AGENT_ID=${AGENT_NAME:?set by agent-mgr from the instance descriptor}
+      # Usage reporting, OFF fleet-wide. The image carries the reporter but
+      # leaves the slot down unless this is truthy, so adding it here does not
+      # start reporting for anybody: an agent opts IN from its own
+      # compose.override.yml. Defaulting this on would enable telemetry for
+      # every agent in the fleet, which is a decision for whoever owns the
+      # fleet, not a side effect of the template learning the variable.
+      - AGENT_INDEX=${AGENT_INDEX:-0}
       # No credentials here, deliberately, and this is the whole contract for
       # them: the gateway reads /opt/data/.env, which is the agent's own home
       # through the mount above. Passing them here would interpolate from the

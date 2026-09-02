@@ -27,6 +27,9 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
         "AGENT_HOME": str(home), "AGENT_CONTAINER": f"hermes-test-{name}",
         "AGENT_PROJECT": f"hermes-test-{name}", "AGENT_TZ": "America/Los_Angeles",
         "AGENT_IMAGE": DIGEST, "HERMES_UID": "1000", "HERMES_GID": "1000",
+        # agent-mgr always resolves this (models.py environment()); the
+        # template requires it so an unnamed agent cannot report anonymously.
+        "AGENT_NAME": name,
     })
     if extra_env:
         env.update(extra_env)
@@ -121,3 +124,32 @@ def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):
     r = compose_config(tmp_path, tmp_path / ".hermes", "str", override=override)
     assert r.returncode != 0
     assert "STR_VAULT" in r.stderr
+
+
+def test_the_agent_reports_under_its_registry_name(tmp_path):
+    """Two instances of one repo must not collapse into a single index row."""
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
+    assert r.returncode == 0, r.stderr
+    env = json.loads(r.stdout)["services"]["hermes"]["environment"]
+    assert env["AGENT_ID"] == "rowan"
+
+
+def test_usage_reporting_is_off_unless_asked_for(tmp_path):
+    """Adding the variable must not enable telemetry for the whole fleet.
+
+    The image ships the reporter but leaves the slot down unless this is
+    truthy, so the default here is what decides whether every agent starts
+    reporting. An agent opts in from its own compose.override.yml.
+    """
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
+    assert r.returncode == 0, r.stderr
+    env = json.loads(r.stdout)["services"]["hermes"]["environment"]
+    assert env["AGENT_INDEX"] == "0"
+
+
+def test_an_agent_can_opt_in_to_usage_reporting(tmp_path):
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan",
+                       extra_env={"AGENT_INDEX": "1"})
+    assert r.returncode == 0, r.stderr
+    env = json.loads(r.stdout)["services"]["hermes"]["environment"]
+    assert env["AGENT_INDEX"] == "1"
