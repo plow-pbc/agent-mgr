@@ -207,6 +207,11 @@ def test_the_template_fallback_is_not_the_model_it_falls_back_from():
 
     assert chain, "an empty chain is the incident"
     assert all(e["model"] != cfg["model"]["default"] for e in chain)
+    assert all(e["provider"] == cfg["model"]["provider"] for e in chain), (
+        "the fallback rides the agent's own auth -- a different provider needs "
+        "a credential a scaffolded agent does not have, so it would resolve to "
+        "nothing while looking configured"
+    )
     assert cfg["auxiliary"]["compression"]["timeout"] < chain[0]["timeout"], (
         "the primary must give up sooner than the fallback runs, or widening "
         "its budget just delays the only thing that can still succeed"
