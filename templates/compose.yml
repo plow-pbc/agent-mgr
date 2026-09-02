@@ -5,8 +5,7 @@
 # matters when several instances share one checkout:
 #
 #   the repo's agent.env      what is true of EVERY instance of that agent
-#   $AGENT_HOME/.env          what belongs to one PERSON -- AGENT_TZ,
-#                             AGENT_INDEX
+#   $AGENT_HOME/.env          what belongs to one PERSON -- AGENT_TZ
 #
 # That second path is the instance's OWN home, not `~/.hermes-<name>` by
 # spelling: an instance whose descriptor declares AGENT_HOME keeps its dotenv
@@ -74,14 +73,6 @@ services:
       # checkout -- so two instances of the same repo report separately
       # instead of collapsing into one row.
       - AGENT_ID=${AGENT_NAME:?set by agent-mgr from the instance descriptor}
-      # Usage reporting, off unless this instance's OWN dotenv opts in with
-      # AGENT_INDEX=1. Resolved by agent-mgr from $AGENT_HOME/.env, the same
-      # per-person seam AGENT_TZ uses, and scrubbed from the inherited
-      # environment -- a repo-scoped or shell-scoped switch would opt in every
-      # instance sharing that checkout, or every agent the operator brings up.
-      # Whose usage is reported is a per-person answer, like whose clock it
-      # runs on.
-      - AGENT_INDEX=${AGENT_INDEX:?set by agent-mgr from the instance's own dotenv}
       # No credentials here, deliberately, and this is the whole contract for
       # them: the gateway reads /opt/data/.env, which is the agent's own home
       # through the mount above. Passing them here would interpolate from the

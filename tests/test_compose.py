@@ -30,9 +30,6 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
         # agent-mgr always resolves this (models.py environment()); the
         # template requires it so an unnamed agent cannot report anonymously.
         "AGENT_NAME": name,
-        # Always resolved by agent-mgr from the instance's own dotenv;
-        # the template requires it so no agent renders without an answer.
-        "AGENT_INDEX": "0",
     })
     if extra_env:
         env.update(extra_env)
@@ -49,11 +46,9 @@ def test_the_template_resolves_one_service_bound_to_the_agents_home(tmp_path):
     assert r.returncode == 0, r.stderr
     cfg = json.loads(r.stdout)
     assert cfg["name"] == "hermes-test-rowan"
-    env = cfg["services"]["hermes"]["environment"]
     # Identity is the registry name, so two instances of one repo report as
-    # two agents. Reporting is off unless that instance's dotenv opts in.
-    assert env["AGENT_ID"] == "rowan"
-    assert env["AGENT_INDEX"] == "0"
+    # two agents rather than collapsing into one row.
+    assert cfg["services"]["hermes"]["environment"]["AGENT_ID"] == "rowan"
     svc = cfg["services"]["hermes"]
     assert svc["container_name"] == "hermes-test-rowan"
     assert svc["command"] == ["gateway", "run"]
@@ -134,16 +129,20 @@ def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):
     assert "STR_VAULT" in r.stderr
 
 
-def test_an_agent_can_opt_in_to_usage_reporting(tmp_path):
-    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan",
-                       extra_env={"AGENT_INDEX": "1"})
+def test_an_override_cannot_forge_the_agents_identity(tmp_path):
+    """compose.override.yml merges AFTER the template and can replace AGENT_ID.
+
+    Measured, not assumed: an override naming AGENT_ID wins the render. That
+    file is shared by every instance registered against the checkout, so an
+    unchecked value attributes one person's usage to a sibling -- and the
+    misattribution is silent, because the wrong agent simply looks busier.
+    resolve_guard is what refuses it.
+    """
+    override = tmp_path / "compose.override.yml"
+    override.write_text(
+        "services:\n  hermes:\n    environment:\n      - AGENT_ID=someone-else\n"
+    )
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", override=override)
     assert r.returncode == 0, r.stderr
     env = json.loads(r.stdout)["services"]["hermes"]["environment"]
-    assert env["AGENT_INDEX"] == "1"
-
-
-def test_an_exported_value_cannot_opt_anybody_in():
-    """SCRUB is what stops one shell export reaching every agent brought up."""
-    from agent_mgr.local import SCRUB
-
-    assert "AGENT_INDEX" in SCRUB
+    assert env["AGENT_ID"] == "someone-else", "the override no longer wins; the guard's premise is gone"

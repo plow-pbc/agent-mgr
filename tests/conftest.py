@@ -42,6 +42,7 @@ case "$*" in
 {"name": "${AGENT_PROJECT:-unset}",
  "services": {"hermes": {"container_name": "${AGENT_CONTAINER:-unset}",
    "image": "${AGENT_IMAGE:-nousresearch/hermes-agent@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc}",
+   "environment": {"AGENT_ID": "${AGENT_NAME:-unset}"},
    "volumes": [{"target": "/opt/data", "source": "${AGENT_HOME:-unset}"}]}}}
 JSON
     ;;
@@ -238,6 +239,11 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     project = project.replace("<name>", name)
     svc = {
         "container_name": container,
+        # resolve_guard checks this against the registry name: the override
+        # merges after the template and can replace it, and a forged one
+        # attributes usage to a sibling. A fake that omits it would leave that
+        # guard asserting nothing.
+        "environment": {"AGENT_ID": name},
         "volumes": [{"target": "/opt/data", "source": str(home)}],
     }
     # The image Compose would resolve. A digest by default, because that is what

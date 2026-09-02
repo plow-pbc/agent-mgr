@@ -28,7 +28,6 @@ class ResolvedAgent:
     image: str
     config: Path
     live: bool
-    report_usage: bool
     deploy_hook: Path | None
     pre_transition_hook: Path | None
     cron_spec: Path | None
@@ -66,7 +65,6 @@ class ResolvedAgent:
             "AGENT_IMAGE": self.image,
             "AGENT_CONFIG": str(self.config),
             "AGENT_LIVE": "1" if self.live else "0",
-            "AGENT_INDEX": "1" if self.report_usage else "0",
             "AGENT_DEPLOY_HOOK": str(self.deploy_hook or ""),
             "AGENT_PRE_TRANSITION": str(self.pre_transition_hook or ""),
             "AGENT_CRON_SPEC": str(self.cron_spec or ""),

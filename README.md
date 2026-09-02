@@ -323,25 +323,23 @@ printf '\nAGENT_INDEX=1\n' >> "${AGENT_HOME:?resolve printed no home}/.env"
 agent-mgr restart <agent>
 ```
 
-The leading newline for the same reason as `AGENT_TZ` above, and the stake is
-the same: a bare `>>` onto a file not ending in one welds the key to the last
-line, turning `PLOW_AGENT_TOKEN=…` into `PLOW_AGENT_TOKEN=…AGENT_INDEX=1`. That
-takes the instance off its chat, and `_assignments` cannot see the opt-in
-either — so the visible symptom is "reporting did not turn on" while the real
-damage is a corrupted credential.
+The leading newline for the same reason as `AGENT_TZ` above, and the same
+stake: a bare `>>` onto a file not ending in one welds the key to the last
+line, turning `PLOW_AGENT_TOKEN=…` into `PLOW_AGENT_TOKEN=…AGENT_INDEX=1`.
 
-`$AGENT_HOME/.env` is the seam, for the same reason `AGENT_TZ` uses it. Two
-places that look like they would work do not, and both are quiet:
+`agent-mgr` does not read this key and does not pass it to Compose. The agent's
+home is already mounted at `/opt/data`, so the reporter reads the switch from
+that file itself. That is deliberate: `compose.override.yml` merges after the
+template and can replace anything the template sets — measured, an override
+naming `AGENT_INDEX` wins — and that override is shared by every instance
+registered against the checkout. A switch there opts in siblings who never
+asked. Kept in the per-person file, nothing in Compose can forge it.
 
-- **`agent.env`** is read by *every* instance registered against that repo, so
-  one person opting in reports their sibling's usage too.
-- **an exported `AGENT_INDEX`** would be inherited by every agent that operator
-  brings up. It is in `SCRUB` for that reason, so exporting it does nothing.
-
-Whose usage is reported is a per-person answer, like whose clock the agent runs
-on. The image ships the reporter and leaves it down; `AGENT_ID` needs no
-setting, since it comes from the registry name.
-
+`AGENT_ID` is the one value the container cannot derive for itself, so it does
+come from the template, resolved from the registry name — and `resolve_guard`
+checks it, because an override can forge that too. A forged one attributes a
+person's usage to a sibling, silently: nothing fails, the wrong agent just
+looks busier.
 
 ## What this builds on
 
