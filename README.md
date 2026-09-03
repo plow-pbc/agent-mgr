@@ -7,8 +7,13 @@ running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
 agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
 mirrors the cloud Hermes infrastructure in
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
-the same plugin at the same pin, the same protocol to the same API, and now
-literally the same base image — so a fix on either side reaches the other.
+the same plugin at the same pin and the same protocol to the same API. The
+base image is shared only up to `plow-pbc/plow-hermes-agent` `089a6b1`:
+later bases move the home to `/var/lib/hermes` and gate the gateway behind a
+`/var/lib/plow/credentials` file this repository never writes, so under the
+`/opt/data` contract here they start no gateway at all. The fleet stays
+pinned at `089a6b1` until it adopts that contract — the `plow-agents`
+layout — tracked in [#130](https://github.com/plow-pbc/agent-mgr/issues/130).
 What differs is the product around it: there, one VM per tenant behind an
 HTTP endpoint; here, one host, many agents, Docker, a person at a terminal.
 Standing up a new agent is a command rather than a copy-paste of the last one.
@@ -343,7 +348,7 @@ looks busier.
 
 | dependency | what it is | pinned as |
 |---|---|---|
-| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. The same image the cloud path runs | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
+| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `089a6b1`, the last base that boots under this repository's `/opt/data` contract; the cloud path has moved on (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, at `artifacts.plow_chat_plugin` in `runtime/stack.json` |
 | the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, at `artifacts.plow_chat_activation` |
 | the same repo, at `seed-skills/` | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, at `artifacts.google_workspace_skill` |
@@ -388,14 +393,20 @@ it. So the posture is:
 **Converge on the artifacts.** The plugin, the base image and the integration
 reference are the *same facts* on both sides, and a fix to one should reach
 the other. The plugin already is one fact: plow's blessed image can consume
-the same `runtime/stack.json` coordinate at build time. The base is now one
-too — this fleet runs `plow-pbc/plow-hermes-agent`'s published base, the same
-image `life-assistant-hermes-agent` builds its cloud variant on.
+the same `runtime/stack.json` coordinate at build time. The base was one
+too, up to `089a6b1`: this fleet runs `plow-pbc/plow-hermes-agent`'s published
+base, the image `life-assistant-hermes-agent` built its cloud variant on at the
+time. From `63c8b9c` the base moved its home to `/var/lib/hermes` and put
+`plow-init` — which needs a `/var/lib/plow/credentials` file — in front of the
+gateway, so under this repository's `/opt/data` contract those bases boot no
+gateway. The fleet stays on `089a6b1` until it adopts the base's contract, the
+`plow-agents` layout (#130).
 
 That image declares `CMD ["/sbin/init"]` so its host can unpack it into a VM
 rootfs under systemd; the fleet overrides both `entrypoint` and `command` in
 `templates/compose.yml` and boots the same filesystem through s6 instead. One
-image, two boot paths — which is why sharing it was possible at all.
+image, two boot paths — which is why sharing it was possible at all, and why
+the home path and the credential hand-off are the two things that must agree.
 
 Where the two still fork, it is tracked rather than tolerated:
 
