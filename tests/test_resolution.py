@@ -1,3 +1,4 @@
+import json
 import os
 import pathlib
 import pytest
@@ -13,9 +14,21 @@ def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
 
 
 def test_the_image_defaults_to_the_fleet_wide_pinned_digest(run, instance):
+    """Resolution hands back whatever runtime/stack.json pins.
+
+    Asserted against the manifest rather than a literal registry path: the
+    contract is that resolve reads the fleet-wide pin, not that the pin names
+    any particular registry. Spelling it out here made the reference a second
+    place to edit, and moving the fleet onto the shared cloud base broke this
+    test for no reason other than that duplication.
+    """
+    ref = json.loads(
+        (pathlib.Path(__file__).resolve().parent.parent / "runtime" / "stack.json").read_text()
+    )["images"]["hermes_local"]["reference"]
+
     run("register", "rowan", str(instance("rowan")))
     r = run("resolve", "rowan")
-    assert "AGENT_IMAGE=nousresearch/hermes-agent@sha256:" in r.stdout
+    assert f"AGENT_IMAGE={ref}" in r.stdout
 
 
 def test_a_descriptor_override_wins_over_the_convention(run, instance):

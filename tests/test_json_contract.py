@@ -31,8 +31,8 @@ def test_resolve_json_is_a_versioned_typed_object(run, instance):
             "project": "hermes-rowan",
             "timezone": "America/Chicago",
             "image": (
-                "nousresearch/hermes-agent@sha256:"
-                "8f4e8677281eca188bc9d2fda90806646ba19941fce55fa8fda2d63112ff48a8"
+                "public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:"
+                "80ca5040bb58181b37bc22e645b5f15c6462d2dd0de5b8780b84c9256b34ba02"
             ),
             "config": str(repo / "config.yaml"),
             "live": False,
