@@ -17,7 +17,7 @@ def main(arguments: list[str]) -> int:
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="agent-mgr-build-") as temporary:
         stage = Path(temporary)
-        for file in ("__main__.py", "agent-mgr"):
+        for file in ("__main__.py", "agent-mgr", "LICENSE", "NOTICE"):
             shutil.copy2(ROOT / file, stage / file)
         for directory in ("agent_mgr", "lib", "runtime", "templates"):
             shutil.copytree(ROOT / directory, stage / directory)
