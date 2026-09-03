@@ -1,5 +1,15 @@
 # agent-mgr
 
+> **Deprecated — use [`plow-pbc/plow-agents`](https://github.com/plow-pbc/plow-agents) instead.**
+> That repo is the standard way to run a Plow agent on a host of your own. This
+> one stays up for the fleet already standing on it; new agents go there.
+>
+> What an `agent-mgr` user runs instead:
+>
+> - `bin/plow-agents login` then `bin/plow-agents mint <line-uid>` replaces `register` + `deploy` + `activate` — one line-scoped credential written to `./plow-credentials`, and no per-agent repo to register.
+> - `docker compose up --build` replaces `up`; the minted credential already carries `relay:call`, so reaching a Mac through Latch needs no `set-latch` step of its own.
+> - `bin/plow-agents revoke` replaces `down` + `unregister`, in the cloud's order: the key is revoked first, then the container and its home volume come down.
+
 A CLI that stands up, on a host of your own, the same kind of agent that
 [Plow](https://plow.co) runs for its customers in the cloud: a container
 running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
