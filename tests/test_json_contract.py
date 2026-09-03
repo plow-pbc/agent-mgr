@@ -32,7 +32,7 @@ def test_resolve_json_is_a_versioned_typed_object(run, instance):
             "timezone": "America/Chicago",
             "image": (
                 "public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:"
-                "80ca5040bb58181b37bc22e645b5f15c6462d2dd0de5b8780b84c9256b34ba02"
+                "c7177d9e2cbd6293778601b7cca528ebc5795877b13c2c12f0d0453a9378ae0f"
             ),
             "config": str(repo / "config.yaml"),
             "live": False,
