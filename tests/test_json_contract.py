@@ -5,6 +5,9 @@ import subprocess
 import pytest
 from conftest import ROOT
 
+# The one pin the fleet runs; `resolve` must report it, not a copy of it.
+FLEET_IMAGE = json.loads((ROOT / "runtime" / "stack.json").read_text())["images"]["hermes_local"]["reference"]
+
 
 def payload(result):
     assert result.stderr == ""
@@ -30,10 +33,7 @@ def test_resolve_json_is_a_versioned_typed_object(run, instance):
             "container": "hermes-rowan",
             "project": "hermes-rowan",
             "timezone": "America/Chicago",
-            "image": (
-                "public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:"
-                "80ca5040bb58181b37bc22e645b5f15c6462d2dd0de5b8780b84c9256b34ba02"
-            ),
+            "image": FLEET_IMAGE,
             "config": str(repo / "config.yaml"),
             "live": False,
             "transition_confirmation_required": False,
