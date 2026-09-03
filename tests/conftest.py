@@ -404,7 +404,8 @@ PLUGIN_TARBALL = {
 # default `gh` serves them the way it serves the plugin -- otherwise every
 # plain `run("deploy", ...)` in the suite would fail on a fetch it never asked
 # about. One tarball carries both trees: the real fetch is a whole-repo
-# snapshot fetch-tree extracts a src subtree from.
+# snapshot fetch-tree extracts a src subtree from, and the plugin and the
+# skills are pinned at the same revision of that one repo.
 FLEET_SEED = "seed-skills"
 FLEET_SKILL_SRC = f"{FLEET_SEED}/productivity/google-workspace"
 FLEET_SKILL_TARBALL = {
@@ -417,46 +418,32 @@ FLEET_SKILL_TARBALL = {
 }
 
 
-def fleet_revision():
-    """The SHA the fleet skills are pinned to, read from the real stack.json.
-
-    The plugin and the fleet skills now live in the SAME repo, so the fake `gh`
-    can no longer tell them apart by repo the way the real argv let it. It
-    dispatches on this revision instead -- which is the only thing that differs
-    in `gh api repos/<repo>/tarball/<ref>`, and so is what a real GitHub
-    distinguishes them by too.
-    """
-    stack = json.loads((ROOT / "runtime" / "stack.json").read_text())
-    return stack["artifacts"]["plow_invite_skill"]["revision"]
+REPO_TARBALL = {**PLUGIN_TARBALL, **FLEET_SKILL_TARBALL}
 
 
-def install_gh_dispatching(b, *, plugin_tgz, fleet_tgz, skill_tgz=None):
+def install_gh_dispatching(b, *, repo_tgz, skill_tgz=None):
     """A `gh` that answers by repo, because one invocation can need either.
 
     A skill test deploys first -- which installs the plugin and the fleet
-    skill -- and then adds a skill, so a `gh` that served one tarball to all
-    would fail whichever came second on fetch-tree's manifest name check.
-    Dispatching on the argv is what the real `gh api repos/<repo>/tarball/<ref>`
-    does anyway.
+    skills from the one hermes-plow-chat snapshot -- and then adds a skill from
+    another repo, so a `gh` that served one tarball to all would fail whichever
+    came second on fetch-tree's manifest name check. Dispatching on the argv is
+    what the real `gh api repos/<repo>/tarball/<ref>` does anyway.
     """
     other = f'cat {skill_tgz}' if skill_tgz else 'echo "no fake for: $*" >&2; exit 1'
     (b / "gh").write_text(
         "#!/usr/bin/env bash\n"
         "case \"$*\" in\n"
-        # The fleet SHA first: it is in hermes-plow-chat too, so the broader
-        # repo pattern below would otherwise swallow it and serve the plugin
-        # tarball, failing fetch-tree's manifest name check confusingly.
-        f"  *tarball/{fleet_revision()}*) cat {fleet_tgz} ;;\n"
-        f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
+        f"  *hermes-plow-chat*) cat {repo_tgz} ;;\n"
         f"  *) {other} ;;\n"
         "esac\n"
     )
     (b / "gh").chmod(0o755)
 
 
-def _write_fleet_tgz(tmp_path):
-    tgz = tmp_path / "fleet-skill.tgz"
-    write_tarball(tgz, FLEET_SKILL_TARBALL)
+def _write_repo_tgz(tmp_path):
+    tgz = tmp_path / "hermes-plow-chat.tgz"
+    write_tarball(tgz, REPO_TARBALL)
     return tgz
 
 
@@ -470,9 +457,7 @@ def install_fake_gh(tmp_path, b):
     """
     if (b / "gh").exists():
         return b
-    tgz = tmp_path / "plugin.tgz"
-    write_tarball(tgz, PLUGIN_TARBALL)
-    install_gh_dispatching(b, plugin_tgz=tgz, fleet_tgz=_write_fleet_tgz(tmp_path))
+    install_gh_dispatching(b, repo_tgz=_write_repo_tgz(tmp_path))
     return b
 
 
@@ -492,10 +477,7 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
 
     skill_tgz = tmp_path / "skill.tgz"
     write_tarball(skill_tgz, members)
-    plugin_tgz = tmp_path / "plugin.tgz"
-    write_tarball(plugin_tgz, PLUGIN_TARBALL)
-    # All three, because a skill test deploys before it adds, and deploy
-    # installs the plugin and the fleet skill through this same installer.
-    install_gh_dispatching(b, plugin_tgz=plugin_tgz,
-                           fleet_tgz=_write_fleet_tgz(tmp_path), skill_tgz=skill_tgz)
+    # Both, because a skill test deploys before it adds, and deploy installs
+    # the plugin and the fleet skills through this same installer.
+    install_gh_dispatching(b, repo_tgz=_write_repo_tgz(tmp_path), skill_tgz=skill_tgz)
     return b
