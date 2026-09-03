@@ -827,7 +827,7 @@ def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path, pr
     NOT installed" happens to be true, which is why the fresh case alone cannot
     catch a message that sends the operator looking for a home nothing damaged.
     """
-    from conftest import PLUGIN_TARBALL, fleet_revision, write_tarball
+    from conftest import PLUGIN_TARBALL, write_tarball
 
     run("register", "rowan", str(instance("rowan")))
     home = tmp_path / "home" / ".hermes-rowan"
@@ -840,12 +840,11 @@ def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path, pr
     b.mkdir()
     plugin_tgz = tmp_path / "plugin.tgz"
     write_tarball(plugin_tgz, PLUGIN_TARBALL)
-    # Serves the plugin, refuses the fleet skills: fails deploy at exactly the
-    # step under test, with the plugin genuinely on disk.
+    # A snapshot carrying the plugin but no fleet skills: fails deploy at
+    # exactly the step under test, with the plugin genuinely on disk.
     (b / "gh").write_text(
         "#!/usr/bin/env bash\n"
         "case \"$*\" in\n"
-        f"  *tarball/{fleet_revision()}*) exit 1 ;;\n"
         f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
         "  *) exit 1 ;;\n"
         "esac\n"
@@ -876,14 +875,9 @@ def test_the_fleet_failure_does_not_borrow_install_plugins_wording(run, instance
     their config was gone, and the obvious response is to re-run deploy over a
     healthy agent.
     """
-    from conftest import fleet_revision
-
     b = tmp_path / "skill-failing-bin"
     b.mkdir()
-    (b / "gh").write_text(
-        "#!/usr/bin/env bash\n"
-        f"case \"$*\" in\n  *tarball/{fleet_revision()}*) exit 1 ;;\n  *) exit 1 ;;\nesac\n"
-    )
+    (b / "gh").write_text("#!/usr/bin/env bash\nexit 1\n")
     (b / "gh").chmod(0o755)
 
     run("register", "rowan", str(instance("rowan")))
