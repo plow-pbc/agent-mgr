@@ -70,8 +70,11 @@ Rules that matter, in order of how much they cost to get wrong:
   `up`.** e.g. `AGENT_TZ=America/Chicago` in the `.env` inside the home that
   `agent-mgr resolve <name>` prints. Before `deploy` there is no home (don't
   create it yourself — `deploy` writes the dotenv `0600` only when absent);
-  after `up` a change needs a `restart` to reach the container. Verify with
-  `agent-mgr resolve <name>`, which reads the dotenv back.
+  after `up` a change needs a `restart` to reach the container. `agent-mgr
+  resolve <name>` reads back the keys **agent-mgr itself consumes** — today
+  that is `AGENT_TZ` alone. A key the container reads for itself, such as
+  `AGENT_INDEX`, is set in the same file and will not appear there; the
+  README's dotenv section is the contract.
 - **`up` before `sign-in`** — `sign-in` runs inside the container, so it
   refuses until one is running. And **don't restart the agent while `sign-in`
   is waiting on the browser** — the session lives in the container. If

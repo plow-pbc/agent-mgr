@@ -6,10 +6,8 @@ running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
 agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
 mirrors the cloud Hermes infrastructure in
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
-the same plugin at the same pin, the same protocol to the same API, and an
-upstream runtime converging on the same image (the one tracked gap:
-[`#2`](https://github.com/plow-pbc/agent-mgr/issues/2)) — so a fix on either
-side reaches the other.
+the same plugin at the same pin, the same protocol to the same API, and now
+literally the same base image — so a fix on either side reaches the other.
 What differs is the product around it: there, one VM per tenant behind an
 HTTP endpoint; here, one host, many agents, Docker, a person at a terminal.
 Standing up a new agent is a command rather than a copy-paste of the last one.
@@ -307,14 +305,44 @@ default fill in, and run that container on a third zone neither file named.
 `AGENT_TZ` alone, deliberately — that file holds credentials. One non-secret
 value is taken into `agent-mgr`'s process; `TZ` still reaches the container
 through `environment:`, so nothing from the dotenv goes to Compose and the
-fleet's no-credential-through-compose contract is untouched. Any other key there
-is ignored, including one `agent-mgr` owns.
+fleet's no-credential-through-compose contract is untouched. Any other key
+there is ignored, including one `agent-mgr` owns — `AGENT_INDEX` among them,
+which the container reads for itself rather than receiving through Compose.
+
+### Usage reporting is per person
+
+An agent can report its own token usage to the Agent Index. It is off unless
+that instance's **own** dotenv opts in:
+
+```sh
+AGENT_HOME=$(agent-mgr resolve <agent> | sed -n 's/^AGENT_HOME=//p')
+printf '\nAGENT_INDEX=1\n' >> "${AGENT_HOME:?resolve printed no home}/.env"
+agent-mgr restart <agent>
+```
+
+The leading newline for the same reason as `AGENT_TZ` above, and the same
+stake: a bare `>>` onto a file not ending in one welds the key to the last
+line, turning `PLOW_AGENT_TOKEN=…` into `PLOW_AGENT_TOKEN=…AGENT_INDEX=1`.
+
+`agent-mgr` does not read this key and does not pass it to Compose. The agent's
+home is already mounted at `/opt/data`, so the reporter reads the switch from
+that file itself. That is deliberate: `compose.override.yml` merges after the
+template and can replace anything the template sets — measured, an override
+naming `AGENT_INDEX` wins — and that override is shared by every instance
+registered against the checkout. A switch there opts in siblings who never
+asked. Kept in the per-person file, nothing in Compose can forge it.
+
+`AGENT_ID` is the one value the container cannot derive for itself, so it does
+come from the template, resolved from the registry name — and `resolve_guard`
+checks it, because an override can forge that too. A forged one attributes a
+person's usage to a sibling, silently: nothing fails, the wrong agent just
+looks busier.
 
 ## What this builds on
 
 | dependency | what it is | pinned as |
 |---|---|---|
-| [`nousresearch/hermes-agent`](https://github.com/NousResearch/hermes-agent) | the agent runtime; third-party image | a **`sha256:` digest** |
+| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. The same image the cloud path runs | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, at `artifacts.plow_chat_plugin` in `runtime/stack.json` |
 | the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, at `artifacts.plow_chat_activation` |
 | the same repo, at `seed-skills/` | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, at `artifacts.google_workspace_skill` |
@@ -356,14 +384,23 @@ customers, one VM per tenant, native under systemd, provisioned by
 `POST /v1/agents/cloud`. Same protocol underneath, different products around
 it. So the posture is:
 
-**Converge on the artifacts.** The plugin, the upstream image and the
-integration reference are the *same facts* on both sides, and a fix to one
-should reach the other. The plugin already is one fact: plow's blessed image
-can consume the same `runtime/stack.json` coordinate at build time. Where the two
-still fork, it is tracked rather than tolerated:
+**Converge on the artifacts.** The plugin, the base image and the integration
+reference are the *same facts* on both sides, and a fix to one should reach
+the other. The plugin already is one fact: plow's blessed image can consume
+the same `runtime/stack.json` coordinate at build time. The base is now one
+too — this fleet runs `plow-pbc/plow-hermes-agent`'s published base, the same
+image `life-assistant-hermes-agent` builds its cloud variant on.
 
-- [`#2`](https://github.com/plow-pbc/agent-mgr/issues/2) — the upstream image
-  pin here drifts from plow's blessed base
+That image declares `CMD ["/sbin/init"]` so its host can unpack it into a VM
+rootfs under systemd; the fleet overrides both `entrypoint` and `command` in
+`templates/compose.yml` and boots the same filesystem through s6 instead. One
+image, two boot paths — which is why sharing it was possible at all.
+
+Where the two still fork, it is tracked rather than tolerated:
+
+- [`plow-pbc/plow#1652`](https://github.com/plow-pbc/plow/issues/1652) — plow
+  still builds a second base in-repo, published to a different registry, and
+  it is that one its tenant provisioning blesses and pulls
 
 **Keep the managers separate.** Provisioning here is a typed Python CLI over Compose;
 there it is a `Provider` protocol behind an HTTP endpoint. Activation here is a

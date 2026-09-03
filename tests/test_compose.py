@@ -27,6 +27,9 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
         "AGENT_HOME": str(home), "AGENT_CONTAINER": f"hermes-test-{name}",
         "AGENT_PROJECT": f"hermes-test-{name}", "AGENT_TZ": "America/Los_Angeles",
         "AGENT_IMAGE": DIGEST, "HERMES_UID": "1000", "HERMES_GID": "1000",
+        # agent-mgr always resolves this (models.py environment()); the
+        # template requires it so an unnamed agent cannot report anonymously.
+        "AGENT_NAME": name,
     })
     if extra_env:
         env.update(extra_env)
@@ -43,6 +46,9 @@ def test_the_template_resolves_one_service_bound_to_the_agents_home(tmp_path):
     assert r.returncode == 0, r.stderr
     cfg = json.loads(r.stdout)
     assert cfg["name"] == "hermes-test-rowan"
+    # Identity is the registry name, so two instances of one repo report as
+    # two agents rather than collapsing into one row.
+    assert cfg["services"]["hermes"]["environment"]["AGENT_ID"] == "rowan"
     svc = cfg["services"]["hermes"]
     assert svc["container_name"] == "hermes-test-rowan"
     assert svc["command"] == ["gateway", "run"]
@@ -104,6 +110,12 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
         "    image: sams-str-hermes-agent:local\n"
         "    volumes:\n"
         "      - ${STR_VAULT:?}:/opt/data/repo/vault\n"
+        # An override can replace anything the template set, identity
+        # included -- which is why resolve_guard checks AGENT_ID after
+        # the merge. A forged one attributes a person's usage to a
+        # sibling, and says nothing while doing it.
+        "    environment:\n"
+        "      - AGENT_ID=someone-else\n"
     )
     r = compose_config(tmp_path, tmp_path / ".hermes", "str", override=override,
                        extra_env={"STR_REPO": str(build_ctx), "STR_VAULT": str(vault)})
@@ -111,6 +123,8 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
     svc = json.loads(r.stdout)["services"]["hermes"]
     assert svc["build"]["context"] == str(build_ctx)
     assert svc["image"] == "sams-str-hermes-agent:local"
+    assert svc["environment"]["AGENT_ID"] == "someone-else", \
+        "the override no longer wins; resolve_guard's premise is gone"
     assert {v["target"] for v in svc["volumes"]} == {"/opt/data", "/opt/data/repo/vault"}
 
 
@@ -121,3 +135,5 @@ def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):
     r = compose_config(tmp_path, tmp_path / ".hermes", "str", override=override)
     assert r.returncode != 0
     assert "STR_VAULT" in r.stderr
+
+

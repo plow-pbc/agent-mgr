@@ -176,6 +176,7 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         home = next(
             (item.get("source", "") for item in volumes if item.get("target") == "/opt/data"), "-"
         )
+        agent_id = service.get("environment", {}).get("AGENT_ID", "-")
         image = service.get("image", "-")
         build = bool(service.get("build"))
         pull_policy = service.get("pull_policy")
@@ -188,6 +189,12 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         (project, agent.project, "project"),
         (container, agent.container, "container"),
         (home, str(agent.home), "home"),
+        # The override merges AFTER the template, so it can replace any value
+        # the template set -- measured: an override naming AGENT_ID wins.
+        # Unchecked, usage would be attributed to a sibling on the same
+        # checkout, and the misattribution is invisible: the wrong agent simply
+        # looks busier.
+        (agent_id, agent.name, "agent id"),
     )
     for got, expected, label in checks:
         if got != expected:
