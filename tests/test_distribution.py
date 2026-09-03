@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 
 from conftest import fake_curl, install_fake_gh
@@ -15,6 +16,8 @@ def test_release_zipapp_contains_every_resource_needed_for_deploy(tmp_path):
         [sys.executable, str(ROOT / "scripts" / "build_zipapp.py"), str(artifact)],
         check=True,
     )
+    with zipfile.ZipFile(artifact) as archive:
+        assert {"LICENSE", "NOTICE"} <= set(archive.namelist())
     binary = fake_curl(tmp_path)
     install_fake_gh(tmp_path, binary)
     environment = {
