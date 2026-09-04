@@ -121,38 +121,35 @@ def _repo_path(repo: Path, value: str) -> Path | None:
     return path if path.is_absolute() else repo / path
 
 
-def _read_timezone(file: Path) -> str | None:
+def _read_home_options(file: Path) -> tuple[str | None, str]:
+    """One pass over the home dotenv for both keys agent-mgr reads from it.
+    AGENT_TZ's blank is refused (indistinguishable from unset);
+    AGENT_BOOT_CONTRACT's blank is its safe default, so only a bad value is."""
     timezone: str | None = None
-    for number, _, value in _assignments(read_regular_text(file), file, frozenset({"AGENT_TZ"})):
-        timezone = value
-        if not timezone:
-            raise AgentMgrError(
-                ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for AGENT_TZ"
-            )
-    return timezone
-
-
-def _read_boot_contract(file: Path) -> str:
-    """Unlike AGENT_TZ, blank and absent both mean "not opted in" -- that IS
-    this key's safe default, so blanking the line is not refused."""
-    contract = ""
-    for number, _, value in _assignments(
-        read_regular_text(file), file, frozenset({"AGENT_BOOT_CONTRACT"})
-    ):
-        contract = value
-        if contract and contract not in BOOT_CONTRACTS:
-            raise AgentMgrError(
-                ErrorCode.INVALID_DESCRIPTOR,
-                f"{file}: line {number}: AGENT_BOOT_CONTRACT must be 'plow-init' or "
-                f"unset, got {contract!r} -- a typo here would silently keep today's shape",
-            )
-    return contract
+    boot_contract = ""
+    wanted = frozenset({"AGENT_TZ", "AGENT_BOOT_CONTRACT"})
+    for number, key, value in _assignments(read_regular_text(file), file, wanted):
+        if key == "AGENT_TZ":
+            timezone = value
+            if not timezone:
+                raise AgentMgrError(
+                    ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for AGENT_TZ"
+                )
+        else:
+            boot_contract = value
+            if boot_contract and boot_contract not in BOOT_CONTRACTS:
+                raise AgentMgrError(
+                    ErrorCode.INVALID_DESCRIPTOR,
+                    f"{file}: line {number}: AGENT_BOOT_CONTRACT must be 'plow-init' or "
+                    f"unset, got {boot_contract!r} -- a typo here would silently keep today's shape",
+                )
+    return timezone, boot_contract
 
 
 def read_dotenv_values(file: Path, keys: frozenset[str]) -> dict[str, str]:
     """Read exactly `keys` from a home dotenv -- read, never executed, and
     every line not naming one of them skipped before key or value validation
-    reaches it. The same parsing `_read_timezone` uses, generalized past one key."""
+    reaches it. The same parsing `_read_home_options` uses, generalized past two keys."""
     return {key: value for _, key, value in _assignments(read_regular_text(file), file, keys)}
 
 
@@ -172,8 +169,8 @@ def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
     dotenv = home / ".env"
     boot_contract = ""
     if dotenv.is_file():
-        timezone = _read_timezone(dotenv) or timezone
-        boot_contract = _read_boot_contract(dotenv)
+        dotenv_timezone, boot_contract = _read_home_options(dotenv)
+        timezone = dotenv_timezone or timezone
     reference = image_reference(root)
     config = _repo_path(repo, values.get("AGENT_CONFIG", "config.yaml"))
     assert config is not None
