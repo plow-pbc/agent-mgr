@@ -12,6 +12,7 @@ from .local import (
     compose,
     confirm_transition,
     environment,
+    require_own_home,
     require_transition_allowed,
     resolve_guard,
     transition,
@@ -30,17 +31,11 @@ def _publish_home_file(source: Path, home: Path, name: str) -> None:
 CREDENTIAL_KEYS = ("PLOW_API_BASE", "PLOW_AGENT_TOKEN")
 
 
-def materialize_plow_credentials(agent: ResolvedAgent) -> Path:
-    """Write the plow-init credential file at agent.credentials, read from
-    this agent's own home dotenv.
-
-    Landed beside the home, never inside it, mode 0600 (atomic_write's
-    default) and owned by the invoking user -- the base's own root cont-init
-    step promotes it to root:root before plow-init reads it, so nothing here
-    runs privileged. Both keys or nothing is written: plow-init rejects a
-    partial file 60 seconds into boot, which is a worse failure than refusing
-    now, naming exactly what is missing.
-    """
+def materialize_plow_credentials(agent: ResolvedAgent, registry: Registry) -> Path:
+    """Write agent.credentials from this agent's own home dotenv -- beside
+    the home, never inside it. The base's root cont-init step promotes it to
+    root:root before plow-init reads it, so nothing here runs privileged."""
+    require_own_home(agent, registry)
     dotenv = agent.home / ".env"
     if not dotenv.is_file():
         raise AgentMgrError(
@@ -210,6 +205,8 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
         if not skeleton.is_file():
             skeleton = ROOT / "templates" / "env.example"
         _publish_home_file(skeleton, agent.home, ".env")
+    if agent.plow_init:
+        materialize_plow_credentials(agent, registry)
     install_plugin(agent, "The dotenv skeleton IS written; config.yaml and skills are NOT.")
     install_fleet_skills(
         agent, "The dotenv skeleton and the plugin ARE installed; config.yaml was not updated."

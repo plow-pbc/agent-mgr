@@ -199,23 +199,32 @@ def test_the_plow_init_shape_requires_the_credentials_variable(tmp_path):
 
 
 def test_the_two_compose_shapes_do_not_drift_on_their_shared_keys():
-    """Two files, one contract: image, identity and timing must read
-    IDENTICALLY in both, or an agent's rendered container quietly depends on
-    which shape it happened to pick. Compares the raw (un-interpolated) YAML,
-    so a copy-paste edit to either file trips this without docker."""
+    """Two files, one contract: asserts the KEY SETS, not a hardcoded list of
+    keys to compare -- a hardcoded list stays green when a new key (a
+    `logging:`, a new env line) is added to one file and not the other.
+    Compares the raw (un-interpolated) YAML, so a copy-paste edit to either
+    file trips this without docker."""
     legacy = yaml.safe_load((ROOT / "templates" / "compose.yml").read_text())
     plow_init = yaml.safe_load((ROOT / "templates" / "compose.plow-init.yml").read_text())
     assert legacy["name"] == plow_init["name"]
     a, b = legacy["services"]["hermes"], plow_init["services"]["hermes"]
-    for key in ("image", "container_name", "restart", "stop_grace_period"):
+
+    assert a.keys() - b.keys() == {"entrypoint", "command"}, \
+        "compose.yml has a key plow-init lacks, beyond the intentional entrypoint/command"
+    assert b.keys() - a.keys() == set(), \
+        "compose.plow-init.yml has a key compose.yml lacks -- give both a value or drop it"
+    for key in (a.keys() & b.keys()) - {"volumes", "environment"}:
         assert a[key] == b[key], f"{key} drifted between compose.yml and compose.plow-init.yml"
 
     def env_dict(svc):
         return dict(item.split("=", 1) for item in svc["environment"])
 
-    shared_env = env_dict(a)
-    plow_init_env = env_dict(b)
-    for key in ("HERMES_UID", "HERMES_GID", "TZ", "AGENT_ID"):
+    shared_env, plow_init_env = env_dict(a), env_dict(b)
+    assert shared_env.keys() - plow_init_env.keys() == {"S6_SERVICES_GRACETIME"}, \
+        "compose.yml sets an env var plow-init lacks, beyond the intentional S6_SERVICES_GRACETIME"
+    assert plow_init_env.keys() - shared_env.keys() == set(), \
+        "compose.plow-init.yml sets an env var compose.yml lacks -- set both or drop it"
+    for key in shared_env.keys() & plow_init_env.keys():
         assert shared_env[key] == plow_init_env[key], \
             f"{key} drifted between compose.yml and compose.plow-init.yml"
 

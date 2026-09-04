@@ -35,7 +35,7 @@ def test_materialize_writes_exactly_the_two_credential_keys_outside_the_home(
                "AGENT_TZ=America/Chicago\n",
     )
 
-    path = materialize_plow_credentials(agent)
+    path = materialize_plow_credentials(agent, Registry(registry))
 
     assert path == agent.credentials
     assert path.parent == agent.home.parent, "must land outside the agent's own home"
@@ -64,7 +64,7 @@ def test_materialize_fails_loud_naming_the_missing_key_and_agent(
     agent = _agent(run, instance, registry, tmp_path, monkeypatch, dotenv=dotenv)
 
     with pytest.raises(AgentMgrError) as excinfo:
-        materialize_plow_credentials(agent)
+        materialize_plow_credentials(agent, Registry(registry))
 
     assert missing in str(excinfo.value)
     assert agent.name in str(excinfo.value)
@@ -79,7 +79,7 @@ def test_materialize_refuses_before_the_home_has_a_dotenv(
     agent = _agent(run, instance, registry, tmp_path, monkeypatch, dotenv=None)
 
     with pytest.raises(AgentMgrError) as excinfo:
-        materialize_plow_credentials(agent)
+        materialize_plow_credentials(agent, Registry(registry))
 
     assert "deploy" in str(excinfo.value)
     assert not agent.credentials.exists()
@@ -93,4 +93,6 @@ def test_agent_credentials_env_matches_the_materialized_path(
         dotenv="PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n",
     )
     assert agent.environment()["AGENT_CREDENTIALS"] == str(agent.credentials)
-    assert agent.environment()["AGENT_CREDENTIALS"] == str(materialize_plow_credentials(agent))
+    assert agent.environment()["AGENT_CREDENTIALS"] == str(
+        materialize_plow_credentials(agent, Registry(registry))
+    )
