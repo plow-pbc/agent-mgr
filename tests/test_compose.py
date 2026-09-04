@@ -142,11 +142,12 @@ def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):
 # with AGENT_BOOT_CONTRACT=plow-init. Nothing above this line changes shape;
 # nothing below it is reachable until a descriptor asks for it.
 
-def plow_init_config(tmp_path, home, name, credentials=None, extra_env=None):
+def plow_init_config(tmp_path, home, name, credentials=None, extra_env=None, override=None):
     env = {"AGENT_CREDENTIALS": str(credentials or tmp_path / f".plow-credentials-{name}")}
     if extra_env:
         env.update(extra_env)
-    return compose_config(tmp_path, home, name, extra_env=env, file="compose.plow-init.yml")
+    return compose_config(tmp_path, home, name, extra_env=env, file="compose.plow-init.yml",
+                          override=override)
 
 
 def test_the_plow_init_shape_mounts_the_home_at_var_lib_hermes_not_opt_data(tmp_path):
@@ -166,6 +167,19 @@ def test_the_plow_init_shape_sets_neither_command_nor_entrypoint(tmp_path):
     svc = json.loads(r.stdout)["services"]["hermes"]
     assert svc.get("command") is None
     assert svc.get("entrypoint") is None
+
+
+def test_an_override_can_still_reinstate_a_second_gateway_under_plow_init(tmp_path):
+    """compose.plow-init.yml itself never sets either key, but an instance
+    override merges AFTER it -- so an agent repo's own override written
+    before it opted into plow-init (or copied from a legacy sibling) can
+    silently reinstate the second-gateway path. resolve_guard's refusal for
+    this is asserted in test_resolve_guard.py against this exact shape."""
+    override = tmp_path / "compose.override.yml"
+    override.write_text("services:\n  hermes:\n    command: [\"gateway\", \"run\"]\n")
+    r = plow_init_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", override=override)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["services"]["hermes"]["command"] == ["gateway", "run"]
 
 
 def test_the_plow_init_shape_mounts_the_credentials_file_read_only_outside_home(tmp_path):

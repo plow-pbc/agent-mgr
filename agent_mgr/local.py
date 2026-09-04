@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
-from .models import ResolvedAgent
+from .models import HOME_MOUNT_TARGETS, ResolvedAgent
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -193,6 +193,8 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         image = service.get("image", "-")
         build = bool(service.get("build"))
         pull_policy = service.get("pull_policy")
+        command = service.get("command")
+        entrypoint = service.get("entrypoint")
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
@@ -228,6 +230,16 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to act: compose resolved image '{image}' for {agent.name}, which is neither a digest nor built here",
         )
+    if agent.plow_init and (command is not None or entrypoint is not None):
+        # Neither key exists in compose.plow-init.yml, so the only source is
+        # an override merged after it -- reinstating the second-gateway path
+        # this whole contract exists to prevent.
+        raise AgentMgrError(
+            ErrorCode.INVALID_DESCRIPTOR,
+            f"refusing to act: {agent.name}'s compose resolves a command or entrypoint under "
+            "plow-init -- remove it from compose.override.yml, or the image's own boot chain "
+            "starts a second gateway alongside the supervised one",
+        )
 
 
 def require_container_ours(agent: ResolvedAgent) -> None:
@@ -243,8 +255,12 @@ def require_container_ours(agent: ResolvedAgent) -> None:
                 "docker",
                 "inspect",
                 "--format",
-                "{{range .Mounts}}{{if eq .Destination "
-                f'"{agent.home_mount_target}"'
+                # Either destination, not just this agent's CURRENT one: a
+                # running container was created under whichever contract was
+                # selected at the time, and a descriptor flip -- rollback
+                # included -- must not stop this from recognising it as ours.
+                "{{range .Mounts}}{{if or "
+                f'(eq .Destination "{HOME_MOUNT_TARGETS[0]}") (eq .Destination "{HOME_MOUNT_TARGETS[1]}")'
                 "}}{{.Source}}{{end}}{{end}}",
                 container_id,
             ],
@@ -264,7 +280,7 @@ def require_container_ours(agent: ResolvedAgent) -> None:
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to touch the container running as {agent.project} -- it mounts {mounted or '<nothing>'} "
-            f"at {agent.home_mount_target}, not {agent.name}'s home ({agent.home}). The compose project comes from the agent NAME; "
+            f"at {' or '.join(HOME_MOUNT_TARGETS)}, not {agent.name}'s home ({agent.home}). The compose project comes from the agent NAME; "
             f"this descriptor may need its own name, or 'agent-mgr unregister {agent.name}'. "
             f"Check ownership first: docker inspect {container_id}",
         )

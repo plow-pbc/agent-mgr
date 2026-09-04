@@ -7,6 +7,12 @@ from typing import TypeAlias
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
+# Every home mount target either boot contract has ever used. A running
+# container was created under whichever one was current at the time, so a
+# check that must still recognise it after a descriptor flip (rollback
+# included) has to accept either, not just the currently-selected one.
+HOME_MOUNT_TARGETS = ("/opt/data", "/var/lib/hermes")
+
 
 @dataclass(frozen=True, slots=True)
 class RegistryEntry:
@@ -45,7 +51,7 @@ class ResolvedAgent:
         """Where this agent's home lands inside the container -- baked into
         the image as HERMES_HOME under plow-init, agent-mgr's own convention
         otherwise."""
-        return "/var/lib/hermes" if self.plow_init else "/opt/data"
+        return HOME_MOUNT_TARGETS[1] if self.plow_init else HOME_MOUNT_TARGETS[0]
 
     @property
     def credentials(self) -> Path:

@@ -513,6 +513,44 @@ printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE
     }
 
 
+def test_activate_rematerializes_plow_credentials_for_a_plow_init_agent(
+    run, instance, tmp_path, credential_api
+):
+    """publish_activation_env writes a fresh PLOW_AGENT_TOKEN into the home
+    dotenv; the materialized credentials file plow-init actually mounts must
+    not keep serving the token that reactivation just replaced."""
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True)
+    (home / ".env").write_text(
+        "PLOW_API_BASE=https://api.plow.co\n"
+        "PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n"
+    )
+    d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
+    run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"}, check=True)
+    credentials = home.parent / ".plow-credentials-rowan"
+    assert "plow_stale" in credentials.read_text(), "deploy should have materialized the old token"
+
+    installer = """#!/usr/bin/env bash
+set -euo pipefail
+while [ $# -gt 0 ]; do
+  case "$1" in --data-dir) home="$2"; shift 2 ;; *) shift ;; esac
+done
+printf 'PLOW_CHAT_CHAT_UID=cht_existing\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE_URL=__BASE__\n' >> "$home/.env"
+""".replace("__BASE__", credential_api.base_url)
+    activation = tmp_path / "activation"
+    activation.mkdir()
+    b = fake_curl(activation, body=installer)
+
+    r = run("activate", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
+
+    assert r.returncode == 0, r.stderr
+    text = credentials.read_text()
+    assert "PLOW_AGENT_TOKEN=plow_fresh" in text
+    assert "plow_stale" not in text
+
+
 def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
     run, instance, tmp_path, credential_api
 ):

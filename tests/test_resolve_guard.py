@@ -469,3 +469,81 @@ def test_a_resolver_failing_on_the_mounted_home_names_it(run, instance, tmp_path
     assert r.returncode != 0
     assert foreign in r.stderr
     assert "not rowan's home" in r.stderr
+
+
+def _bin_with_running_mount(tmp_path, name, home, *, config_target, running_destination, source):
+    """A docker whose `config` renders under `config_target` -- what Compose
+    would resolve fresh from the CURRENT descriptor -- but whose `inspect`
+    reports an ALREADY-RUNNING container mounted at `running_destination`,
+    the shape a container actually takes right after its descriptor's
+    contract changes, before anything recreates it."""
+    b = fake_docker(tmp_path, home=home, name=name, target=config_target)
+    script = b / "docker"
+    text = script.read_text()
+    original = f"*inspect*) echo {home} ;;"
+    assert original in text, "fake_docker's default inspect stub text changed shape"
+    replacement = (
+        f'*inspect*) case "$*" in *\'"{running_destination}"\'*) echo {source} ;; '
+        "*) : ;; esac ;;"
+    )
+    script.write_text(text.replace(original, replacement))
+    script.chmod(0o755)
+    return b
+
+
+@pytest.mark.parametrize(
+    "descriptor, config_target, running_destination, own_source, recognized",
+    [
+        # Cutover in progress: descriptor already says plow-init, but the
+        # container running right now was created under the old contract and
+        # has not been recreated yet.
+        ("AGENT_BOOT_CONTRACT=plow-init\n", "/var/lib/hermes", "/opt/data", True, True),
+        # Rollback: descriptor is back to legacy, but the container still
+        # running is the one the (aborted) plow-init cutover created.
+        ("", "/opt/data", "/var/lib/hermes", True, True),
+        # A known destination is not enough on its own -- the source still
+        # has to be THIS agent's home, or a sibling's container at the same
+        # destination would be waved through.
+        ("", "/opt/data", "/opt/data", False, False),
+    ],
+    ids=["recognised-after-flip-to-plow-init", "recognised-after-rollback-to-legacy",
+         "wrong-source-still-rejected"],
+)
+def test_the_container_guard_survives_a_descriptor_flip(
+    run, instance, tmp_path, descriptor, config_target, running_destination, own_source,
+    recognized,
+):
+    """require_container_ours must accept EITHER home destination a running
+    container could have been created under, so a descriptor flip -- rollback
+    included -- never stops agent-mgr from recognising its own container.
+    Checked through `logs`, which needs no materialized credentials and stays
+    open under either contract, so only the container guard is under test."""
+    home = tmp_path / "home" / ".hermes-rowan"
+    source = str(home) if own_source else str(tmp_path / "home" / ".hermes-someone-else")
+    run("register", "rowan", str(instance("rowan", descriptor=descriptor)), check=True)
+    b = _bin_with_running_mount(
+        tmp_path, "rowan", home,
+        config_target=config_target, running_destination=running_destination, source=source,
+    )
+    r = run("logs", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert (r.returncode == 0) is recognized, r.stderr
+
+
+@pytest.mark.parametrize("kw", [{"command": ["gateway", "run"]}, {"entrypoint": ["gateway"]}],
+                         ids=["command", "entrypoint"])
+def test_the_guard_refuses_a_plow_init_agent_whose_compose_still_resolves_a_command(
+    run, instance, tmp_path, kw
+):
+    """compose.plow-init.yml itself never sets either key -- proved against
+    real rendered compose output in test_compose.py -- so the only source a
+    resolved command/entrypoint can have here is an instance override
+    reinstating the second-gateway path this whole contract exists to
+    prevent. Simulated the way every other resolve_guard shape check in this
+    file is: a fake docker whose `config` renders the shape under test."""
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+                    target="/var/lib/hermes", **kw)
+    r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "compose.override.yml" in r.stderr
