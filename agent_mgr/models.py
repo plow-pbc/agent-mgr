@@ -79,6 +79,7 @@ class ResolvedAgent:
             "AGENT_NAME": self.name,
             "AGENT_DIR": str(self.repo),
             "AGENT_HOME": str(self.home),
+            "AGENT_HOME_TARGET": self.home_mount_target,
             "AGENT_CONTAINER": self.container,
             "AGENT_PROJECT": self.project,
             "AGENT_TZ": self.timezone,

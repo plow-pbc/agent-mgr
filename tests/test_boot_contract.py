@@ -33,6 +33,9 @@ def test_the_boot_contract_selects_the_home_target_and_credentials_path(
     assert agent.boot_contract == ("plow-init" if plow_init else "")
     assert agent.credentials == agent.home.parent / ".plow-credentials-rowan"
     assert not agent.credentials.is_relative_to(agent.home)
+    # An agent repo's own compose.override.yml mounts a skill or SOUL.md
+    # against this, not a hardcoded path, so it survives a contract change.
+    assert agent.environment()["AGENT_HOME_TARGET"] == target
 
 
 def test_a_typo_in_the_boot_contract_is_refused_not_silently_kept_on_todays_shape(run, instance):

@@ -33,15 +33,15 @@ LEAVES_RUNNING = frozenset(
 )
 NO_IDENTIFICATION = frozenset({"config", "version", "ls", "images", "build", "push", "run", "ps"})
 # Compose verbs that materialize the container's bind mounts -- "create"
-# does this without starting the container, and "run" is the one member of
-# LEAVES_RUNNING among them, since it starts a fresh instance without
-# tearing an existing one down first.
+# does this without starting, and "run" (the one member also in
+# LEAVES_RUNNING) starts a fresh instance without tearing one down first.
 STARTS_CONTAINER = frozenset({"up", "create", "start", "restart", "run"})
 SCRUB = frozenset(
     {
         "AGENT_NAME",
         "AGENT_DIR",
         "AGENT_HOME",
+        "AGENT_HOME_TARGET",
         "AGENT_CONTAINER",
         "AGENT_PROJECT",
         "AGENT_TZ",
