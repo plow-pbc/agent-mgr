@@ -199,6 +199,52 @@ def test_a_missing_connector_skill_is_named_rather_than_reported_per_connector(r
     assert "add-skill" in r.stderr, "the message should name the fix"
 
 
+def _connectors_bin_at(tmp_path, name, target):
+    """Like _connectors_bin, but the presence probe distinguishes the two
+    home mount targets explicitly instead of matching either with one
+    wildcard -- a real container only ever has one of the two paths, so a
+    probe built against the wrong contract's home must fail here exactly the
+    way it would fail there."""
+    other = "/var/lib/hermes" if target == "/opt/data" else "/opt/data"
+    right = f"{target}/skills/productivity/plow-connectors/plow_connector.py"
+    wrong = f"{other}/skills/productivity/plow-connectors/plow_connector.py"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name, target=target)
+    (b / "docker").write_text(
+        (b / "docker").read_text().replace(
+            "esac",
+            f'  *"test -f {right}"*)\n    exit 0 ;;\n'
+            f'  *"test -f {wrong}"*)\n    exit 1 ;;\n'
+            "  *gmail*) echo 'ok'; exit 0 ;;\n"
+            "  *slack*) echo 'ok'; exit 0 ;;\n"
+            "esac", 1))
+    (b / "docker").chmod(0o755)
+    return {"PATH": f"{b}:{os.environ['PATH']}"}
+
+
+@pytest.mark.parametrize(
+    "boot_contract, target",
+    [("", "/opt/data"), ("AGENT_BOOT_CONTRACT=plow-init\n", "/var/lib/hermes")],
+    ids=["legacy", "plow-init"],
+)
+def test_check_connectors_probes_the_agents_own_boot_contract_path(
+    run, instance, tmp_path, boot_contract, target
+):
+    """Probing the wrong contract's path would report a missing skill that is
+    actually present, and send the operator to add-skill for no reason."""
+    run("register", "rowan", str(instance("rowan", descriptor=boot_contract)))
+    home = tmp_path / "home" / ".hermes-rowan"
+    if target != "/opt/data":
+        # resolve_guard refuses a plow-init agent before compose even runs
+        # unless its credentials are already materialized.
+        home.parent.mkdir(parents=True, exist_ok=True)
+        (home.parent / ".plow-credentials-rowan").write_text(
+            "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
+        )
+    r = run("check-connectors", "rowan", env=_connectors_bin_at(tmp_path, "rowan", target))
+    assert r.returncode == 0, r.stderr
+    assert "plow-connectors skill is not installed" not in r.stderr
+
+
 def test_the_scaffold_and_the_docs_agree_on_what_declares_latch(run, tmp_path):
     """The scaffold ships a latch block, and check-latch reads the config rather
     than the dotenv -- so the docs must not tell a no-Mac agent to leave DOMO_*

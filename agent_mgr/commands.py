@@ -62,7 +62,7 @@ def cron_sync(agent: ResolvedAgent, registry: Registry) -> int:
             "--user",
             f"{os.getuid()}:{os.getgid()}",
             "--env",
-            "HOME=/opt/data",
+            f"HOME={agent.home_mount_target}",
             "hermes",
             "/opt/hermes/.venv/bin/python3",
             "-",
@@ -561,6 +561,9 @@ def set_home(agent: ResolvedAgent, registry: Registry, uid: str) -> int:
 def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
     require_running(agent, registry)
     uid = f"{os.getuid()}:{os.getgid()}"
+    connector_script = (
+        f"{agent.home_mount_target}/skills/productivity/plow-connectors/plow_connector.py"
+    )
     present = compose(
         agent,
         [
@@ -571,7 +574,7 @@ def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
             "hermes",
             "test",
             "-f",
-            "/opt/data/skills/productivity/plow-connectors/plow_connector.py",
+            connector_script,
         ],
         capture=True,
     )
@@ -594,7 +597,7 @@ def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
                 uid,
                 "hermes",
                 "python3",
-                "/opt/data/skills/productivity/plow-connectors/plow_connector.py",
+                connector_script,
                 connector,
                 "status",
             ],
