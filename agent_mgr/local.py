@@ -162,6 +162,16 @@ def require_own_home(agent: ResolvedAgent, registry: Registry) -> None:
 
 def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
     require_own_home(agent, registry)
+    if agent.plow_init and not agent.credentials.is_file():
+        # Compose does not check a bind mount's source exists -- it would
+        # bind-mount an empty directory at agent.credentials and hand
+        # plow-init a directory instead of a file, 60 seconds into boot,
+        # instead of the loud refusal materialize_plow_credentials gives now.
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"refusing to act: {agent.name} sets AGENT_BOOT_CONTRACT=plow-init but "
+            f"{agent.credentials} does not exist -- materialize its credentials first",
+        )
     result = compose(agent, ["config", "--format", "json"], capture=True)
     if result.returncode:
         raise AgentMgrError(

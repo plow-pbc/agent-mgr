@@ -55,12 +55,32 @@ def test_scrub_covers_every_key_environment_exports(run, instance, registry, tmp
     assert set(agent.environment()) <= SCRUB
 
 
-def test_resolve_guard_passes_for_a_plow_init_agent(run, instance, tmp_path):
+def test_resolve_guard_refuses_a_plow_init_agent_with_no_credentials_file(run, instance, tmp_path):
+    """Compose does not check that a bind mount's source exists -- without this,
+    `deploy`/`up` would bind-mount an empty directory at AGENT_CREDENTIALS and
+    hand plow-init a directory instead of a file, 60 seconds into boot. Every
+    transition (deploy, up, restart) goes through resolve_guard, so catching
+    it here is catching it on every one of those, not just materialization."""
+    home = tmp_path / "home" / ".hermes-rowan"
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
+    r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "materialize its credentials first" in r.stderr
+    assert "rowan" in r.stderr
+
+
+def test_resolve_guard_passes_for_a_plow_init_agent_once_credentials_exist(run, instance, tmp_path):
     """Closes the loop past the renderer: agent-mgr's own guard must read the
     new home target it just taught compose.plow-init.yml to mount at."""
     home = tmp_path / "home" / ".hermes-rowan"
     run("register", "rowan",
         str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    (tmp_path / "home").mkdir(exist_ok=True)
+    (tmp_path / "home" / ".plow-credentials-rowan").write_text(
+        "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
+    )
     b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
     r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr + r.stdout
