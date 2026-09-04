@@ -1,4 +1,10 @@
-# The one Hermes service definition for every agent in the fleet.
+# The Hermes service definition for every agent still on today's boot shape.
+#
+# An agent whose descriptor sets AGENT_BOOT_CONTRACT=plow-init renders from
+# compose.plow-init.yml instead -- a full sibling file, not merged with this
+# one -- because its base image owns its own boot chain and starting this
+# file's command/entrypoint alongside it would start a second gateway. See
+# that file for why. No agent renders from it until its own descriptor says so.
 #
 # Nothing here is agent-specific. Every value that differs is resolved by
 # agent-mgr and reaches this file from one of two places, and the difference

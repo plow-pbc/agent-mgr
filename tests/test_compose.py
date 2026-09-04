@@ -2,13 +2,14 @@ import json
 import os
 import pytest
 import subprocess
+import yaml
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DIGEST = "nousresearch/hermes-agent@sha256:" + "c" * 64
 
 
-def compose_config(tmp_path, home, name, override=None, extra_env=None):
+def compose_config(tmp_path, home, name, override=None, extra_env=None, file="compose.yml"):
     """Resolve the template the way agent-mgr will, and return the CompletedProcess.
 
     The one place in the suite that runs the REAL docker, and it opts back in
@@ -33,7 +34,7 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None):
     })
     if extra_env:
         env.update(extra_env)
-    files = ["-f", str(ROOT / "templates" / "compose.yml")]
+    files = ["-f", str(ROOT / "templates" / file)]
     if override:
         files += ["-f", str(override)]
     with allow_real_docker():
@@ -135,5 +136,99 @@ def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):
     r = compose_config(tmp_path, tmp_path / ".hermes", "str", override=override)
     assert r.returncode != 0
     assert "STR_VAULT" in r.stderr
+
+
+# --- compose.plow-init.yml: the boot shape an agent's descriptor opts into
+# with AGENT_BOOT_CONTRACT=plow-init. Nothing above this line changes shape;
+# nothing below it is reachable until a descriptor asks for it.
+
+def plow_init_config(tmp_path, home, name, credentials=None, extra_env=None):
+    env = {"AGENT_CREDENTIALS": str(credentials or tmp_path / f".plow-credentials-{name}")}
+    if extra_env:
+        env.update(extra_env)
+    return compose_config(tmp_path, home, name, extra_env=env, file="compose.plow-init.yml")
+
+
+def test_the_plow_init_shape_mounts_the_home_at_var_lib_hermes_not_opt_data(tmp_path):
+    r = plow_init_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
+    assert r.returncode == 0, r.stderr
+    svc = json.loads(r.stdout)["services"]["hermes"]
+    homes = [v["source"] for v in svc["volumes"] if v["target"] == "/var/lib/hermes"]
+    assert homes == [str(tmp_path / ".hermes-test-rowan")]
+    assert "/opt/data" not in {v["target"] for v in svc["volumes"]}
+
+
+def test_the_plow_init_shape_sets_neither_command_nor_entrypoint(tmp_path):
+    """The base's own baked CMD (/init) already starts the supervised gateway
+    through plow-init; setting either here would start a second one."""
+    r = plow_init_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
+    assert r.returncode == 0, r.stderr
+    svc = json.loads(r.stdout)["services"]["hermes"]
+    assert svc.get("command") is None
+    assert svc.get("entrypoint") is None
+
+
+def test_the_plow_init_shape_mounts_the_credentials_file_read_only_outside_home(tmp_path):
+    creds = tmp_path / ".plow-credentials-rowan"
+    r = plow_init_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", credentials=creds)
+    assert r.returncode == 0, r.stderr
+    svc = json.loads(r.stdout)["services"]["hermes"]
+    mount = next(v for v in svc["volumes"] if v["target"] == "/var/lib/plow/credentials.host")
+    assert mount["source"] == str(creds)
+    assert mount.get("read_only") is True
+
+
+def test_the_plow_init_shape_still_sets_identity_and_uid_gid(tmp_path):
+    r = plow_init_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan")
+    assert r.returncode == 0, r.stderr
+    env = json.loads(r.stdout)["services"]["hermes"]["environment"]
+    assert env["AGENT_ID"] == "rowan"
+    assert env["HERMES_UID"] == "1000"
+    assert env["HERMES_GID"] == "1000"
+    assert env["TZ"] == "America/Los_Angeles"
+    # Baked into the image now (Global Constraints); re-setting it here would
+    # just be a second place for the value to drift from.
+    assert "S6_SERVICES_GRACETIME" not in env
+
+
+def test_the_plow_init_shape_requires_the_credentials_variable(tmp_path):
+    r = plow_init_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan",
+                         extra_env={"AGENT_CREDENTIALS": ""})
+    assert r.returncode != 0
+    assert "AGENT_CREDENTIALS" in r.stderr
+
+
+def test_the_two_compose_shapes_do_not_drift_on_their_shared_keys():
+    """Two files, one contract: image, identity and timing must read
+    IDENTICALLY in both, or an agent's rendered container quietly depends on
+    which shape it happened to pick. Compares the raw (un-interpolated) YAML,
+    so a copy-paste edit to either file trips this without docker."""
+    legacy = yaml.safe_load((ROOT / "templates" / "compose.yml").read_text())
+    plow_init = yaml.safe_load((ROOT / "templates" / "compose.plow-init.yml").read_text())
+    assert legacy["name"] == plow_init["name"]
+    a, b = legacy["services"]["hermes"], plow_init["services"]["hermes"]
+    for key in ("image", "container_name", "restart", "stop_grace_period"):
+        assert a[key] == b[key], f"{key} drifted between compose.yml and compose.plow-init.yml"
+
+    def env_dict(svc):
+        return dict(item.split("=", 1) for item in svc["environment"])
+
+    shared_env = env_dict(a)
+    plow_init_env = env_dict(b)
+    for key in ("HERMES_UID", "HERMES_GID", "TZ", "AGENT_ID"):
+        assert shared_env[key] == plow_init_env[key], \
+            f"{key} drifted between compose.yml and compose.plow-init.yml"
+
+
+def test_agent_image_overrides_the_stack_image_under_either_boot_contract(tmp_path):
+    """AGENT_IMAGE is already the per-agent image override (an instance's
+    agent.env can set it to run its own variant while the rest of the fleet
+    stays on runtime/stack.json's hermes_local) -- this is not new to
+    plow-init, so the new shape must keep honouring it exactly the same way."""
+    variant = "public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:" + "d" * 64
+    r = plow_init_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan",
+                         extra_env={"AGENT_IMAGE": variant})
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["services"]["hermes"]["image"] == variant
 
 

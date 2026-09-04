@@ -46,6 +46,8 @@ SCRUB = frozenset(
         "AGENT_DEPLOY_HOOK",
         "AGENT_PRE_TRANSITION",
         "AGENT_CRON_SPEC",
+        "AGENT_BOOT_CONTRACT",
+        "AGENT_CREDENTIALS",
         "AGENT_DESCRIPTOR",
         "COMPOSE_PROJECT_NAME",
         "COMPOSE_FILE",
@@ -65,7 +67,8 @@ def environment(agent: ResolvedAgent) -> dict[str, str]:
 
 
 def compose_argv(agent: ResolvedAgent, args: Sequence[str]) -> list[str]:
-    files = ["-f", str(ROOT / "templates" / "compose.yml")]
+    template = "compose.plow-init.yml" if agent.plow_init else "compose.yml"
+    files = ["-f", str(ROOT / "templates" / template)]
     override = agent.repo / "compose.override.yml"
     if override.is_file():
         files.extend(["-f", str(override)])
@@ -174,7 +177,12 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         container = service.get("container_name", "-")
         volumes = service.get("volumes", [])
         home = next(
-            (item.get("source", "") for item in volumes if item.get("target") == "/opt/data"), "-"
+            (
+                item.get("source", "")
+                for item in volumes
+                if item.get("target") == agent.home_mount_target
+            ),
+            "-",
         )
         agent_id = service.get("environment", {}).get("AGENT_ID", "-")
         image = service.get("image", "-")
@@ -230,7 +238,9 @@ def require_container_ours(agent: ResolvedAgent) -> None:
                 "docker",
                 "inspect",
                 "--format",
-                '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}',
+                "{{range .Mounts}}{{if eq .Destination "
+                f'"{agent.home_mount_target}"'
+                "}}{{.Source}}{{end}}{{end}}",
                 container_id,
             ],
             env=environment(agent),
@@ -249,7 +259,7 @@ def require_container_ours(agent: ResolvedAgent) -> None:
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to touch the container running as {agent.project} -- it mounts {mounted or '<nothing>'} "
-            f"at /opt/data, not {agent.name}'s home ({agent.home}). The compose project comes from the agent NAME; "
+            f"at {agent.home_mount_target}, not {agent.name}'s home ({agent.home}). The compose project comes from the agent NAME; "
             f"this descriptor may need its own name, or 'agent-mgr unregister {agent.name}'. "
             f"Check ownership first: docker inspect {container_id}",
         )

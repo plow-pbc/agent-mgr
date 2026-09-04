@@ -221,7 +221,7 @@ def instance(tmp_path):
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
                 exists=None, all_cids=(), mounts=None, image=None, build=False,
-                pull_policy=None):
+                pull_policy=None, target="/opt/data"):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -244,7 +244,7 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # attributes usage to a sibling. A fake that omits it would leave that
         # guard asserting nothing.
         "environment": {"AGENT_ID": name},
-        "volumes": [{"target": "/opt/data", "source": str(home)}],
+        "volumes": [{"target": target, "source": str(home)}],
     }
     # The image Compose would resolve. A digest by default, because that is what
     # the fleet pins; `image=` or `build=True` let a test say otherwise.

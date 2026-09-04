@@ -40,6 +40,7 @@ def test_resolve_json_is_a_versioned_typed_object(run, instance):
             "deploy_hook": None,
             "pre_transition_hook": None,
             "cron_spec": None,
+            "boot_contract": "",
         },
     }
 

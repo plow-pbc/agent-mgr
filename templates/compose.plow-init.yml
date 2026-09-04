@@ -1,0 +1,54 @@
+# The plow-init boot shape: selected in place of compose.yml when an agent's
+# descriptor sets AGENT_BOOT_CONTRACT=plow-init, for images from
+# plow-hermes-agent 63c8b9c on.
+#
+# Those bases boot s6 with a root cont-init step that promotes the
+# bind-mounted credential below to /var/lib/plow/credentials, then a
+# plow-init oneshot reads it and gates the supervised `hermes-gateway`
+# longrun. `main-hermes` is a deliberate no-op, and the container's own baked
+# CMD (/init) already starts that whole chain -- so unlike compose.yml, this
+# shape sets neither `entrypoint:` nor `command:`. Setting either here would
+# start a SECOND gateway alongside the supervised one, which is the failure
+# agent-mgr#138/#139 shipped and reverted.
+#
+# A second file rather than a conditional in compose.yml: Compose has no way
+# to omit a key -- entrypoint and command chief among them -- based on a
+# variable's value, only to give it an empty one, which is not the same
+# thing here. This is a full standalone file, never merged with compose.yml
+# for the same agent.
+#
+# Identity, timing and the shared environment keys below are IDENTICAL
+# strings to compose.yml on purpose: tests/test_compose.py pins them equal,
+# so the two files cannot drift apart without the suite catching it.
+name: ${AGENT_PROJECT:?set by agent-mgr from the instance descriptor}
+
+services:
+  hermes:
+    image: ${AGENT_IMAGE:?set by agent-mgr from runtime/stack.json}
+    container_name: ${AGENT_CONTAINER:?set by agent-mgr from the instance descriptor}
+    restart: unless-stopped
+    # Same reasoning as compose.yml: bound cleanup, and Docker's own deadline
+    # kept beyond it so s6 stays the owner of escalation.
+    stop_grace_period: 35s
+    volumes:
+      # This image bakes HERMES_HOME=/var/lib/hermes; unlike compose.yml's
+      # /opt/data, that path is the base's to choose, not agent-mgr's.
+      - ${AGENT_HOME:?set by agent-mgr from the instance descriptor}:/var/lib/hermes
+      # Host-owned, mode 0600, and never under the home -- the agent's own
+      # filesystem tools cannot read it there. 00-plow-sanitize (root,
+      # cont-init) copies this to /var/lib/plow/credentials as root:root
+      # before plow-init reads it, so nothing on the host runs privileged.
+      - ${AGENT_CREDENTIALS:?set by agent-mgr from the agent's home dotenv}:/var/lib/plow/credentials.host:ro
+    environment:
+      # Same no-default reasoning as compose.yml: a wrong UID/GID re-owns
+      # live state in place.
+      - HERMES_UID=${HERMES_UID:?run this through agent-mgr, which sets it}
+      - HERMES_GID=${HERMES_GID:?run this through agent-mgr, which sets it}
+      - TZ=${AGENT_TZ:?set by agent-mgr, defaulting to America/Los_Angeles}
+      # No S6_SERVICES_GRACETIME here: this image bakes it in (30000),
+      # unlike the images compose.yml still has to support.
+      - AGENT_ID=${AGENT_NAME:?set by agent-mgr from the instance descriptor}
+      # No credentials here either -- plow-init reads the promoted file
+      # above, not the environment.
+    # No ports, same reason as compose.yml: the dashboard refuses 0.0.0.0
+    # without an auth provider because it holds API keys.

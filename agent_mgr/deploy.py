@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
+from .descriptor import read_dotenv_values
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write
 from .local import (
@@ -24,6 +25,39 @@ ROOT = Path(__file__).resolve().parent.parent
 def _publish_home_file(source: Path, home: Path, name: str) -> None:
     resolved = home.resolve()
     atomic_write(resolved / name, source.read_bytes(), stage_in=resolved.parent)
+
+
+CREDENTIAL_KEYS = ("PLOW_API_BASE", "PLOW_AGENT_TOKEN")
+
+
+def materialize_plow_credentials(agent: ResolvedAgent) -> Path:
+    """Write the plow-init credential file at agent.credentials, read from
+    this agent's own home dotenv.
+
+    Landed beside the home, never inside it, mode 0600 (atomic_write's
+    default) and owned by the invoking user -- the base's own root cont-init
+    step promotes it to root:root before plow-init reads it, so nothing here
+    runs privileged. Both keys or nothing is written: plow-init rejects a
+    partial file 60 seconds into boot, which is a worse failure than refusing
+    now, naming exactly what is missing.
+    """
+    dotenv = agent.home / ".env"
+    if not dotenv.is_file():
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr deploy {agent.name}' first"
+        )
+    values = read_dotenv_values(dotenv, frozenset(CREDENTIAL_KEYS))
+    missing = [key for key in CREDENTIAL_KEYS if not values.get(key)]
+    if missing:
+        raise AgentMgrError(
+            ErrorCode.INVALID_DESCRIPTOR,
+            f"{agent.name}'s dotenv ({dotenv}) is missing {' and '.join(missing)} -- "
+            "plow-init needs both PLOW_API_BASE and PLOW_AGENT_TOKEN before it can boot. "
+            "Nothing was written.",
+        )
+    body = "".join(f"{key}={values[key]}\n" for key in CREDENTIAL_KEYS)
+    atomic_write(agent.credentials, body.encode())
+    return agent.credentials
 
 
 def migrate_plugin_env(agent: ResolvedAgent, sync: bool = False) -> None:

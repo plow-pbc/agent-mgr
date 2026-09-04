@@ -25,9 +25,16 @@ OWNED_KEYS = frozenset(
         "AGENT_DEPLOY_HOOK",
         "AGENT_PRE_TRANSITION",
         "AGENT_CRON_SPEC",
+        "AGENT_BOOT_CONTRACT",
     }
 )
 OPTIONAL_PATH_KEYS = frozenset({"AGENT_DEPLOY_HOOK", "AGENT_PRE_TRANSITION", "AGENT_CRON_SPEC"})
+# AGENT_BOOT_CONTRACT selects the compose shape (see templates/compose.plow-init.yml).
+# Its empty state IS its default -- today's shape -- so blanking the line is not
+# the silent-substitution case OPTIONAL_PATH_KEYS exists to catch; it can be
+# empty for the same reason those hooks can.
+ALLOWED_EMPTY = OPTIONAL_PATH_KEYS | frozenset({"AGENT_BOOT_CONTRACT"})
+BOOT_CONTRACTS = frozenset({"plow-init"})
 # Retired keys die by name: unknown keys pass through as hook environment, so a
 # stale descriptor would otherwise resolve fine while the renamed behavior
 # (a live agent's guard, its deploy hook) silently stopped applying.
@@ -98,9 +105,15 @@ def parse_descriptor(file: Path) -> ParsedDescriptor:
                 f"{file}: line {number}: {key} is now {replacement} -- rename it",
             )
         if key in OWNED_KEYS:
-            if not value and key not in OPTIONAL_PATH_KEYS:
+            if not value and key not in ALLOWED_EMPTY:
                 raise AgentMgrError(
                     ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for {key}"
+                )
+            if key == "AGENT_BOOT_CONTRACT" and value and value not in BOOT_CONTRACTS:
+                raise AgentMgrError(
+                    ErrorCode.INVALID_DESCRIPTOR,
+                    f"{file}: line {number}: AGENT_BOOT_CONTRACT must be 'plow-init' or "
+                    f"unset, got {value!r} -- a typo here would silently keep today's shape",
                 )
             values[key] = value
         else:
@@ -124,6 +137,13 @@ def _read_timezone(file: Path) -> str | None:
                 ErrorCode.INVALID_DESCRIPTOR, f"{file}: line {number}: empty value for AGENT_TZ"
             )
     return timezone
+
+
+def read_dotenv_values(file: Path, keys: frozenset[str]) -> dict[str, str]:
+    """Read exactly `keys` from a home dotenv -- read, never executed, and
+    every line not naming one of them skipped before key or value validation
+    reaches it. The same parsing `_read_timezone` uses, generalized past one key."""
+    return {key: value for _, key, value in _assignments(read_regular_text(file), file, keys)}
 
 
 def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
@@ -158,6 +178,7 @@ def resolve_agent(name: str, registry: Registry, root: Path) -> ResolvedAgent:
         deploy_hook=_repo_path(repo, values.get("AGENT_DEPLOY_HOOK", "")),
         pre_transition_hook=_repo_path(repo, values.get("AGENT_PRE_TRANSITION", "")),
         cron_spec=_repo_path(repo, values.get("AGENT_CRON_SPEC", "")),
+        boot_contract=values.get("AGENT_BOOT_CONTRACT", ""),
         descriptor=descriptor,
         hook_environment=parsed.hook_environment,
         home_declared="AGENT_HOME" in values,
