@@ -80,18 +80,19 @@ def test_install_plugin_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
     assert "PLOW_HOME_CHANNEL=cht_dm" in lines
 
 
-def test_deploy_materializes_plow_credentials_from_a_legacy_only_dotenv(run, instance, tmp_path):
+def test_deploy_materializes_plow_credentials_from_a_legacy_only_dotenv(
+    run, instance, tmp_path, home_dotenv
+):
     """migrate_plugin_env (inside install_plugin) is what carries a legacy
     PLOW_CHAT_*-only dotenv onto the canonical names materialize_plow_credentials
     requires -- so deploy must run that migration first. An agent whose home
     has only the legacy names must deploy successfully, not abort at
     materialization before the very next step would have fixed it."""
     run("register", "rowan", str(instance("rowan")), check=True)
-    home = tmp_path / "home" / ".hermes-rowan"
-    home.mkdir(parents=True)
-    (home / ".env").write_text(
+    home = home_dotenv(
+        "rowan",
         "AGENT_BOOT_CONTRACT=plow-init\n"
-        "PLOW_CHAT_TOKEN=tok_legacy\nPLOW_CHAT_BASE_URL=https://api.plow.co\n"
+        "PLOW_CHAT_TOKEN=tok_legacy\nPLOW_CHAT_BASE_URL=https://api.plow.co\n",
     )
     d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
 
@@ -117,7 +118,7 @@ def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp
     assert "PLOW_AGENT_TOKEN=tok_live" in env.read_text().splitlines()
 
 
-def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path):
+def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path, home_dotenv):
     """The recovery command activate prints must be able to finish the job.
     Idempotent mode skips set keys, so after a failed in-activate sync the
     fresh token sits only under the legacy name — `--sync` is the forwarded
@@ -125,12 +126,11 @@ def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path
     materialized credentials file directly: unlike install-plugin and
     activate, --sync triggers no reload after it."""
     run("register", "rowan", str(instance("rowan")), check=True)
-    home = tmp_path / "home" / ".hermes-rowan"
-    home.mkdir(parents=True)
-    (home / ".env").write_text(
+    home = home_dotenv(
+        "rowan",
         "AGENT_BOOT_CONTRACT=plow-init\n"
         "PLOW_API_BASE=https://api.plow.co\n"
-        "PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n"
+        "PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n",
     )
     d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
     run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"}, check=True)

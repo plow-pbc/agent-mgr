@@ -513,16 +513,15 @@ printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE
     }
 
 
-def _deployed_plow_init_agent(run, instance, tmp_path, name="rowan", extra_dotenv=""):
+def _deployed_plow_init_agent(run, instance, tmp_path, home_dotenv, name="rowan", extra_dotenv=""):
     """A plow-init agent already through its first deploy, with a stale
     token materialized -- the state both activate() and
     scope_chat_credential() must refresh after rewriting it."""
     run("register", name, str(instance(name)), check=True)
-    home = tmp_path / "home" / f".hermes-{name}"
-    home.mkdir(parents=True)
-    (home / ".env").write_text(
+    home = home_dotenv(
+        name,
         "AGENT_BOOT_CONTRACT=plow-init\n"
-        f"PLOW_API_BASE=https://api.plow.co\n{extra_dotenv}PLOW_AGENT_TOKEN=plow_stale\n"
+        f"PLOW_API_BASE=https://api.plow.co\n{extra_dotenv}PLOW_AGENT_TOKEN=plow_stale\n",
     )
     d = fake_docker(tmp_path, home=home, name=name, target="/var/lib/hermes")
     run("deploy", name, env={"PATH": f"{d}:{os.environ['PATH']}"}, check=True)
@@ -532,13 +531,13 @@ def _deployed_plow_init_agent(run, instance, tmp_path, name="rowan", extra_doten
 
 
 def test_activate_rematerializes_plow_credentials_for_a_plow_init_agent(
-    run, instance, tmp_path, credential_api
+    run, instance, tmp_path, home_dotenv, credential_api
 ):
     """publish_activation_env writes a fresh PLOW_AGENT_TOKEN into the home
     dotenv; the materialized credentials file plow-init actually mounts must
     not keep serving the token that reactivation just replaced."""
     home, d, credentials = _deployed_plow_init_agent(
-        run, instance, tmp_path, extra_dotenv="PLOW_HOME_CHANNEL=cht_existing\n"
+        run, instance, tmp_path, home_dotenv, extra_dotenv="PLOW_HOME_CHANNEL=cht_existing\n"
     )
 
     installer = """#!/usr/bin/env bash
@@ -592,19 +591,20 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
 
 
 def test_scope_chat_credential_rematerializes_plow_credentials_for_a_plow_init_agent(
-    run, instance, tmp_path, credential_api
+    run, instance, tmp_path, home_dotenv, credential_api
 ):
     """The same staleness activate() closes: scope_chat_credential also calls
     publish_activation_env, which can rewrite PLOW_AGENT_TOKEN (here, migrating
     it from the legacy PLOW_CHAT_TOKEN name) and then reload -- both go through
     reload_if_running, which is the one place this is fixed."""
-    home, d, credentials = _deployed_plow_init_agent(run, instance, tmp_path)
+    home, d, credentials = _deployed_plow_init_agent(run, instance, tmp_path, home_dotenv)
 
-    (home / ".env").write_text(
+    home_dotenv(
+        "rowan",
         "AGENT_BOOT_CONTRACT=plow-init\n"
         "PLOW_CHAT_CHAT_UID=cht_home\n"
         "PLOW_CHAT_TOKEN=plow_bootstrap\n"
-        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
+        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n",
     )
 
     r = run("scope-chat-credential", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"})
