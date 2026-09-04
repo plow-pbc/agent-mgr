@@ -210,9 +210,12 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
         if not skeleton.is_file():
             skeleton = ROOT / "templates" / "env.example"
         _publish_home_file(skeleton, agent.home, ".env")
-    if agent.plow_init:
-        materialize_plow_credentials(agent, registry)
     install_plugin(agent, "The dotenv skeleton IS written; config.yaml and skills are NOT.")
+    if agent.plow_init:
+        # After install_plugin, not before: migrate_plugin_env runs inside
+        # it, carrying a legacy PLOW_CHAT_*-only dotenv onto the canonical
+        # names this needs -- before this, that agent aborted here instead.
+        materialize_plow_credentials(agent, registry)
     install_fleet_skills(
         agent, "The dotenv skeleton and the plugin ARE installed; config.yaml was not updated."
     )

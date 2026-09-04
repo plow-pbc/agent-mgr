@@ -80,6 +80,29 @@ def test_install_plugin_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
     assert "PLOW_HOME_CHANNEL=cht_dm" in lines
 
 
+def test_deploy_materializes_plow_credentials_from_a_legacy_only_dotenv(run, instance, tmp_path):
+    """migrate_plugin_env (inside install_plugin) is what carries a legacy
+    PLOW_CHAT_*-only dotenv onto the canonical names materialize_plow_credentials
+    requires -- so deploy must run that migration first. An agent whose home
+    has only the legacy names must deploy successfully, not abort at
+    materialization before the very next step would have fixed it."""
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True)
+    (home / ".env").write_text(
+        "PLOW_CHAT_TOKEN=tok_legacy\nPLOW_CHAT_BASE_URL=https://api.plow.co\n"
+    )
+    d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
+
+    r = run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"})
+
+    assert r.returncode == 0, r.stderr
+    text = (home.parent / ".plow-credentials-rowan").read_text()
+    assert "PLOW_AGENT_TOKEN=tok_legacy" in text
+    assert "PLOW_API_BASE=https://api.plow.co" in text
+
+
 def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp_path):
     """Last declaration wins -- dotenv_read and the compose env_file loader
     both resolve a duplicated key to its last line, so the migrated value must
