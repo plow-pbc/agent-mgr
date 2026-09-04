@@ -1,11 +1,7 @@
-import json
-import sys
-from pathlib import Path
 from typing import Any
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from conftest import ASSISTANT_CONTRACT
 
 from agent_mgr.cloud_models import (
     AssistantResource,
@@ -16,13 +12,9 @@ from agent_mgr.cloud_models import (
 )
 from agent_mgr.errors import AgentMgrError, ErrorCode
 
-CONTRACT: list[dict[str, Any]] = json.loads(
-    (Path(__file__).parent / "fixtures" / "assistant-contract.json").read_text(encoding="utf-8")
-)
-
 
 def resource(**overrides: object) -> dict[str, Any]:
-    return CONTRACT[0] | overrides
+    return ASSISTANT_CONTRACT[0] | overrides
 
 
 def test_create_request_round_trips_the_api_shape() -> None:
@@ -127,7 +119,7 @@ def test_deleted_resource_rejects_live_status() -> None:
 
 @pytest.mark.parametrize("taken", [True, False], ids=["taken", "free"])
 def test_slot_round_trips_a_taken_and_a_free_line(taken: bool) -> None:
-    raw = {"line": CONTRACT[0]["line"], "assistant": CONTRACT[0] if taken else None}
+    raw = {"line": ASSISTANT_CONTRACT[0]["line"], "assistant": ASSISTANT_CONTRACT[0] if taken else None}
 
     slot = AssistantSlot.from_json(raw)
 
@@ -142,14 +134,14 @@ def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
             if raw["status"] is None
             else AssistantResource.from_json(raw)
         ).to_json()
-        for raw in CONTRACT
+        for raw in ASSISTANT_CONTRACT
     ]
 
-    assert decoded == CONTRACT
-    assert {raw["status"] for raw in CONTRACT} == {None} | {
+    assert decoded == ASSISTANT_CONTRACT
+    assert {raw["status"] for raw in ASSISTANT_CONTRACT} == {None} | {
         status.value for status in AssistantStatus
     }
-    assert {raw["failure_code"] for raw in CONTRACT if raw["failure_code"] is not None} == {
+    assert {raw["failure_code"] for raw in ASSISTANT_CONTRACT if raw["failure_code"] is not None} == {
         code.value for code in FailureCode
     }
     # The wire vocabulary, pinned to the words the API publishes rather than to
@@ -167,7 +159,7 @@ def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
         "validation_failed",
         "unknown",
     }
-    local = [raw for raw in CONTRACT if raw["provider"] == "self_hosted"]
+    local = [raw for raw in ASSISTANT_CONTRACT if raw["provider"] == "self_hosted"]
     assert local and local[0]["url"] is None and local[0]["chat_uids"] == [], (
         "a self-hosted assistant has no runtime and no anchors: keep that row decodable"
     )
