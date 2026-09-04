@@ -98,3 +98,25 @@ def test_down_and_logs_stay_open_for_a_plow_init_agent_with_no_credentials_file(
     b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
     r = run(operation, "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr + r.stdout
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [("start",), ("restart",), ("run", "--entrypoint", "/bin/true", "hermes")],
+    ids=["start", "restart", "run"],
+)
+def test_every_compose_passthrough_start_verb_refuses_a_plow_init_agent_with_no_credentials(
+    run, instance, tmp_path, argv
+):
+    """`agent-mgr up` was covered directly; this is the `agent-mgr compose
+    <name> <verb>` passthrough -- native `start`/`restart` reach transition()
+    but are not the literal string "up", and `run` bypasses transition()
+    entirely via LEAVES_RUNNING. All three still create/restart the
+    container with the same credentials bind-mount `up` does."""
+    home = tmp_path / "home" / ".hermes-rowan"
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
+    r = run("compose", "rowan", *argv, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "run 'agent-mgr deploy rowan' first" in r.stderr

@@ -32,6 +32,10 @@ LEAVES_RUNNING = frozenset(
     }
 )
 NO_IDENTIFICATION = frozenset({"config", "version", "ls", "images", "build", "push", "run", "ps"})
+# Compose verbs that create or (re)start the container -- "run" is the one
+# member of LEAVES_RUNNING among them, since it starts a fresh instance
+# without tearing an existing one down first.
+STARTS_CONTAINER = frozenset({"up", "start", "restart", "run"})
 SCRUB = frozenset(
     {
         "AGENT_NAME",
@@ -289,11 +293,8 @@ def confirm_transition(agent: ResolvedAgent) -> None:
     )
 
 
-def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
-    confirm_transition(agent)
-    require_container_ours(agent)
-    require_transition_allowed(agent)
-    if args and args[0] == "up" and agent.plow_init and not agent.credentials.is_file():
+def require_plow_init_credentials(agent: ResolvedAgent) -> None:
+    if agent.plow_init and not agent.credentials.is_file():
         # Compose does not check a bind mount's source exists, so this would
         # otherwise start with an empty directory where plow-init expects a file.
         raise AgentMgrError(
@@ -301,6 +302,14 @@ def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
             f"refusing to start {agent.name}: its credentials are not materialized -- "
             f"run 'agent-mgr deploy {agent.name}' first",
         )
+
+
+def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
+    confirm_transition(agent)
+    require_container_ours(agent)
+    require_transition_allowed(agent)
+    if args and args[0] in STARTS_CONTAINER:
+        require_plow_init_credentials(agent)
     return compose(agent, args).returncode
 
 

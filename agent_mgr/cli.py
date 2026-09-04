@@ -37,10 +37,12 @@ from .errors import AgentMgrError, ErrorCode
 from .local import (
     LEAVES_RUNNING,
     NO_IDENTIFICATION,
+    STARTS_CONTAINER,
     compose,
     require_container_ours,
     require_fetch_safe,
     require_own_home,
+    require_plow_init_credentials,
     require_running,
     resolve_guard,
     transition,
@@ -439,6 +441,8 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         if command[0] in LEAVES_RUNNING:
             if command[0] not in NO_IDENTIFICATION:
                 require_container_ours(agent)
+            if command[0] in STARTS_CONTAINER:
+                require_plow_init_credentials(agent)
             return compose(agent, command).returncode
         return transition(agent, command)
     if operation in {"-h", "--help", "help"}:
