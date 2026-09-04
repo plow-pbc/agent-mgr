@@ -75,13 +75,6 @@ Rules that matter, in order of how much they cost to get wrong:
   that is `AGENT_TZ` alone. A key the container reads for itself, such as
   `AGENT_INDEX`, is set in the same file and will not appear there; the
   README's dotenv section is the contract.
-- **A `plow-init` agent's credentials are not required until `up`.**
-  `AGENT_BOOT_CONTRACT=plow-init` is set fleet-wide in `agent.env` (same file
-  as `AGENT_TZ` above), so case B inherits it from case A automatically —
-  there is nothing to opt into per instance, and nothing to decline. `deploy`
-  still completes on a home with no real token yet; `activate` is what
-  supplies one, and `up` is what actually refuses to start without it. The
-  sequence above is the same either way.
 - **`up` before `sign-in`** — `sign-in` runs inside the container, so it
   refuses until one is running. And **don't restart the agent while `sign-in`
   is waiting on the browser** — the session lives in the container. If

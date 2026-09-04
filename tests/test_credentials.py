@@ -517,11 +517,11 @@ def _deployed_plow_init_agent(run, instance, tmp_path, name="rowan", extra_doten
     """A plow-init agent already through its first deploy, with a stale
     token materialized -- the state both activate() and
     scope_chat_credential() must refresh after rewriting it."""
-    run("register", name,
-        str(instance(name, descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    run("register", name, str(instance(name)), check=True)
     home = tmp_path / "home" / f".hermes-{name}"
     home.mkdir(parents=True)
     (home / ".env").write_text(
+        "AGENT_BOOT_CONTRACT=plow-init\n"
         f"PLOW_API_BASE=https://api.plow.co\n{extra_dotenv}PLOW_AGENT_TOKEN=plow_stale\n"
     )
     d = fake_docker(tmp_path, home=home, name=name, target="/var/lib/hermes")
@@ -601,6 +601,7 @@ def test_scope_chat_credential_rematerializes_plow_credentials_for_a_plow_init_a
     home, d, credentials = _deployed_plow_init_agent(run, instance, tmp_path)
 
     (home / ".env").write_text(
+        "AGENT_BOOT_CONTRACT=plow-init\n"
         "PLOW_CHAT_CHAT_UID=cht_home\n"
         "PLOW_CHAT_TOKEN=plow_bootstrap\n"
         f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"

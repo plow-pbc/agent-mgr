@@ -10,7 +10,7 @@ mirrors the cloud Hermes infrastructure in
 the same plugin at the same pin and the same protocol to the same API. The
 base image is shared only up to `plow-pbc/plow-hermes-agent` `089a6b1`:
 later bases move the home to `/var/lib/hermes` and gate the gateway behind a
-`/var/lib/plow/credentials` file. An agent whose `agent.env` sets
+`/var/lib/plow/credentials` file. An agent whose own home dotenv sets
 `AGENT_BOOT_CONTRACT=plow-init` gets that file, materialized and mounted
 read-only by `agent-mgr deploy`; every other agent stays on the `/opt/data`
 contract described below, under which those later bases start no gateway at
@@ -210,7 +210,6 @@ shape: a second copy of something `agent-mgr` already owns.
 | `SKILL.md`, `scripts/`, `references/` | if the agent does something | its own skill: the instructions the container reads, and whatever runs for them |
 | `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` (or `build`) beside it — [HOWTO](docs/HOWTO.md#where-does-my-code-go) has the shape and what `resolve-guard` refuses without it |
 | `AGENT_LIVE=1` | if real people's workflows run through it | declared in `agent.env`; the gateway messages its person at every restart, so a restart of a live agent is user-visible. agent-mgr asks `[y/N]` at a terminal before any transition and refuses non-interactively unless `AGENT_TRANSITION_ACK=1` — the explicit acknowledgement for automation that means to restart. Once admitted, container shutdown gives Hermes up to 30 seconds to checkpoint the interrupted session and release its database leases before s6 escalates |
-| `AGENT_BOOT_CONTRACT=plow-init` | if the agent's image ships the base's `plow-init`/`cont-init` boot flow (bases from plow-hermes-agent `63c8b9c` on) | declared in `agent.env`; selects `templates/compose.plow-init.yml` in place of `compose.yml` — home at `/var/lib/hermes`, a read-only mount of this agent's materialized credentials, no `command`/`entrypoint` override. `agent-mgr deploy` materializes the credentials file under the *operator's own home* (`~/.plow-credentials-<name>`) -- never beside or inside `AGENT_HOME`, so an agent repo that declares its own `.hermes` home (its checkout doubling as that home's parent) never has a live bearer token land anywhere a `git add .` could reach. A `compose.override.yml` mounting a skill or `SOUL.md` should target `${AGENT_HOME_TARGET}` (`/opt/data` today, `/var/lib/hermes` under `plow-init`), not a hardcoded path — that repo edit then needs no re-edit the moment this key does. This key is shared by every instance registered against the repo, so setting it opts them all in together, even one mid-onboarding: `deploy` still completes without credentials on an unactivated home, and `up` — not `deploy` — is what refuses to start one without them. The sequence stays `deploy`, `activate`, `up` either way |
 | a deploy hook | if it has its own deploy step | named by `AGENT_DEPLOY_HOOK`; `deploy` sequences it, so one command is the whole deploy -- except crons, which are `cron-sync`'s and run against a live gateway |
 | a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `deploy` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
 
@@ -289,10 +288,11 @@ Almost nothing needs `agent-mgr` involved at all: the gateway interpolates
 model, locale or endpoint is a line in that file and a `${VAR}` in the shared
 `config.yaml`. No fork, no second config, nothing here to change.
 
-**`AGENT_TZ` is the one exception**, and only for a mechanical reason: Compose
-sets `TZ` into the container at *render* time, so the gateway never sees it and
-cannot resolve it from the dotenv the way it resolves everything else. So
-`load_agent` reads that one key from the same file:
+**`AGENT_TZ` and `AGENT_BOOT_CONTRACT` are the two exceptions**, for different
+reasons. `AGENT_TZ`'s is mechanical: Compose sets `TZ` into the container at
+*render* time, so the gateway never sees it and cannot resolve it from the
+dotenv the way it resolves everything else. So `load_agent` reads that one key
+from the same file:
 
 ```sh
 BOB_HOME=$(agent-mgr resolve bob | sed -n 's/^AGENT_HOME=//p')
@@ -312,12 +312,26 @@ To hand a person back to the repo's zone, **delete the line** — do not blank i
 from never declaring one: it would clear the repo's zone, let the convention
 default fill in, and run that container on a third zone neither file named.
 
-`AGENT_TZ` alone, deliberately — that file holds credentials. One non-secret
-value is taken into `agent-mgr`'s process; `TZ` still reaches the container
-through `environment:`, so nothing from the dotenv goes to Compose and the
-fleet's no-credential-through-compose contract is untouched. Any other key
-there is ignored, including one `agent-mgr` owns — `AGENT_INDEX` among them,
-which the container reads for itself rather than receiving through Compose.
+`AGENT_BOOT_CONTRACT`'s reason is the opposite of mechanical: it is read from
+the instance's own dotenv and **only** from there — setting it in the repo's
+`agent.env` has no effect at all. That is deliberate, for the hazard this
+whole section opens with: a repo can be shared, and a value read from the
+shared file would flip every instance against it in one edit, with no way for
+a mid-onboarding sibling to decline. There is no repo-level fallback to blank
+away from either — absent and blank both mean "not opted in", which is
+already this key's safe default, so unlike `AGENT_TZ` there is no ceremony
+around clearing it. `agent-mgr deploy` demands real
+`PLOW_API_BASE`/`PLOW_AGENT_TOKEN` values the moment this key is set, so set
+it only after that instance's own first `deploy` and `activate` — never on a
+fresh scaffold, whose dotenv cannot have them yet.
+
+`AGENT_TZ` and `AGENT_BOOT_CONTRACT` alone, deliberately — that file holds
+credentials. These two non-secret values are taken into `agent-mgr`'s
+process; `TZ` still reaches the container through `environment:`, so nothing
+from the dotenv goes to Compose and the fleet's no-credential-through-compose
+contract is untouched. Any other key there is ignored, including one
+`agent-mgr` owns — `AGENT_INDEX` among them, which the container reads for
+itself rather than receiving through Compose.
 
 ### Usage reporting is per person
 
@@ -402,7 +416,7 @@ too, up to `089a6b1`: this fleet runs `plow-pbc/plow-hermes-agent`'s published
 base, the image `life-assistant-hermes-agent` built its cloud variant on at the
 time. From `63c8b9c` the base moved its home to `/var/lib/hermes` and put
 `plow-init` — which needs a `/var/lib/plow/credentials` file — in front of the
-gateway; an agent boots one of those bases only once its own `agent.env` sets
+gateway; an agent boots one of those bases only once its own home dotenv sets
 `AGENT_BOOT_CONTRACT=plow-init`, which is what makes this repository provide
 that file. Every other agent is still on the default `/opt/data` contract,
 under which those bases boot no gateway at all. Most of the fleet stays on

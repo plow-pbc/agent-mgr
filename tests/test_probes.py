@@ -207,18 +207,22 @@ def test_a_missing_connector_skill_is_named_rather_than_reported_per_connector(r
 
 
 @pytest.mark.parametrize(
-    "boot_contract, target",
+    "home_env, target",
     [("", "/opt/data"), ("AGENT_BOOT_CONTRACT=plow-init\n", "/var/lib/hermes")],
     ids=["legacy", "plow-init"],
 )
 def test_check_connectors_probes_the_agents_own_boot_contract_path(
-    run, instance, tmp_path, boot_contract, target
+    run, instance, tmp_path, home_env, target
 ):
     """Probing the wrong contract's path would report a missing skill that is
     actually present, and send the operator to add-skill for no reason.
     check-connectors execs (not a start verb), so no credential gate applies
     -- nothing to materialize here."""
-    run("register", "rowan", str(instance("rowan", descriptor=boot_contract)))
+    run("register", "rowan", str(instance("rowan")))
+    if home_env:
+        home = tmp_path / "home" / ".hermes-rowan"
+        home.mkdir(parents=True)
+        (home / ".env").write_text(home_env)
     r = run("check-connectors", "rowan", env=_connectors_bin(tmp_path, "rowan", target=target))
     assert r.returncode == 0, r.stderr
     assert "plow-connectors skill is not installed" not in r.stderr

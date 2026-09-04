@@ -507,9 +507,7 @@ def test_which_dotenv_lines_reach_another_agent(
     ("AGENT_IMAGE=", False),
     ("AGENT_DEPLOY_HOOK=", True),
     ("AGENT_PRE_TRANSITION=", True),
-    ("AGENT_BOOT_CONTRACT=", True),
-], ids=["a-key-that-defaults-to-a-value", "the-deploy-hook", "the-pre-transition-hook",
-        "the-boot-contract"])
+], ids=["a-key-that-defaults-to-a-value", "the-deploy-hook", "the-pre-transition-hook"])
 def test_an_empty_descriptor_value_is_refused_unless_empty_is_its_default(
     run, instance, line, accepted
 ):

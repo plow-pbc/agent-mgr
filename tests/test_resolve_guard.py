@@ -492,13 +492,13 @@ def _bin_with_running_mount(tmp_path, name, home, *, config_target, running_dest
 
 
 @pytest.mark.parametrize(
-    "descriptor, config_target, running_destination, own_source, recognized",
+    "home_env, config_target, running_destination, own_source, recognized",
     [
-        # Cutover in progress: descriptor already says plow-init, but the
+        # Cutover in progress: home dotenv already says plow-init, but the
         # container running right now was created under the old contract and
         # has not been recreated yet.
         ("AGENT_BOOT_CONTRACT=plow-init\n", "/var/lib/hermes", "/opt/data", True, True),
-        # Rollback: descriptor is back to legacy, but the container still
+        # Rollback: home dotenv is back to legacy, but the container still
         # running is the one the (aborted) plow-init cutover created.
         ("", "/opt/data", "/var/lib/hermes", True, True),
         # A known destination is not enough on its own -- the source still
@@ -510,17 +510,20 @@ def _bin_with_running_mount(tmp_path, name, home, *, config_target, running_dest
          "wrong-source-still-rejected"],
 )
 def test_the_container_guard_survives_a_descriptor_flip(
-    run, instance, tmp_path, descriptor, config_target, running_destination, own_source,
+    run, instance, tmp_path, home_env, config_target, running_destination, own_source,
     recognized,
 ):
     """require_container_ours must accept EITHER home destination a running
-    container could have been created under, so a descriptor flip -- rollback
+    container could have been created under, so a home dotenv flip -- rollback
     included -- never stops agent-mgr from recognising its own container.
     Checked through `logs`, which needs no materialized credentials and stays
     open under either contract, so only the container guard is under test."""
     home = tmp_path / "home" / ".hermes-rowan"
     source = str(home) if own_source else str(tmp_path / "home" / ".hermes-someone-else")
-    run("register", "rowan", str(instance("rowan", descriptor=descriptor)), check=True)
+    run("register", "rowan", str(instance("rowan")), check=True)
+    if home_env:
+        home.mkdir(parents=True, exist_ok=True)
+        (home / ".env").write_text(home_env)
     b = _bin_with_running_mount(
         tmp_path, "rowan", home,
         config_target=config_target, running_destination=running_destination, source=source,
@@ -540,10 +543,11 @@ def test_the_guard_refuses_a_plow_init_agent_whose_compose_still_resolves_a_comm
     reinstating the second-gateway path this whole contract exists to
     prevent. Simulated the way every other resolve_guard shape check in this
     file is: a fake docker whose `config` renders the shape under test."""
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    target="/var/lib/hermes", **kw)
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("AGENT_BOOT_CONTRACT=plow-init\n")
+    run("register", "rowan", str(instance("rowan")), check=True)
+    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes", **kw)
     r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert "compose.override.yml" in r.stderr
@@ -566,10 +570,11 @@ def test_the_guard_only_accepts_an_exact_read_only_credential_mount(
     replace command/entrypoint -- a sibling's path, a writable source, or
     dropping it entirely all leave a live token somewhere resolve_guard did
     not expect it, or hand the container write access to it."""
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    target="/var/lib/hermes", **kw)
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("AGENT_BOOT_CONTRACT=plow-init\n")
+    run("register", "rowan", str(instance("rowan")), check=True)
+    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes", **kw)
     r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert (r.returncode == 0) is allowed, r.stderr
     if not allowed:

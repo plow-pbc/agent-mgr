@@ -86,11 +86,11 @@ def test_deploy_materializes_plow_credentials_from_a_legacy_only_dotenv(run, ins
     requires -- so deploy must run that migration first. An agent whose home
     has only the legacy names must deploy successfully, not abort at
     materialization before the very next step would have fixed it."""
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    run("register", "rowan", str(instance("rowan")), check=True)
     home = tmp_path / "home" / ".hermes-rowan"
     home.mkdir(parents=True)
     (home / ".env").write_text(
+        "AGENT_BOOT_CONTRACT=plow-init\n"
         "PLOW_CHAT_TOKEN=tok_legacy\nPLOW_CHAT_BASE_URL=https://api.plow.co\n"
     )
     d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
@@ -101,27 +101,6 @@ def test_deploy_materializes_plow_credentials_from_a_legacy_only_dotenv(run, ins
     text = (home.parent / ".plow-credentials-rowan").read_text()
     assert "PLOW_AGENT_TOKEN=tok_legacy" in text
     assert "PLOW_API_BASE=https://api.plow.co" in text
-
-
-def test_deploy_of_a_never_activated_plow_init_home_completes_without_credentials(
-    run, instance, tmp_path
-):
-    """A second agent onboarded against a repo that already opted in to
-    plow-init inherits the shared descriptor before it has ever activated --
-    it cannot decline the contract, and its home starts out with no real
-    PLOW_API_BASE/PLOW_AGENT_TOKEN at all. deploy must still finish installing
-    config.yaml and skills rather than aborting on that; the start-time gate
-    in compose() is what actually refuses to boot without credentials."""
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    home = tmp_path / "home" / ".hermes-rowan"
-    d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes", running=False)
-
-    r = run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"})
-
-    assert r.returncode == 0, r.stderr
-    assert (home / "config.yaml").is_file()
-    assert not (home.parent / ".plow-credentials-rowan").exists()
 
 
 def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp_path):
@@ -145,11 +124,11 @@ def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path
     mode that overwrites. For a plow-init agent this must also refresh the
     materialized credentials file directly: unlike install-plugin and
     activate, --sync triggers no reload after it."""
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    run("register", "rowan", str(instance("rowan")), check=True)
     home = tmp_path / "home" / ".hermes-rowan"
     home.mkdir(parents=True)
     (home / ".env").write_text(
+        "AGENT_BOOT_CONTRACT=plow-init\n"
         "PLOW_API_BASE=https://api.plow.co\n"
         "PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n"
     )
