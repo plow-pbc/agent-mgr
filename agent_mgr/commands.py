@@ -11,7 +11,7 @@ from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
 from .cloud_http import HttpCloudTransport
-from .deploy import materialize_plow_credentials, publish_activation_env, reload_if_running
+from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write, read_regular_text
 from .local import compose, require_own_home, require_running, resolve_guard
@@ -114,11 +114,6 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
             file=sys.stderr,
         )
         return 0
-    if agent.plow_init:
-        # publish_activation_env just wrote a fresh PLOW_AGENT_TOKEN to the
-        # dotenv; the mounted credential file still holds the one it
-        # replaced until this re-materializes it, ahead of the reload below.
-        materialize_plow_credentials(agent, registry)
     try:
         reload_if_running(agent, registry, "the credential just written")
     except AgentMgrError:

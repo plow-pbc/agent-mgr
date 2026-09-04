@@ -582,6 +582,37 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
     assert credential_api.requests[1][2]["chat_uids"] == ["line:ln_elm"]
 
 
+def test_scope_chat_credential_rematerializes_plow_credentials_for_a_plow_init_agent(
+    run, instance, tmp_path, credential_api
+):
+    """The same staleness activate() closes: scope_chat_credential also calls
+    publish_activation_env, which can rewrite PLOW_AGENT_TOKEN (here, migrating
+    it from the legacy PLOW_CHAT_TOKEN name) and then reload -- both go through
+    reload_if_running, which is the one place this is fixed."""
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=plow_stale\n")
+    d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
+    run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"}, check=True)
+    credentials = home.parent / ".plow-credentials-rowan"
+    assert "plow_stale" in credentials.read_text(), "deploy should have materialized the old token"
+
+    (home / ".env").write_text(
+        "PLOW_CHAT_CHAT_UID=cht_home\n"
+        "PLOW_CHAT_TOKEN=plow_bootstrap\n"
+        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
+    )
+
+    r = run("scope-chat-credential", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"})
+
+    assert r.returncode == 0, r.stderr
+    text = credentials.read_text()
+    assert "PLOW_AGENT_TOKEN=plow_bootstrap" in text
+    assert "plow_stale" not in text
+
+
 def test_scope_chat_credential_finishes_an_interrupted_activation_publication(
     run, instance, tmp_path, credential_api
 ):

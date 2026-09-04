@@ -171,6 +171,12 @@ def replay_skills(agent: ResolvedAgent) -> None:
 
 def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> None:
     resolve_guard(agent, registry)
+    if agent.plow_init:
+        # Every caller reaches this right after writing something -- a
+        # config, a credential -- that might include a fresh
+        # PLOW_AGENT_TOKEN, so this is the one place to keep the mounted
+        # credential file from serving a token a reload just replaced.
+        materialize_plow_credentials(agent, registry)
     running = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
     if running.returncode:
         raise AgentMgrError(
