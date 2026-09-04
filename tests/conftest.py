@@ -264,9 +264,11 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     `inspect_target` -- for a stopped/orphaned container alongside a running
     one at a different destination.
 
-    `running_cids`: which of `all_cids` `ps --status running` reports --
-    defaults to the existing running/`exists` behaviour when unset, since
-    most tests do not need to tell a running container from a stopped one.
+    `running_cids`: which of `all_cids` count as running -- both `ps
+    --status running` and each container's own `inspect` (`.State.Running`,
+    what require_container_ours actually reads) agree with it. Defaults to
+    the existing running/`exists` behaviour when unset, since most tests do
+    not need to tell a running container from a stopped one.
     """
     import json
 
@@ -310,9 +312,14 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         svc["pull_policy"] = pull_policy
     cfg = json.dumps({"name": project, "services": {"hermes": svc}})
     seen = target if inspect_target is None else inspect_target
+
+    def _running(cid: str) -> str:
+        return "true" if (cid in running_cids if running_cids is not None else running) else "false"
+
     parts = [
         "#!/usr/bin/env bash",
-        f'case "$*" in *inspect*) echo {seen} {mount}; exit 0 ;; esac' if mount is not None else "",
+        f'case "$*" in *inspect*) echo "{seen} {mount}|{_running("deadbeef")}"; exit 0 ;; esac'
+        if mount is not None else "",
         f'printf "%s\\n" "$*" >> {log}' if log else "",
         # And one word per line beside it: the joined form cannot tell an intact
         # argv word from one the caller re-split, which is what the sh -c escape
@@ -351,10 +358,11 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # independent of `seen` -- a stopped container at a different
         # destination than the running one.
         (f'  *inspect*) case "$*" in ' + " ".join(
-            f'*{c}*) echo {v[0]} {v[1]} ;;' if isinstance(v, tuple) else f'*{c}*) echo {seen} {v} ;;'
+            f'*{c}*) echo "{v[0]} {v[1]}|{_running(c)}" ;;' if isinstance(v, tuple)
+            else f'*{c}*) echo "{seen} {v}|{_running(c)}" ;;'
             for c, v in (mounts or {}).items())
-         + f' *) echo {seen} {home} ;; esac ;;') if mounts else
-        f'  *inspect*) echo {seen} {home} ;;',
+         + f' *) echo "{seen} {home}|{"true" if running else "false"}" ;; esac ;;') if mounts else
+        f'  *inspect*) echo "{seen} {home}|{_running("deadbeef")}" ;;',
     ]
     if exec_output is not None:
         parts.append(f'  *exec*) echo {exec_output} ;;')

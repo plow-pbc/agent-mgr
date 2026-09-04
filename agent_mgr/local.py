@@ -307,13 +307,6 @@ def require_container_ours(agent: ResolvedAgent) -> str:
             ErrorCode.IO_ERROR,
             f"refusing to touch the container under {agent.project} -- docker could not say whether one exists",
         )
-    running = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
-    if running.returncode:
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR,
-            f"refusing to touch the container under {agent.project} -- docker could not say which one is running",
-        )
-    running_ids = set(running.stdout.split())
     observed = ""
     for container_id in found.stdout.split():
         inspected = subprocess.run(
@@ -324,9 +317,12 @@ def require_container_ours(agent: ResolvedAgent) -> str:
                 # Either destination, not just this agent's current one: it
                 # was created under whichever contract was selected at the
                 # time, and a flip -- rollback included -- must not hide it.
+                # Running state comes from this SAME inspect, not a separate
+                # ps call, so there is no window for the container to stop
+                # between the two and silently drop out of "observed".
                 "{{range .Mounts}}{{if or "
                 f'(eq .Destination "{HOME_MOUNT_TARGETS[0]}") (eq .Destination "{HOME_MOUNT_TARGETS[1]}")'
-                "}}{{.Destination}} {{.Source}}{{end}}{{end}}",
+                "}}{{.Destination}} {{.Source}}{{end}}{{end}}|{{.State.Running}}",
                 container_id,
             ],
             env=environment(agent),
@@ -339,12 +335,13 @@ def require_container_ours(agent: ResolvedAgent) -> str:
                 ErrorCode.IO_ERROR,
                 f"refusing to touch the container running as {agent.project} -- docker could not say whose home it mounts",
             )
-        destination, _, mounted = inspected.stdout.strip().partition(" ")
+        mount_part, _, running_part = inspected.stdout.strip().rpartition("|")
+        destination, _, mounted = mount_part.partition(" ")
         if mounted and Path(mounted).resolve() == agent.home.resolve():
             # -a includes stopped/orphaned containers (a one-off `run`, or one
             # left behind by an interrupted --force-recreate) -- only the
             # RUNNING one's destination is what "observed" means to callers.
-            if container_id in running_ids:
+            if running_part == "true":
                 observed = destination
             continue
         raise AgentMgrError(

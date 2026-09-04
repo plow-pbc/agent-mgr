@@ -512,10 +512,11 @@ def test_observed_reflects_the_running_container_not_an_orphaned_stopped_one(
 ):
     """`-a` includes stopped/orphaned containers too -- a one-off `run`, or
     one left behind by an interrupted --force-recreate, the exact failure
-    mode this window is about. The running container is listed FIRST here so
-    a fix that just kept looping and overwriting would still pass by luck;
-    it is ordered last in all_cids to prove `observed` is not whichever the
-    loop happens to visit last."""
+    mode this window is about. The running container is listed FIRST and the
+    stopped one LAST in all_cids -- a fix that just took whichever container
+    the loop happened to visit last, instead of checking each one's own
+    running state, would report the stopped one's destination here and this
+    test would fail."""
     home = home_dotenv("rowan", "")
     run("register", "rowan", str(instance("rowan")), check=True)
     b = fake_docker(
