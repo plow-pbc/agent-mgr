@@ -77,8 +77,13 @@ def environment(agent: ResolvedAgent) -> dict[str, str]:
 
 
 def compose_argv(agent: ResolvedAgent, args: Sequence[str]) -> list[str]:
-    template = "compose.plow-init.yml" if agent.plow_init else "compose.yml"
-    files = ["-f", str(ROOT / "templates" / template)]
+    overlay = "compose.plow-init.yml" if agent.plow_init else "compose.yml"
+    files = [
+        "-f",
+        str(ROOT / "templates" / "compose.base.yml"),
+        "-f",
+        str(ROOT / "templates" / overlay),
+    ]
     override = agent.repo / "compose.override.yml"
     if override.is_file():
         files.extend(["-f", str(override)])

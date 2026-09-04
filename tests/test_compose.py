@@ -2,7 +2,6 @@ import json
 import os
 import pytest
 import subprocess
-import yaml
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,7 +33,7 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None, file="co
     })
     if extra_env:
         env.update(extra_env)
-    files = ["-f", str(ROOT / "templates" / file)]
+    files = ["-f", str(ROOT / "templates" / "compose.base.yml"), "-f", str(ROOT / "templates" / file)]
     if override:
         files += ["-f", str(override)]
     with allow_real_docker():
@@ -210,37 +209,6 @@ def test_the_plow_init_shape_requires_the_credentials_variable(tmp_path):
                          extra_env={"AGENT_CREDENTIALS": ""})
     assert r.returncode != 0
     assert "AGENT_CREDENTIALS" in r.stderr
-
-
-def test_the_two_compose_shapes_do_not_drift_on_their_shared_keys():
-    """Two files, one contract: asserts the KEY SETS, not a hardcoded list of
-    keys to compare -- a hardcoded list stays green when a new key (a
-    `logging:`, a new env line) is added to one file and not the other.
-    Compares the raw (un-interpolated) YAML, so a copy-paste edit to either
-    file trips this without docker."""
-    legacy = yaml.safe_load((ROOT / "templates" / "compose.yml").read_text())
-    plow_init = yaml.safe_load((ROOT / "templates" / "compose.plow-init.yml").read_text())
-    assert legacy["name"] == plow_init["name"]
-    a, b = legacy["services"]["hermes"], plow_init["services"]["hermes"]
-
-    assert a.keys() - b.keys() == {"entrypoint", "command"}, \
-        "compose.yml has a key plow-init lacks, beyond the intentional entrypoint/command"
-    assert b.keys() - a.keys() == set(), \
-        "compose.plow-init.yml has a key compose.yml lacks -- give both a value or drop it"
-    for key in (a.keys() & b.keys()) - {"volumes", "environment"}:
-        assert a[key] == b[key], f"{key} drifted between compose.yml and compose.plow-init.yml"
-
-    def env_dict(svc):
-        return dict(item.split("=", 1) for item in svc["environment"])
-
-    shared_env, plow_init_env = env_dict(a), env_dict(b)
-    assert shared_env.keys() - plow_init_env.keys() == {"S6_SERVICES_GRACETIME"}, \
-        "compose.yml sets an env var plow-init lacks, beyond the intentional S6_SERVICES_GRACETIME"
-    assert plow_init_env.keys() - shared_env.keys() == set(), \
-        "compose.plow-init.yml sets an env var compose.yml lacks -- set both or drop it"
-    for key in shared_env.keys() & plow_init_env.keys():
-        assert shared_env[key] == plow_init_env[key], \
-            f"{key} drifted between compose.yml and compose.plow-init.yml"
 
 
 def test_agent_image_overrides_the_stack_image_under_either_boot_contract(tmp_path):

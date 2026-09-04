@@ -1,54 +1,13 @@
-# The Hermes service definition for every agent still on today's boot shape.
-#
-# An agent whose descriptor sets AGENT_BOOT_CONTRACT=plow-init renders from
-# compose.plow-init.yml instead -- a full sibling file, not merged with this
-# one -- because its base image owns its own boot chain and starting this
-# file's command/entrypoint alongside it would start a second gateway. See
-# that file for why. No agent renders from it until its own descriptor says so.
-#
-# Nothing here is agent-specific. Every value that differs is resolved by
-# agent-mgr and reaches this file from one of two places, and the difference
-# matters when several instances share one checkout:
-#
-#   the repo's agent.env      what is true of EVERY instance of that agent
-#   $AGENT_HOME/.env          what belongs to one PERSON -- AGENT_TZ here,
-#                             plus keys the container reads for itself;
-#                             the README's dotenv section is the contract
-#
-# That second path is the instance's OWN home, not `~/.hermes-<name>` by
-# spelling: an instance whose descriptor declares AGENT_HOME keeps its dotenv
-# beside that home, and agent-mgr reads whichever one it resolved.
-#
-# Putting a per-person value in agent.env gives it to every instance registered
-# against that repo, which for a timezone means somebody runs on the wrong
-# clock. An instance that needs more -- a derived image, extra mounts -- adds a
-# compose.override.yml beside its descriptor. That override is how an agent
-# inherits this file rather than reimplementing it.
-#
-# Relative paths do NOT work in an instance override: Compose resolves them
-# against THIS file's directory, not the override's. Overrides name paths
-# through a variable instead.
-name: ${AGENT_PROJECT:?set by agent-mgr from the instance descriptor}
-
+# The legacy boot shape's own additions on top of compose.base.yml (image,
+# identity, timing, no ports -- see that file), rendered together for every
+# agent still on today's contract. An agent whose descriptor sets
+# AGENT_BOOT_CONTRACT=plow-init renders compose.plow-init.yml instead --
+# a full sibling overlay, not merged with this one -- because its base image
+# owns its own boot chain and starting this file's command/entrypoint
+# alongside it would start a second gateway. See that file for why. No agent
+# renders from it until its own descriptor says so.
 services:
   hermes:
-    # Pinned by digest fleet-wide in runtime/stack.json. A tag would re-resolve
-    # on every pull, silently changing a large unreviewed surface under a
-    # running agent that holds live credentials.
-    image: ${AGENT_IMAGE:?set by agent-mgr from runtime/stack.json}
-    # Set rather than derived. Without it the project is named after whatever
-    # directory the command ran in, so a second checkout is a DIFFERENT project
-    # bound to this same home: `down` from the other directory reports success
-    # having stopped nothing.
-    container_name: ${AGENT_CONTAINER:?set by agent-mgr from the instance descriptor}
-    restart: unless-stopped
-    # Hermes interrupts in-flight work on SIGTERM, then checkpoints the session
-    # and releases any compression lease before exiting. s6-overlay otherwise
-    # gives that service only 3s before continuing shutdown; Docker then sees an
-    # unclean exit and the replacement gateway cannot append to that transcript
-    # until the orphaned lease expires. Bound cleanup at 30s, and keep Docker's
-    # outer deadline beyond it so s6 remains the owner of escalation.
-    stop_grace_period: 35s
     # Named rather than inherited. `command` below is arguments FOR the image's
     # entrypoint, not a program -- and the shared cloud image clears ENTRYPOINT
     # so its host can boot /sbin/init, which leaves `gateway` to be exec'd as a
@@ -64,28 +23,9 @@ services:
       # would own the chat.
       - ${AGENT_HOME:?set by agent-mgr from the instance descriptor}:/opt/data
     environment:
-      # Who owns everything in the agent's home. s6 remaps the in-image hermes
-      # user to these at boot and chowns the data directory, so a wrong value
-      # does not just affect new files -- it re-owns live state in place.
-      #
-      # No default, deliberately. A 501:20 fallback (the first user on macOS,
-      # and nobody on a Linux host) once rewrote a whole home from a shell that
-      # had not exported them. A wrong default is worse than no default here,
-      # because the damage is silent and to state that is not in git.
-      - HERMES_UID=${HERMES_UID:?run this through agent-mgr, which sets it}
-      - HERMES_GID=${HERMES_GID:?run this through agent-mgr, which sets it}
-      - TZ=${AGENT_TZ:?set by agent-mgr, defaulting to America/Los_Angeles}
       - S6_SERVICES_GRACETIME=30000
-      # Who this agent is in the agent index. AGENT_NAME is the registry
-      # name, which is what already distinguishes instances sharing one
-      # checkout -- so two instances of the same repo report separately
-      # instead of collapsing into one row.
-      - AGENT_ID=${AGENT_NAME:?set by agent-mgr from the instance descriptor}
       # No credentials here, deliberately, and this is the whole contract for
       # them: the gateway reads /opt/data/.env, which is the agent's own home
       # through the mount above. Passing them here would interpolate from the
       # shell, so following the documented bring-up would inject empty strings
       # that shadow the real values.
-    # No ports. The dashboard stays off: publishing it means binding 0.0.0.0
-    # inside the container, which Hermes refuses without an auth provider
-    # because it holds API keys.
