@@ -1,6 +1,41 @@
 # **Deprecated — use [`plow-pbc/plow-agents`](https://github.com/plow-pbc/plow-agents) instead.**
 ---
 
+## Where changes go
+
+This repo is one of several that assemble a Plow agent. The map of which repo
+owns what is in
+[`plow-hermes-agent` README § The repos](https://github.com/plow-pbc/plow-hermes-agent#the-repos);
+read it before a change that touches a neighbour. The test is **who else would
+have to change if this fact changed** — if the answer is a sibling, the change
+belongs there and this repo takes a pin bump.
+
+**Not here:**
+
+- The boot contract — `HERMES_HOME`, the credentials file the gateway refuses to
+  start without, the s6 ordering — belongs to
+  [`plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent). This repo
+  pins a digest and mounts a home; it does not restate those paths.
+- The seed-skill tree — which skills every agent gets and where they live —
+  belongs to [`hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat)'s
+  `seed-skills/`. `runtime/stack.json` pins that tree; it does not enumerate the
+  skills in it by name.
+- The API, the relay and the registry that pins which image tenants boot belong
+  to [`plow-pbc/plow`](https://github.com/plow-pbc/plow); the Mac side and the
+  gog grammar belong to
+  [`plow-pbc/latch`](https://github.com/plow-pbc/latch). This repo probes both
+  and reimplements neither.
+
+**Examples:**
+
+- Adherence — #133 put the fleet on the shared `plow-hermes-agent` base, ending
+  the second independent upstream-digest path this repo had been carrying:
+  https://github.com/plow-pbc/agent-mgr/pull/133
+- Violation — #142 restates the base's boot paths (`/var/lib/hermes`,
+  `/var/lib/plow/credentials.host`) in a compose template here, with nothing
+  binding the copy to the repo that owns them:
+  https://github.com/plow-pbc/agent-mgr/pull/142
+
 A CLI that stands up, on a host of your own, the same kind of agent that
 [Plow](https://plow.co) runs for its customers in the cloud: a container
 running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
