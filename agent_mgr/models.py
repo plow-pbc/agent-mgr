@@ -17,6 +17,11 @@ HOME_MOUNT_TARGETS = ("/opt/data", "/var/lib/hermes")
 # has not replaced it with a sibling's path or a writable source.
 CREDENTIALS_MOUNT_TARGET = "/var/lib/plow/credentials.host"
 
+# The two keys a materialized credential file holds. Shared so a start-time
+# guard can compare them against the agent's current home dotenv, not just
+# trust that a name-keyed file on disk still belongs to that home.
+CREDENTIAL_KEYS = ("PLOW_API_BASE", "PLOW_AGENT_TOKEN")
+
 
 @dataclass(frozen=True, slots=True)
 class RegistryEntry:

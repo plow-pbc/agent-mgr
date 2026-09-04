@@ -7,9 +7,14 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
-from .descriptor import resolve_agent
+from .descriptor import read_dotenv_values, resolve_agent
 from .errors import AgentMgrError, ErrorCode
-from .models import CREDENTIALS_MOUNT_TARGET, HOME_MOUNT_TARGETS, ResolvedAgent
+from .models import (
+    CREDENTIAL_KEYS,
+    CREDENTIALS_MOUNT_TARGET,
+    HOME_MOUNT_TARGETS,
+    ResolvedAgent,
+)
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -117,13 +122,28 @@ def require_fetch_safe(args: Sequence[str]) -> None:
 
 
 def require_plow_init_credentials(agent: ResolvedAgent) -> None:
-    if agent.plow_init and not agent.credentials.is_file():
+    if not agent.plow_init:
+        return
+    if not agent.credentials.is_file():
         # Compose does not check a bind mount's source exists, so this would
         # otherwise start with an empty directory where plow-init expects a file.
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
             f"refusing to start {agent.name}: its credentials are not materialized -- "
             f"run 'agent-mgr deploy {agent.name}' first",
+        )
+    keys = frozenset(CREDENTIAL_KEYS)
+    materialized = read_dotenv_values(agent.credentials, keys)
+    dotenv = agent.home / ".env"
+    current = read_dotenv_values(dotenv, keys) if dotenv.is_file() else {}
+    if materialized != current:
+        # The path alone does not prove the content is this home's: a name
+        # keeps its credentials file when repointed at a different home, and
+        # nothing else has re-materialized it against the new one yet.
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"refusing to start {agent.name}: its materialized credentials do not match "
+            f"its current home dotenv -- run 'agent-mgr deploy {agent.name}' to re-materialize",
         )
 
 
@@ -342,6 +362,19 @@ def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
     confirm_transition(agent)
     require_container_ours(agent)
     require_transition_allowed(agent)
+    if agent.plow_init and args:
+        if args[0] == "up" and "--force-recreate" not in args:
+            # A reused (not recreated) container can still be bound to a
+            # credential file rotation already replaced on disk -- see
+            # require_plow_init_credentials for the matching value check.
+            args = [*args, "--force-recreate"]
+        elif args[0] in {"start", "restart"}:
+            raise AgentMgrError(
+                ErrorCode.INVALID_ARGUMENT,
+                f"refusing 'compose {args[0]}' for {agent.name}: neither recreates the "
+                f"container, which can still be bound to a rotated-away credential -- "
+                f"run 'agent-mgr up {agent.name}' instead",
+            )
     return compose(agent, args).returncode
 
 

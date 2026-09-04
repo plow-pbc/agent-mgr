@@ -17,7 +17,7 @@ from .local import (
     resolve_guard,
     transition,
 )
-from .models import ResolvedAgent
+from .models import CREDENTIAL_KEYS, ResolvedAgent
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -26,9 +26,6 @@ ROOT = Path(__file__).resolve().parent.parent
 def _publish_home_file(source: Path, home: Path, name: str) -> None:
     resolved = home.resolve()
     atomic_write(resolved / name, source.read_bytes(), stage_in=resolved.parent)
-
-
-CREDENTIAL_KEYS = ("PLOW_API_BASE", "PLOW_AGENT_TOKEN")
 
 
 def materialize_plow_credentials(agent: ResolvedAgent, registry: Registry) -> Path:
