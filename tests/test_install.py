@@ -121,22 +121,9 @@ def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path
     """The recovery command activate prints must be able to finish the job.
     Idempotent mode skips set keys, so after a failed in-activate sync the
     fresh token sits only under the legacy name — `--sync` is the forwarded
-    mode that overwrites."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n")
-    r = run("migrate-plugin-env", "rowan", "--sync")
-    assert r.returncode == 0, r.stderr
-    lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_fresh" in lines
-    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
-
-
-def test_migrate_plugin_env_sync_rematerializes_plow_credentials(run, instance, tmp_path):
-    """Unlike install-plugin and activate, --sync triggers no reload after it
-    -- so the materialized credentials file must be refreshed here directly,
-    or a subsequent start still mounts the token this just replaced."""
+    mode that overwrites. For a plow-init agent this must also refresh the
+    materialized credentials file directly: unlike install-plugin and
+    activate, --sync triggers no reload after it."""
     run("register", "rowan",
         str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
     home = tmp_path / "home" / ".hermes-rowan"
@@ -153,6 +140,9 @@ def test_migrate_plugin_env_sync_rematerializes_plow_credentials(run, instance, 
     r = run("migrate-plugin-env", "rowan", "--sync", env={"PATH": f"{d}:{os.environ['PATH']}"})
 
     assert r.returncode == 0, r.stderr
+    lines = (home / ".env").read_text().splitlines()
+    assert "PLOW_AGENT_TOKEN=tok_fresh" in lines
+    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
     text = credentials.read_text()
     assert "PLOW_AGENT_TOKEN=tok_fresh" in text
     assert "tok_stale" not in text

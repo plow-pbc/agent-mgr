@@ -513,24 +513,33 @@ printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE
     }
 
 
+def _deployed_plow_init_agent(run, instance, tmp_path, name="rowan", extra_dotenv=""):
+    """A plow-init agent already through its first deploy, with a stale
+    token materialized -- the state both activate() and
+    scope_chat_credential() must refresh after rewriting it."""
+    run("register", name,
+        str(instance(name, descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    home = tmp_path / "home" / f".hermes-{name}"
+    home.mkdir(parents=True)
+    (home / ".env").write_text(
+        f"PLOW_API_BASE=https://api.plow.co\n{extra_dotenv}PLOW_AGENT_TOKEN=plow_stale\n"
+    )
+    d = fake_docker(tmp_path, home=home, name=name, target="/var/lib/hermes")
+    run("deploy", name, env={"PATH": f"{d}:{os.environ['PATH']}"}, check=True)
+    credentials = home.parent / f".plow-credentials-{name}"
+    assert "plow_stale" in credentials.read_text(), "deploy should have materialized the old token"
+    return home, d, credentials
+
+
 def test_activate_rematerializes_plow_credentials_for_a_plow_init_agent(
     run, instance, tmp_path, credential_api
 ):
     """publish_activation_env writes a fresh PLOW_AGENT_TOKEN into the home
     dotenv; the materialized credentials file plow-init actually mounts must
     not keep serving the token that reactivation just replaced."""
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    home = tmp_path / "home" / ".hermes-rowan"
-    home.mkdir(parents=True)
-    (home / ".env").write_text(
-        "PLOW_API_BASE=https://api.plow.co\n"
-        "PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n"
+    home, d, credentials = _deployed_plow_init_agent(
+        run, instance, tmp_path, extra_dotenv="PLOW_HOME_CHANNEL=cht_existing\n"
     )
-    d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
-    run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"}, check=True)
-    credentials = home.parent / ".plow-credentials-rowan"
-    assert "plow_stale" in credentials.read_text(), "deploy should have materialized the old token"
 
     installer = """#!/usr/bin/env bash
 set -euo pipefail
@@ -589,15 +598,7 @@ def test_scope_chat_credential_rematerializes_plow_credentials_for_a_plow_init_a
     publish_activation_env, which can rewrite PLOW_AGENT_TOKEN (here, migrating
     it from the legacy PLOW_CHAT_TOKEN name) and then reload -- both go through
     reload_if_running, which is the one place this is fixed."""
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    home = tmp_path / "home" / ".hermes-rowan"
-    home.mkdir(parents=True)
-    (home / ".env").write_text("PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=plow_stale\n")
-    d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
-    run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"}, check=True)
-    credentials = home.parent / ".plow-credentials-rowan"
-    assert "plow_stale" in credentials.read_text(), "deploy should have materialized the old token"
+    home, d, credentials = _deployed_plow_init_agent(run, instance, tmp_path)
 
     (home / ".env").write_text(
         "PLOW_CHAT_CHAT_UID=cht_home\n"

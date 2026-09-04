@@ -550,16 +550,17 @@ def test_the_guard_refuses_a_plow_init_agent_whose_compose_still_resolves_a_comm
 
 
 @pytest.mark.parametrize(
-    "kw",
+    "kw, allowed",
     [
-        {"credentials": "/home/other/.plow-credentials-someone-else"},
-        {"credentials": False},
-        {"credentials_ro": False},
+        ({}, True),
+        ({"credentials": "/home/other/.plow-credentials-someone-else"}, False),
+        ({"credentials": False}, False),
+        ({"credentials_ro": False}, False),
     ],
-    ids=["wrong-source", "mount-missing", "writable"],
+    ids=["exact", "wrong-source", "mount-missing", "writable"],
 )
-def test_the_guard_refuses_a_plow_init_agent_whose_credential_mount_is_not_exact(
-    run, instance, tmp_path, kw
+def test_the_guard_only_accepts_an_exact_read_only_credential_mount(
+    run, instance, tmp_path, kw, allowed
 ):
     """An override can replace the credential mount the same way it can
     replace command/entrypoint -- a sibling's path, a writable source, or
@@ -570,14 +571,6 @@ def test_the_guard_refuses_a_plow_init_agent_whose_credential_mount_is_not_exact
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
                     target="/var/lib/hermes", **kw)
     r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "does not mount" in r.stderr
-
-
-def test_the_guard_passes_a_plow_init_agent_whose_credential_mount_is_exact(run, instance, tmp_path):
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    target="/var/lib/hermes")
-    r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr
+    assert (r.returncode == 0) is allowed, r.stderr
+    if not allowed:
+        assert "does not mount" in r.stderr
