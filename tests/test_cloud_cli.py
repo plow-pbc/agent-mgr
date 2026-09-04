@@ -5,18 +5,12 @@ import json
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ROOT
+from conftest import ASSISTANT_CONTRACT, ROOT
 
 TOKEN = "test-token"
-
-
-def _contract_resources() -> list[dict[str, Any]]:
-    fixture = Path(__file__).parent / "fixtures" / "assistant-contract.json"
-    return json.loads(fixture.read_text(encoding="utf-8"))
 
 
 def _slot(resource: dict[str, Any] | None, line: dict[str, Any]) -> dict[str, Any]:
@@ -113,7 +107,7 @@ def test_cloud_commands_require_json(operation: str, args: tuple[str, ...], run)
 
 
 def test_cloud_create_reads_the_api_request_shape_from_stdin(run, cloud_server) -> None:
-    resource = _contract_resources()[1]
+    resource = ASSISTANT_CONTRACT[1]
     cloud_server.respond(resource)
     result = run(
         "--json",
@@ -135,7 +129,7 @@ def test_cloud_create_reads_the_api_request_shape_from_stdin(run, cloud_server) 
 
 
 def test_cloud_list_emits_taken_and_free_slots(run, cloud_server) -> None:
-    taken, spare = _contract_resources()[:2]
+    taken, spare = ASSISTANT_CONTRACT[:2]
     slots = [_slot(taken, taken["line"]), _slot(None, spare["line"])]
     cloud_server.respond(slots)
 
@@ -147,7 +141,7 @@ def test_cloud_list_emits_taken_and_free_slots(run, cloud_server) -> None:
 
 
 def test_cloud_get_emits_a_resource(run, cloud_server) -> None:
-    resource = _contract_resources()[0]
+    resource = ASSISTANT_CONTRACT[0]
     cloud_server.respond(resource)
 
     result = run("--json", "cloud-get", resource["uid"], env=cloud_server.environment)
@@ -158,7 +152,7 @@ def test_cloud_get_emits_a_resource(run, cloud_server) -> None:
 
 
 def test_cloud_move_puts_the_assistant_on_the_named_line(run, cloud_server) -> None:
-    resource = _contract_resources()[0]
+    resource = ASSISTANT_CONTRACT[0]
     cloud_server.respond(resource)
 
     result = run(
@@ -173,7 +167,7 @@ def test_cloud_move_puts_the_assistant_on_the_named_line(run, cloud_server) -> N
 
 
 def test_cloud_delete_emits_the_teardown_resource(run, cloud_server) -> None:
-    resource = _contract_resources()[3]
+    resource = ASSISTANT_CONTRACT[3]
     cloud_server.respond(resource)
 
     result = run("--json", "cloud-delete", resource["uid"], env=cloud_server.environment)
@@ -219,7 +213,7 @@ def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
     run, cloud_server
 ) -> None:
     payload = r'{"line_uid":"\ud800"}'
-    cloud_server.respond(_contract_resources()[1])
+    cloud_server.respond(ASSISTANT_CONTRACT[1])
     result = run(
         "--json",
         "cloud-create",
@@ -229,6 +223,20 @@ def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
 
     assert result.returncode == 1
     body = _json_document(result, "cloud-create")
+    assert body["error"]["code"] == "invalid_argument"
+    assert body["error"]["message"] == "line_uid must contain valid Unicode"
+    assert cloud_server.requests == []
+
+
+def test_cloud_move_rejects_a_line_uid_the_request_could_not_carry(run, cloud_server) -> None:
+    """argv is bytes, and a byte that is not UTF-8 survives into `sys.argv` as a
+    surrogate. Encoding the request body is where that becomes fatal, so the
+    value is refused before it gets there -- as this tool's JSON error, which is
+    the only thing a `--json` caller can read."""
+    result = run("--json", "cloud-move", "a" * 32, "\udcff", env=cloud_server.environment)
+
+    assert result.returncode == 1
+    body = _json_document(result, "cloud-move")
     assert body["error"]["code"] == "invalid_argument"
     assert body["error"]["message"] == "line_uid must contain valid Unicode"
     assert cloud_server.requests == []
@@ -253,7 +261,7 @@ def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, cloud_server
 
 
 def test_cloud_delete_marks_an_unreadable_success_as_ambiguous(run, cloud_server) -> None:
-    resource = _contract_resources()[0]
+    resource = ASSISTANT_CONTRACT[0]
     cloud_server.respond_bytes(b"not-json")
 
     result = run("--json", "cloud-delete", resource["uid"], env=cloud_server.environment)

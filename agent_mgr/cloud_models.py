@@ -64,11 +64,18 @@ def _object(
     return value
 
 
-def _nonempty_string(
+def nonempty_string(
     value: object,
     field: str,
     code: ErrorCode = ErrorCode.INVALID_ARGUMENT,
 ) -> str:
+    """The gate every string this tool sends or reads passes through.
+
+    Public because the client validates its `line_uid` argument with it: argv
+    carries whatever bytes the shell gave it, and a value the transport cannot
+    encode has to fail as this tool's JSON error rather than as an unhandled
+    `UnicodeEncodeError`.
+    """
     if isinstance(value, bool) or not isinstance(value, str) or not value:
         _error(code, f"{field} must be a non-empty string")
     try:
@@ -84,7 +91,7 @@ def _optional_string(value: object, field: str) -> str | None:
     A self-hosted assistant has no cloud runtime and no image, and an uncapped
     one has no daily cap -- all three are null rather than absent.
     """
-    return None if value is None else _nonempty_string(value, field, ErrorCode.INVALID_RESPONSE)
+    return None if value is None else nonempty_string(value, field, ErrorCode.INVALID_RESPONSE)
 
 
 def _chat_uids(value: object) -> tuple[str, ...]:
@@ -95,7 +102,7 @@ def _chat_uids(value: object) -> tuple[str, ...]:
     """
     if not isinstance(value, list):
         _error(ErrorCode.INVALID_RESPONSE, "chat_uids must be an array")
-    return tuple(_nonempty_string(item, "chat_uids", ErrorCode.INVALID_RESPONSE) for item in value)
+    return tuple(nonempty_string(item, "chat_uids", ErrorCode.INVALID_RESPONSE) for item in value)
 
 
 def _line(value: object) -> dict[str, JsonValue]:
@@ -107,7 +114,7 @@ def _line(value: object) -> dict[str, JsonValue]:
     """
     if not isinstance(value, dict):
         _error(ErrorCode.INVALID_RESPONSE, "line must be an object")
-    _nonempty_string(value.get("uid"), "line uid", ErrorCode.INVALID_RESPONSE)
+    nonempty_string(value.get("uid"), "line uid", ErrorCode.INVALID_RESPONSE)
     return dict(value)
 
 
@@ -122,11 +129,11 @@ class CreateAssistantRequest:
     @classmethod
     def from_json(cls, value: object) -> CreateAssistantRequest:
         payload = _object(value, {"name", "provider", "line_uid"}, {"line_uid"})
-        name = _nonempty_string(payload["name"], "name") if "name" in payload else "cloud agent"
+        name = nonempty_string(payload["name"], "name") if "name" in payload else "cloud agent"
         provider_value = payload.get("provider")
-        provider = None if provider_value is None else _nonempty_string(provider_value, "provider")
+        provider = None if provider_value is None else nonempty_string(provider_value, "provider")
         return cls(
-            line_uid=_nonempty_string(payload["line_uid"], "line_uid"),
+            line_uid=nonempty_string(payload["line_uid"], "line_uid"),
             name=name,
             provider=provider,
         )
@@ -188,12 +195,12 @@ class AssistantResource:
             _error(ErrorCode.INVALID_RESPONSE, "only failed assistants may have a failure_code")
 
         return cls(
-            uid=_nonempty_string(payload["uid"], "uid", ErrorCode.INVALID_RESPONSE),
+            uid=nonempty_string(payload["uid"], "uid", ErrorCode.INVALID_RESPONSE),
             line=_line(payload["line"]),
             chat_uids=_chat_uids(payload["chat_uids"]),
             url=_optional_string(payload["url"], "url"),
             image=_optional_string(payload["image"], "image"),
-            provider=_nonempty_string(payload["provider"], "provider", ErrorCode.INVALID_RESPONSE),
+            provider=nonempty_string(payload["provider"], "provider", ErrorCode.INVALID_RESPONSE),
             status=status,
             failure_code=failure_code,
             daily_payment_cap_usd=_optional_string(

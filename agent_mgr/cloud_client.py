@@ -4,7 +4,12 @@ import re
 from dataclasses import dataclass
 
 from agent_mgr.cloud_http import CloudTransport
-from agent_mgr.cloud_models import AssistantResource, AssistantSlot, CreateAssistantRequest
+from agent_mgr.cloud_models import (
+    AssistantResource,
+    AssistantSlot,
+    CreateAssistantRequest,
+    nonempty_string,
+)
 from agent_mgr.errors import AgentMgrError, ErrorCode
 
 CLOUD_PATH = "/v1/assistants"
@@ -37,7 +42,9 @@ class CloudClient:
     def move(self, uid: str, line_uid: str) -> AssistantResource:
         """Put the assistant on another line. Its anchor chats follow the move."""
         path = f"{CLOUD_PATH}/{_assistant_uid(uid)}/line"
-        value = self.transport.request("PUT", path, {"line_uid": line_uid})
+        value = self.transport.request(
+            "PUT", path, {"line_uid": nonempty_string(line_uid, "line_uid")}
+        )
         return AssistantResource.from_json(value)
 
     def delete(self, uid: str) -> AssistantResource:
