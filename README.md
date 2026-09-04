@@ -23,7 +23,8 @@ belongs there; this repo only follows, by bumping its pin if it holds one.
 - The API, the relay and the cloud registry are
   [`plow-pbc/plow`](https://github.com/plow-pbc/plow)'s; the Mac side and the
   gog grammar are [`plow-pbc/latch`](https://github.com/plow-pbc/latch)'s. This
-  repo probes both and reimplements neither.
+  repo is a client of both — it drives plow's cloud registry through
+  `CloudClient` and probes Latch and the connectors — and reimplements neither.
 
 **Examples:**
 
