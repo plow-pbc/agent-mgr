@@ -1,6 +1,41 @@
 # **Deprecated — use [`plow-pbc/plow-agents`](https://github.com/plow-pbc/plow-agents) instead.**
 ---
 
+## Where changes go
+
+This repo is one of several that assemble a Plow agent. The map of which repo
+owns what is in
+[`plow-hermes-agent` README § The repos](https://github.com/plow-pbc/plow-hermes-agent#the-repos);
+read it before a change that touches a neighbour. The test is **who else would
+have to change if this fact changed** — if the answer is a sibling, the change
+belongs there; this repo only follows, by bumping its pin if it holds one.
+
+**Not here:**
+
+- The boot contract — `HERMES_HOME`, the credentials file, the s6 ordering —
+  is [`plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent)'s.
+  This repo pins its digest and mounts a home; where it has to name one of
+  those paths (the compose template), that copy follows the base, never leads.
+- The seed skills' contents are
+  [`hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat)'s.
+  `runtime/stack.json` selects which of them the fleet installs, by key and
+  SHA, so adding or dropping a fleet skill is a change in both repos.
+- The API, the relay and the cloud registry are
+  [`plow-pbc/plow`](https://github.com/plow-pbc/plow)'s; the Mac side and the
+  gog grammar are [`plow-pbc/latch`](https://github.com/plow-pbc/latch)'s. This
+  repo is a client of both — it drives plow's cloud registry through
+  `CloudClient` and probes Latch and the connectors — and reimplements neither.
+
+**Examples:**
+
+- Adherence — #133 put the fleet on the shared `plow-hermes-agent` base, ending
+  the second independent upstream-digest path this repo had been carrying:
+  https://github.com/plow-pbc/agent-mgr/pull/133
+- Drift — #142 restates the base's boot paths (`/var/lib/hermes`,
+  `/var/lib/plow/credentials.host`) in a compose template here; the copy is
+  unavoidable, but nothing yet binds it to the repo that owns them:
+  https://github.com/plow-pbc/agent-mgr/pull/142
+
 A CLI that stands up, on a host of your own, the same kind of agent that
 [Plow](https://plow.co) runs for its customers in the cloud: a container
 running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
