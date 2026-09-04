@@ -296,13 +296,18 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
             )
 
 
-def require_container_ours(agent: ResolvedAgent) -> None:
+def require_container_ours(agent: ResolvedAgent) -> str:
+    """Returns the home-mount destination the existing/running container was
+    actually created under (one of HOME_MOUNT_TARGETS), or "" if there is no
+    container yet -- for callers that must not trust agent.home_mount_target
+    alone while a descriptor flip and the container's own recreation disagree."""
     found = compose(agent, ["ps", "-a", "--quiet", "hermes"], capture=True)
     if found.returncode:
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
             f"refusing to touch the container under {agent.project} -- docker could not say whether one exists",
         )
+    observed = ""
     for container_id in found.stdout.split():
         inspected = subprocess.run(
             [
@@ -314,7 +319,7 @@ def require_container_ours(agent: ResolvedAgent) -> None:
                 # time, and a flip -- rollback included -- must not hide it.
                 "{{range .Mounts}}{{if or "
                 f'(eq .Destination "{HOME_MOUNT_TARGETS[0]}") (eq .Destination "{HOME_MOUNT_TARGETS[1]}")'
-                "}}{{.Source}}{{end}}{{end}}",
+                "}}{{.Destination}} {{.Source}}{{end}}{{end}}",
                 container_id,
             ],
             env=environment(agent),
@@ -322,13 +327,14 @@ def require_container_ours(agent: ResolvedAgent) -> None:
             capture_output=True,
             check=False,
         )
-        mounted = inspected.stdout.strip()
         if inspected.returncode:
             raise AgentMgrError(
                 ErrorCode.IO_ERROR,
                 f"refusing to touch the container running as {agent.project} -- docker could not say whose home it mounts",
             )
+        destination, _, mounted = inspected.stdout.strip().partition(" ")
         if mounted and Path(mounted).resolve() == agent.home.resolve():
+            observed = destination
             continue
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
@@ -337,6 +343,7 @@ def require_container_ours(agent: ResolvedAgent) -> None:
             f"this descriptor may need its own name, or 'agent-mgr unregister {agent.name}'. "
             f"Check ownership first: docker inspect {container_id}",
         )
+    return observed
 
 
 def confirm_transition(agent: ResolvedAgent) -> None:
@@ -365,21 +372,28 @@ def confirm_transition(agent: ResolvedAgent) -> None:
 
 def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
     confirm_transition(agent)
-    require_container_ours(agent)
+    observed = require_container_ours(agent)
     require_transition_allowed(agent)
-    if agent.plow_init and args:
-        if args[0] == "up" and "--force-recreate" not in args:
-            # A reused (not recreated) container can still be bound to a
-            # credential file rotation already replaced on disk -- see
-            # require_plow_init_credentials for the matching value check.
-            args = [*args, "--force-recreate"]
-        elif args[0] in {"start", "restart", "unpause"}:
-            raise AgentMgrError(
-                ErrorCode.INVALID_ARGUMENT,
-                f"refusing 'compose {args[0]}' for {agent.name}: neither recreates the "
-                f"container, which can still be bound to a rotated-away credential -- "
-                f"run 'agent-mgr up {agent.name}' instead",
-            )
+    if agent.plow_init and args and args[0] == "up" and "--force-recreate" not in args:
+        # A reused (not recreated) container can still be bound to a
+        # credential file rotation already replaced on disk -- see
+        # require_plow_init_credentials for the matching value check.
+        args = [*args, "--force-recreate"]
+    if (
+        args
+        and args[0] in {"start", "restart", "unpause"}
+        and (agent.plow_init or observed == HOME_MOUNT_TARGETS[1])
+    ):
+        # observed, not just agent.plow_init: after a rollback the descriptor
+        # can already read legacy while the still-running container is the
+        # plow-init one a rotation could have moved past -- see
+        # require_container_ours, whose return value is what closes that gap.
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"refusing 'compose {args[0]}' for {agent.name}: neither recreates the "
+            f"container, which can still be bound to a rotated-away credential -- "
+            f"run 'agent-mgr up {agent.name}' instead",
+        )
     return compose(agent, args).returncode
 
 
@@ -404,7 +418,9 @@ def require_transition_allowed(agent: ResolvedAgent) -> None:
         )
 
 
-def require_running(agent: ResolvedAgent, registry: Registry) -> None:
+def require_running(
+    agent: ResolvedAgent, registry: Registry, *, path_sensitive: bool = False
+) -> None:
     resolve_guard(agent, registry)
     result = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
     if result.returncode:
@@ -416,4 +432,16 @@ def require_running(agent: ResolvedAgent, registry: Registry) -> None:
             ErrorCode.INVALID_ARGUMENT,
             f"{agent.name}'s gateway is not running -- start it first: agent-mgr up {agent.name}",
         )
-    require_container_ours(agent)
+    observed = require_container_ours(agent)
+    if path_sensitive and observed and observed != agent.home_mount_target:
+        # A descriptor flip and the container's own recreation can disagree
+        # in the window before the next up --force-recreate: a caller that
+        # builds a path from agent.home_mount_target (cron-sync's exec HOME,
+        # check-connectors' skill path) would target a location the running
+        # container never mounted, in either direction.
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"refusing to act: the running container mounts {observed}, not {agent.name}'s "
+            f"currently resolved {agent.home_mount_target} -- recreate it first: "
+            f"agent-mgr up {agent.name}",
+        )

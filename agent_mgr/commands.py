@@ -53,7 +53,7 @@ def cron_sync(agent: ResolvedAgent, registry: Registry) -> int:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"AGENT_CRON_SPEC names {agent.cron_spec}, which does not exist"
         )
-    require_running(agent, registry)
+    require_running(agent, registry, path_sensitive=True)
     return compose(
         agent,
         [
@@ -559,7 +559,7 @@ def set_home(agent: ResolvedAgent, registry: Registry, uid: str) -> int:
 
 
 def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
-    require_running(agent, registry)
+    require_running(agent, registry, path_sensitive=True)
     uid = f"{os.getuid()}:{os.getgid()}"
     connector_script = (
         f"{agent.home_mount_target}/skills/productivity/plow-connectors/plow_connector.py"
