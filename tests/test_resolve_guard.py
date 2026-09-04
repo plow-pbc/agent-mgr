@@ -507,6 +507,31 @@ def test_the_container_guard_survives_a_descriptor_flip(
     assert (r.returncode == 0) is recognized, r.stderr
 
 
+def test_observed_reflects_the_running_container_not_an_orphaned_stopped_one(
+    run, instance, tmp_path, home_dotenv
+):
+    """`-a` includes stopped/orphaned containers too -- a one-off `run`, or
+    one left behind by an interrupted --force-recreate, the exact failure
+    mode this window is about. The running container is listed FIRST here so
+    a fix that just kept looping and overwriting would still pass by luck;
+    it is ordered last in all_cids to prove `observed` is not whichever the
+    loop happens to visit last."""
+    home = home_dotenv("rowan", "")
+    run("register", "rowan", str(instance("rowan")), check=True)
+    b = fake_docker(
+        tmp_path, home=home, name="rowan", target="/opt/data",
+        all_cids=("running-plow-init", "stopped-legacy"),
+        running_cids=("running-plow-init",),
+        mounts={
+            "running-plow-init": ("/var/lib/hermes", str(home)),
+            "stopped-legacy": ("/opt/data", str(home)),
+        },
+    )
+    r = run("compose", "rowan", "restart", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "run 'agent-mgr up rowan' instead" in r.stderr
+
+
 @pytest.mark.parametrize("kw", [{"command": ["gateway", "run"]}, {"entrypoint": ["gateway"]}],
                          ids=["command", "entrypoint"])
 def test_the_guard_refuses_a_plow_init_agent_whose_compose_still_resolves_a_command(

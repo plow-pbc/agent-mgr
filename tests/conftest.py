@@ -238,9 +238,9 @@ def home_dotenv(tmp_path):
 
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
-                exists=None, all_cids=(), mounts=None, image=None, build=False,
-                pull_policy=None, target="/opt/data", inspect_target=None, command=None,
-                entrypoint=None, credentials=None, credentials_ro=True):
+                exists=None, all_cids=(), running_cids=None, mounts=None, image=None,
+                build=False, pull_policy=None, target="/opt/data", inspect_target=None,
+                command=None, entrypoint=None, credentials=None, credentials_ro=True):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -259,6 +259,14 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     container actually mounted -- defaults to `target`, the one `config`
     would render fresh. Set it differently to simulate the window between a
     descriptor flip and the container's own recreation, in either direction.
+    A `mounts` value may be `(destination, source)` instead of a bare source
+    to give one specific container_id its own destination, independent of
+    `inspect_target` -- for a stopped/orphaned container alongside a running
+    one at a different destination.
+
+    `running_cids`: which of `all_cids` `ps --status running` reports --
+    defaults to the existing running/`exists` behaviour when unset, since
+    most tests do not need to tell a running container from a stopped one.
     """
     import json
 
@@ -329,12 +337,22 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # They differ for a stopped container, which is the case the identity
         # seam was blind to, so a test can now set them independently.
         f'  *"ps -a --quiet"*) {"printf '%s\\n' " + " ".join(all_cids) if all_cids else ("echo deadbeef" if (running if exists is None else exists) else ":")} ;;',
-        f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',
+        f'  *"ps --status running --quiet"*) '
+        + (
+            ("printf '%s\\n' " + " ".join(running_cids) if running_cids else ":")
+            if running_cids is not None
+            else ("echo deadbeef" if running else ":")
+        )
+        + " ;;",
         # Destination then source, space-separated -- real docker's own
         # format template now asks for both, so require_container_ours can
-        # report which of the two a running container actually mounts.
+        # report which of the two a running container actually mounts. A
+        # tuple value gives that one container_id its own destination too,
+        # independent of `seen` -- a stopped container at a different
+        # destination than the running one.
         (f'  *inspect*) case "$*" in ' + " ".join(
-            f'*{c}*) echo {seen} {m} ;;' for c, m in (mounts or {}).items())
+            f'*{c}*) echo {v[0]} {v[1]} ;;' if isinstance(v, tuple) else f'*{c}*) echo {seen} {v} ;;'
+            for c, v in (mounts or {}).items())
          + f' *) echo {seen} {home} ;; esac ;;') if mounts else
         f'  *inspect*) echo {seen} {home} ;;',
     ]

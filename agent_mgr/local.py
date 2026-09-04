@@ -297,16 +297,23 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
 
 
 def require_container_ours(agent: ResolvedAgent) -> str:
-    """Returns the home-mount destination the existing/running container was
-    actually created under (one of HOME_MOUNT_TARGETS), or "" if there is no
-    container yet -- for callers that must not trust agent.home_mount_target
-    alone while a descriptor flip and the container's own recreation disagree."""
+    """Returns the home-mount destination the RUNNING container was actually
+    created under (one of HOME_MOUNT_TARGETS), or "" if none is running --
+    for callers that must not trust agent.home_mount_target alone while a
+    descriptor flip and the container's own recreation disagree."""
     found = compose(agent, ["ps", "-a", "--quiet", "hermes"], capture=True)
     if found.returncode:
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
             f"refusing to touch the container under {agent.project} -- docker could not say whether one exists",
         )
+    running = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
+    if running.returncode:
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"refusing to touch the container under {agent.project} -- docker could not say which one is running",
+        )
+    running_ids = set(running.stdout.split())
     observed = ""
     for container_id in found.stdout.split():
         inspected = subprocess.run(
@@ -334,7 +341,11 @@ def require_container_ours(agent: ResolvedAgent) -> str:
             )
         destination, _, mounted = inspected.stdout.strip().partition(" ")
         if mounted and Path(mounted).resolve() == agent.home.resolve():
-            observed = destination
+            # -a includes stopped/orphaned containers (a one-off `run`, or one
+            # left behind by an interrupted --force-recreate) -- only the
+            # RUNNING one's destination is what "observed" means to callers.
+            if container_id in running_ids:
+                observed = destination
             continue
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
