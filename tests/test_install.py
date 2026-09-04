@@ -1,7 +1,7 @@
 import os
 import pytest
 
-from conftest import install_fake_gh
+from conftest import fake_docker, install_fake_gh
 import stat
 from pathlib import Path
 
@@ -108,6 +108,31 @@ def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path
     lines = env.read_text().splitlines()
     assert "PLOW_AGENT_TOKEN=tok_fresh" in lines
     assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
+
+
+def test_migrate_plugin_env_sync_rematerializes_plow_credentials(run, instance, tmp_path):
+    """Unlike install-plugin and activate, --sync triggers no reload after it
+    -- so the materialized credentials file must be refreshed here directly,
+    or a subsequent start still mounts the token this just replaced."""
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True)
+    (home / ".env").write_text(
+        "PLOW_API_BASE=https://api.plow.co\n"
+        "PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n"
+    )
+    d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
+    run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"}, check=True)
+    credentials = home.parent / ".plow-credentials-rowan"
+    assert "tok_stale" in credentials.read_text(), "deploy should have materialized the old token"
+
+    r = run("migrate-plugin-env", "rowan", "--sync", env={"PATH": f"{d}:{os.environ['PATH']}"})
+
+    assert r.returncode == 0, r.stderr
+    text = credentials.read_text()
+    assert "PLOW_AGENT_TOKEN=tok_fresh" in text
+    assert "tok_stale" not in text
 
 
 def test_migrate_plugin_env_rejects_an_unknown_mode(run, instance, tmp_path):

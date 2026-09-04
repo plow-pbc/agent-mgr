@@ -32,9 +32,9 @@ CREDENTIAL_KEYS = ("PLOW_API_BASE", "PLOW_AGENT_TOKEN")
 
 
 def materialize_plow_credentials(agent: ResolvedAgent, registry: Registry) -> Path:
-    """Write agent.credentials from this agent's own home dotenv -- beside
-    the home, never inside it. The base's root cont-init step promotes it to
-    root:root before plow-init reads it, so nothing here runs privileged."""
+    """Write agent.credentials (under the operator's own home, never inside
+    the agent's) from this agent's own home dotenv. The base's root
+    cont-init step promotes it to root:root, so nothing here runs privileged."""
     require_own_home(agent, registry)
     dotenv = agent.home / ".env"
     if not dotenv.is_file():
@@ -172,10 +172,9 @@ def replay_skills(agent: ResolvedAgent) -> None:
 def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> None:
     resolve_guard(agent, registry)
     if agent.plow_init:
-        # Every caller reaches this right after writing something -- a
-        # config, a credential -- that might include a fresh
-        # PLOW_AGENT_TOKEN, so this is the one place to keep the mounted
-        # credential file from serving a token a reload just replaced.
+        # Every caller reaches this right after writing something that might
+        # include a fresh PLOW_AGENT_TOKEN, so this is the one place to keep
+        # the mounted credential file from serving a token a reload replaced.
         materialize_plow_credentials(agent, registry)
     running = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
     if running.returncode:

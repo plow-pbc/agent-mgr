@@ -9,7 +9,7 @@ from pathlib import Path
 
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
-from .models import HOME_MOUNT_TARGETS, ResolvedAgent
+from .models import CREDENTIALS_MOUNT_TARGET, HOME_MOUNT_TARGETS, ResolvedAgent
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -116,10 +116,23 @@ def require_fetch_safe(args: Sequence[str]) -> None:
         )
 
 
+def require_plow_init_credentials(agent: ResolvedAgent) -> None:
+    if agent.plow_init and not agent.credentials.is_file():
+        # Compose does not check a bind mount's source exists, so this would
+        # otherwise start with an empty directory where plow-init expects a file.
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"refusing to start {agent.name}: its credentials are not materialized -- "
+            f"run 'agent-mgr deploy {agent.name}' first",
+        )
+
+
 def compose(
     agent: ResolvedAgent, args: Sequence[str], *, capture: bool = False, stdin: str | None = None
 ) -> subprocess.CompletedProcess[str]:
     require_fetch_safe(args)
+    if args and args[0] in STARTS_CONTAINER:
+        require_plow_init_credentials(agent)
     return subprocess.run(
         compose_argv(agent, args),
         env=environment(agent),
@@ -195,6 +208,9 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         pull_policy = service.get("pull_policy")
         command = service.get("command")
         entrypoint = service.get("entrypoint")
+        credential_mount = next(
+            (item for item in volumes if item.get("target") == CREDENTIALS_MOUNT_TARGET), None
+        )
     except (KeyError, TypeError, json.JSONDecodeError) as exc:
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
@@ -230,16 +246,29 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to act: compose resolved image '{image}' for {agent.name}, which is neither a digest nor built here",
         )
-    if agent.plow_init and (command is not None or entrypoint is not None):
-        # Neither key exists in compose.plow-init.yml, so the only source is
-        # an override merged after it -- reinstating the second-gateway path
-        # this whole contract exists to prevent.
-        raise AgentMgrError(
-            ErrorCode.INVALID_DESCRIPTOR,
-            f"refusing to act: {agent.name}'s compose resolves a command or entrypoint under "
-            "plow-init -- remove it from compose.override.yml, or the image's own boot chain "
-            "starts a second gateway alongside the supervised one",
-        )
+    if agent.plow_init:
+        if command is not None or entrypoint is not None:
+            # Neither key exists in compose.plow-init.yml, so the only source
+            # is an override merged after it -- reinstating the second-gateway
+            # path this whole contract exists to prevent.
+            raise AgentMgrError(
+                ErrorCode.INVALID_DESCRIPTOR,
+                f"refusing to act: {agent.name}'s compose resolves a command or entrypoint under "
+                "plow-init -- remove it from compose.override.yml, or the image's own boot chain "
+                "starts a second gateway alongside the supervised one",
+            )
+        expected_credentials = str(agent.credentials)
+        if (
+            credential_mount is None
+            or credential_mount.get("source") != expected_credentials
+            or credential_mount.get("read_only") is not True
+        ):
+            raise AgentMgrError(
+                ErrorCode.INVALID_DESCRIPTOR,
+                f"refusing to act: {agent.name}'s compose does not mount {expected_credentials} "
+                f"read-only at {CREDENTIALS_MOUNT_TARGET} -- an override may have replaced it "
+                "with a sibling's path or a writable source",
+            )
 
 
 def require_container_ours(agent: ResolvedAgent) -> None:
@@ -255,10 +284,9 @@ def require_container_ours(agent: ResolvedAgent) -> None:
                 "docker",
                 "inspect",
                 "--format",
-                # Either destination, not just this agent's CURRENT one: a
-                # running container was created under whichever contract was
-                # selected at the time, and a descriptor flip -- rollback
-                # included -- must not stop this from recognising it as ours.
+                # Either destination, not just this agent's current one: it
+                # was created under whichever contract was selected at the
+                # time, and a flip -- rollback included -- must not hide it.
                 "{{range .Mounts}}{{if or "
                 f'(eq .Destination "{HOME_MOUNT_TARGETS[0]}") (eq .Destination "{HOME_MOUNT_TARGETS[1]}")'
                 "}}{{.Source}}{{end}}{{end}}",
@@ -310,23 +338,10 @@ def confirm_transition(agent: ResolvedAgent) -> None:
     )
 
 
-def require_plow_init_credentials(agent: ResolvedAgent) -> None:
-    if agent.plow_init and not agent.credentials.is_file():
-        # Compose does not check a bind mount's source exists, so this would
-        # otherwise start with an empty directory where plow-init expects a file.
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR,
-            f"refusing to start {agent.name}: its credentials are not materialized -- "
-            f"run 'agent-mgr deploy {agent.name}' first",
-        )
-
-
 def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
     confirm_transition(agent)
     require_container_ours(agent)
     require_transition_allowed(agent)
-    if args and args[0] in STARTS_CONTAINER:
-        require_plow_init_credentials(agent)
     return compose(agent, args).returncode
 
 

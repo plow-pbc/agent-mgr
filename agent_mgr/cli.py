@@ -29,6 +29,7 @@ from .deploy import (
     deploy,
     install_fleet_skills,
     install_plugin,
+    materialize_plow_credentials,
     migrate_plugin_env,
     reload_if_running,
 )
@@ -37,12 +38,10 @@ from .errors import AgentMgrError, ErrorCode
 from .local import (
     LEAVES_RUNNING,
     NO_IDENTIFICATION,
-    STARTS_CONTAINER,
     compose,
     require_container_ours,
     require_fetch_safe,
     require_own_home,
-    require_plow_init_credentials,
     require_running,
     resolve_guard,
     transition,
@@ -307,6 +306,11 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 )
             require_own_home(agent, registry)
             migrate_plugin_env(agent, len(args) == 2)
+            if agent.plow_init:
+                # This is the one path that can rewrite PLOW_AGENT_TOKEN
+                # without a reload after it -- install-plugin and activate
+                # both trigger one, which already covers this.
+                materialize_plow_credentials(agent, registry)
         else:
             _need(args, 1, f"agent-mgr {operation} <name>")
             resolve_guard(agent, registry)
@@ -441,8 +445,6 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         if command[0] in LEAVES_RUNNING:
             if command[0] not in NO_IDENTIFICATION:
                 require_container_ours(agent)
-            if command[0] in STARTS_CONTAINER:
-                require_plow_init_credentials(agent)
             return compose(agent, command).returncode
         return transition(agent, command)
     if operation in {"-h", "--help", "help"}:

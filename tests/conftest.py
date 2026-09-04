@@ -221,7 +221,8 @@ def instance(tmp_path):
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
                 exists=None, all_cids=(), mounts=None, image=None, build=False,
-                pull_policy=None, target="/opt/data", command=None, entrypoint=None):
+                pull_policy=None, target="/opt/data", command=None, entrypoint=None,
+                credentials=None, credentials_ro=True):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -230,13 +231,30 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
 
     `log` records argv when given, so a test can assert on what actually ran
     rather than on what the source says.
+
+    `credentials`: for a plow-init `target`, the credential mount's source
+    defaults to the one resolve_guard expects (agent.credentials); pass a
+    different path to simulate an override that replaced it, or `False` to
+    omit the mount entirely. Ignored for the legacy target, which has none.
     """
     import json
+
+    from agent_mgr.models import CREDENTIALS_MOUNT_TARGET
 
     b = tmp_path / "bin"
     b.mkdir(exist_ok=True)
     container = container.replace("<name>", name)
     project = project.replace("<name>", name)
+    volumes = [{"target": target, "source": str(home)}]
+    if target != "/opt/data" and credentials is not False:
+        credential_mount = {
+            "target": CREDENTIALS_MOUNT_TARGET,
+            "source": str(credentials) if credentials is not None
+            else str(home.parent / f".plow-credentials-{name}"),
+        }
+        if credentials_ro:
+            credential_mount["read_only"] = True
+        volumes.append(credential_mount)
     svc = {
         "container_name": container,
         # resolve_guard checks this against the registry name: the override
@@ -244,7 +262,7 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # attributes usage to a sibling. A fake that omits it would leave that
         # guard asserting nothing.
         "environment": {"AGENT_ID": name},
-        "volumes": [{"target": target, "source": str(home)}],
+        "volumes": volumes,
     }
     if command is not None:
         svc["command"] = command

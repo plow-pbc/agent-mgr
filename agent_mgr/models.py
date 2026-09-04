@@ -7,11 +7,15 @@ from typing import TypeAlias
 JsonScalar: TypeAlias = str | int | float | bool | None
 JsonValue: TypeAlias = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
 
-# Every home mount target either boot contract has ever used. A running
-# container was created under whichever one was current at the time, so a
-# check that must still recognise it after a descriptor flip (rollback
-# included) has to accept either, not just the currently-selected one.
+# Every home mount target either boot contract has used. A running
+# container was created under whichever was current at the time, so a
+# check surviving a descriptor flip (rollback included) needs both.
 HOME_MOUNT_TARGETS = ("/opt/data", "/var/lib/hermes")
+
+# Where compose.plow-init.yml mounts the credential file -- fixed by that
+# template, not derived per agent, so resolve_guard can check an override
+# has not replaced it with a sibling's path or a writable source.
+CREDENTIALS_MOUNT_TARGET = "/var/lib/plow/credentials.host"
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,10 +59,10 @@ class ResolvedAgent:
 
     @property
     def credentials(self) -> Path:
-        """Where the plow-init credential file lands: beside the home, never
-        under it, so the agent's own filesystem tools cannot read it. The
-        base's root cont-init step promotes it to root:root from here."""
-        return self.home.parent / f".plow-credentials-{self.name}"
+        """Fixed under the operator's own home, not beside self.home -- a
+        repo-declared AGENT_HOME's checkout is what "beside" would resolve
+        to, and a routine `git add .` there would stage a live token."""
+        return Path.home() / f".plow-credentials-{self.name}"
 
     def to_json(self) -> dict[str, JsonValue]:
         return {

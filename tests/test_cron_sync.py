@@ -195,6 +195,21 @@ def test_foreign_jobs_are_invisible():
         == [("ok", row())]
 
 
+def test_jobs_file_is_home_relative_not_hardcoded_to_a_boot_contract(tmp_path, monkeypatch):
+    """A plow-init agent's HOME is /var/lib/hermes, not /opt/data. Hardcoded,
+    cron-sync would read that path as absent -- FileNotFoundError means
+    'nothing registered' -- and recreate every existing job a second time.
+    agent-mgr's own cron_sync() already sets HOME to match; this proves the
+    converger actually follows it, by re-importing with HOME controlled."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    spec = importlib.util.spec_from_file_location(
+        "cron_sync_home_check", ROOT / "lib" / "cron-sync.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.JOBS_FILE == str(tmp_path / "cron" / "jobs.json")
+
+
 def test_create_argv_shapes():
     p = cron_sync.create_argv(row(skills=["ld-weather"]))
     assert p == [cron_sync.HERMES, "cron", "create", "0 6 * * *", "do it",

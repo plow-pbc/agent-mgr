@@ -4,6 +4,7 @@ new shape until its own descriptor sets this -- these tests are the proof
 that setting it, and only setting it, is what moves the needle.
 """
 import os
+from pathlib import Path
 
 import pytest
 from conftest import ROOT, fake_docker
@@ -31,11 +32,31 @@ def test_the_boot_contract_selects_the_home_target_and_credentials_path(
     assert agent.plow_init is plow_init
     assert agent.home_mount_target == target
     assert agent.boot_contract == ("plow-init" if plow_init else "")
-    assert agent.credentials == agent.home.parent / ".plow-credentials-rowan"
+    assert agent.credentials == Path.home() / ".plow-credentials-rowan"
     assert not agent.credentials.is_relative_to(agent.home)
     # An agent repo's own compose.override.yml mounts a skill or SOUL.md
     # against this, not a hardcoded path, so it survives a contract change.
     assert agent.environment()["AGENT_HOME_TARGET"] == target
+
+
+def test_credentials_land_outside_a_repo_declared_home_not_beside_it(
+    run, instance, registry, tmp_path, monkeypatch
+):
+    """AGENT_HOME=<repo>/.hermes is supported, and for such an agent 'beside
+    the home' is the repo's own checkout root -- exactly where deploy() would
+    write a live bearer token for a routine `git add .` to stage. credentials
+    must sit under the operator's real home regardless of where AGENT_HOME
+    points."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    repo_hermes = tmp_path / "rowan-repo" / ".hermes"
+    repo = instance(
+        "rowan", descriptor=f"AGENT_HOME={repo_hermes}\nAGENT_BOOT_CONTRACT=plow-init\n"
+    )
+    run("register", "rowan", str(repo), check=True)
+    agent = resolve_agent("rowan", Registry(registry), ROOT)
+    assert agent.home == repo_hermes
+    assert agent.credentials == Path.home() / ".plow-credentials-rowan"
+    assert not agent.credentials.is_relative_to(repo)
 
 
 def test_a_typo_in_the_boot_contract_is_refused_not_silently_kept_on_todays_shape(run, instance):
@@ -57,75 +78,44 @@ def test_scrub_covers_every_key_environment_exports(run, instance, registry, tmp
     assert set(agent.environment()) <= SCRUB
 
 
-def test_up_refuses_a_plow_init_agent_with_no_credentials_file(run, instance, tmp_path):
-    """Compose does not check that a bind mount's source exists -- without
-    this, `up` would bind-mount an empty directory at AGENT_CREDENTIALS and
-    hand plow-init a directory instead of a file, 60 seconds into boot. The
-    refusal names the fix: 'agent-mgr deploy' now materializes credentials
-    for a plow-init agent, so it is a real, runnable remediation."""
-    home = tmp_path / "home" / ".hermes-rowan"
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
-    r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "run 'agent-mgr deploy rowan' first" in r.stderr
-
-
-def test_up_passes_for_a_plow_init_agent_once_credentials_exist(run, instance, tmp_path):
-    """Closes the loop past the renderer: starting the container must read
-    the new home target it just taught compose.plow-init.yml to mount at."""
-    home = tmp_path / "home" / ".hermes-rowan"
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    (tmp_path / "home").mkdir(exist_ok=True)
-    (tmp_path / "home" / ".plow-credentials-rowan").write_text(
-        "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
-    )
-    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
-    r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr + r.stdout
-
-
-@pytest.mark.parametrize("operation", ["down", "logs"])
-def test_down_and_logs_stay_open_for_a_plow_init_agent_with_no_credentials_file(
-    run, instance, tmp_path, operation
-):
-    """The credential check gates STARTING a container, not every transition:
-    an operator whose plow-init agent lost its credentials mid-migration must
-    still be able to stop it or read its logs -- exactly the position they
-    are in when something has already gone wrong."""
-    home = tmp_path / "home" / ".hermes-rowan"
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
-    r = run(operation, "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr + r.stdout
-
-
 @pytest.mark.parametrize(
-    "argv",
+    "argv, materialized, allowed",
     [
-        ("create",),
-        ("start",),
-        ("restart",),
-        ("run", "--entrypoint", "/bin/true", "hermes"),
+        (("up",), False, False),
+        (("up",), True, True),
+        (("create",), False, False),
+        (("start",), False, False),
+        (("restart",), False, False),
+        (("run", "--entrypoint", "/bin/true", "hermes"), False, False),
+        (("down",), False, True),
+        (("logs",), False, True),
     ],
-    ids=["create", "start", "restart", "run"],
+    ids=["up-refused", "up-allowed", "create-refused", "start-refused",
+         "restart-refused", "run-refused", "down-allowed", "logs-allowed"],
 )
-def test_every_compose_passthrough_start_verb_refuses_a_plow_init_agent_with_no_credentials(
-    run, instance, tmp_path, argv
+def test_the_credential_gate_covers_every_start_verb_and_only_those(
+    run, instance, tmp_path, argv, materialized, allowed
 ):
-    """`agent-mgr up` was covered directly; this is the `agent-mgr compose
-    <name> <verb>` passthrough -- native `create`/`start`/`restart` reach
-    transition() but are not the literal string "up" (`create` materializes
-    the bind mount without even starting the container), and `run` bypasses
-    transition() entirely via LEAVES_RUNNING. All four still resolve the
-    same credentials bind-mount `up` does."""
+    """One seam (compose() in local.py) gates every verb that creates or
+    (re)starts a container -- up, create, start, restart, and run (which
+    bypasses transition() entirely via LEAVES_RUNNING) -- against a missing
+    credentials file, the failure that would otherwise bind-mount an empty
+    directory where plow-init expects one, 60 seconds into boot. down and
+    logs are unaffected regardless: an operator whose plow-init agent lost
+    its credentials mid-migration must still be able to stop it or read its
+    logs, the position they are in when something has already gone wrong.
+    All seven routed through `agent-mgr compose <name> <verb>`, which reaches
+    the same seam either through transition() or directly."""
     home = tmp_path / "home" / ".hermes-rowan"
     run("register", "rowan",
         str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    if materialized:
+        home.parent.mkdir(parents=True, exist_ok=True)
+        (home.parent / ".plow-credentials-rowan").write_text(
+            "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
+        )
     b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
     r = run("compose", "rowan", *argv, env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "run 'agent-mgr deploy rowan' first" in r.stderr
+    assert (r.returncode == 0) is allowed, r.stderr
+    if not allowed:
+        assert "run 'agent-mgr deploy rowan' first" in r.stderr

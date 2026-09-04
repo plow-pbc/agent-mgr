@@ -150,18 +150,25 @@ def test_check_latch_will_not_answer_from_the_host_when_the_gateway_is_down(run,
     assert "not running" in r.stderr
 
 
-def _connectors_bin(tmp_path, name="rowan", *, script_present=True, gmail="ok", slack="ok"):
-    """A docker whose `exec` answers the script-presence test and each probe."""
+def _connectors_bin(tmp_path, name="rowan", *, target="/opt/data", script_present=True,
+                    gmail="ok", slack="ok"):
+    """A docker whose `exec` answers the script-presence test and each probe.
+
+    The presence test matches the EXACT path for `target` and exits 1 for the
+    OTHER contract's path -- a real container only ever has one of the two,
+    so a probe built against the wrong one fails here the same way it would
+    there, rather than a wildcard on the filename that cannot tell them apart.
+    """
     import os
-    b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name)
+    other = "/var/lib/hermes" if target == "/opt/data" else "/opt/data"
+    right = f"{target}/skills/productivity/plow-connectors/plow_connector.py"
+    wrong = f"{other}/skills/productivity/plow-connectors/plow_connector.py"
+    b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name, target=target)
     (b / "docker").write_text(
         (b / "docker").read_text().replace(
             "esac",
-            # Matched on the presence test, not the skill's directory: this
-            # fixture mirrors a behaviour -- "missing skill is named once" --
-            # and pinning the path here only re-breaks it on the next move.
-            '  *"test -f "*plow_connector.py*)\n'
-            f'    exit {0 if script_present else 1} ;;\n'
+            f'  *"test -f {right}"*)\n    exit {0 if script_present else 1} ;;\n'
+            f'  *"test -f {wrong}"*)\n    exit 1 ;;\n'
             f'  *gmail*) echo \'{gmail}\'; exit {0 if gmail != "FAIL" else 1} ;;\n'
             f'  *slack*) echo \'{slack}\'; exit {0 if slack != "FAIL" else 1} ;;\n'
             "esac", 1))
@@ -199,28 +206,6 @@ def test_a_missing_connector_skill_is_named_rather_than_reported_per_connector(r
     assert "add-skill" in r.stderr, "the message should name the fix"
 
 
-def _connectors_bin_at(tmp_path, name, target):
-    """Like _connectors_bin, but the presence probe distinguishes the two
-    home mount targets explicitly instead of matching either with one
-    wildcard -- a real container only ever has one of the two paths, so a
-    probe built against the wrong contract's home must fail here exactly the
-    way it would fail there."""
-    other = "/var/lib/hermes" if target == "/opt/data" else "/opt/data"
-    right = f"{target}/skills/productivity/plow-connectors/plow_connector.py"
-    wrong = f"{other}/skills/productivity/plow-connectors/plow_connector.py"
-    b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name, target=target)
-    (b / "docker").write_text(
-        (b / "docker").read_text().replace(
-            "esac",
-            f'  *"test -f {right}"*)\n    exit 0 ;;\n'
-            f'  *"test -f {wrong}"*)\n    exit 1 ;;\n'
-            "  *gmail*) echo 'ok'; exit 0 ;;\n"
-            "  *slack*) echo 'ok'; exit 0 ;;\n"
-            "esac", 1))
-    (b / "docker").chmod(0o755)
-    return {"PATH": f"{b}:{os.environ['PATH']}"}
-
-
 @pytest.mark.parametrize(
     "boot_contract, target",
     [("", "/opt/data"), ("AGENT_BOOT_CONTRACT=plow-init\n", "/var/lib/hermes")],
@@ -230,17 +215,11 @@ def test_check_connectors_probes_the_agents_own_boot_contract_path(
     run, instance, tmp_path, boot_contract, target
 ):
     """Probing the wrong contract's path would report a missing skill that is
-    actually present, and send the operator to add-skill for no reason."""
+    actually present, and send the operator to add-skill for no reason.
+    check-connectors execs (not a start verb), so no credential gate applies
+    -- nothing to materialize here."""
     run("register", "rowan", str(instance("rowan", descriptor=boot_contract)))
-    home = tmp_path / "home" / ".hermes-rowan"
-    if target != "/opt/data":
-        # resolve_guard refuses a plow-init agent before compose even runs
-        # unless its credentials are already materialized.
-        home.parent.mkdir(parents=True, exist_ok=True)
-        (home.parent / ".plow-credentials-rowan").write_text(
-            "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
-        )
-    r = run("check-connectors", "rowan", env=_connectors_bin_at(tmp_path, "rowan", target))
+    r = run("check-connectors", "rowan", env=_connectors_bin(tmp_path, "rowan", target=target))
     assert r.returncode == 0, r.stderr
     assert "plow-connectors skill is not installed" not in r.stderr
 
