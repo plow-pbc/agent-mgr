@@ -471,26 +471,6 @@ def test_a_resolver_failing_on_the_mounted_home_names_it(run, instance, tmp_path
     assert "not rowan's home" in r.stderr
 
 
-def _bin_with_running_mount(tmp_path, name, home, *, config_target, running_destination, source):
-    """A docker whose `config` renders under `config_target` -- what Compose
-    would resolve fresh from the CURRENT descriptor -- but whose `inspect`
-    reports an ALREADY-RUNNING container mounted at `running_destination`,
-    the shape a container actually takes right after its descriptor's
-    contract changes, before anything recreates it."""
-    b = fake_docker(tmp_path, home=home, name=name, target=config_target)
-    script = b / "docker"
-    text = script.read_text()
-    original = f"*inspect*) echo {home} ;;"
-    assert original in text, "fake_docker's default inspect stub text changed shape"
-    replacement = (
-        f'*inspect*) case "$*" in *\'"{running_destination}"\'*) echo {source} ;; '
-        "*) : ;; esac ;;"
-    )
-    script.write_text(text.replace(original, replacement))
-    script.chmod(0o755)
-    return b
-
-
 @pytest.mark.parametrize(
     "home_env, config_target, running_destination, own_source, recognized",
     [
@@ -510,24 +490,19 @@ def _bin_with_running_mount(tmp_path, name, home, *, config_target, running_dest
          "wrong-source-still-rejected"],
 )
 def test_the_container_guard_survives_a_descriptor_flip(
-    run, instance, tmp_path, home_env, config_target, running_destination, own_source,
-    recognized,
+    run, instance, tmp_path, home_dotenv, home_env, config_target, running_destination,
+    own_source, recognized,
 ):
     """require_container_ours must accept EITHER home destination a running
     container could have been created under, so a home dotenv flip -- rollback
     included -- never stops agent-mgr from recognising its own container.
     Checked through `logs`, which needs no materialized credentials and stays
     open under either contract, so only the container guard is under test."""
-    home = tmp_path / "home" / ".hermes-rowan"
-    source = str(home) if own_source else str(tmp_path / "home" / ".hermes-someone-else")
     run("register", "rowan", str(instance("rowan")), check=True)
-    if home_env:
-        home.mkdir(parents=True, exist_ok=True)
-        (home / ".env").write_text(home_env)
-    b = _bin_with_running_mount(
-        tmp_path, "rowan", home,
-        config_target=config_target, running_destination=running_destination, source=source,
-    )
+    home = home_dotenv("rowan", home_env)
+    source = str(home) if own_source else str(tmp_path / "home" / ".hermes-someone-else")
+    b = fake_docker(tmp_path, home=home, name="rowan", target=config_target,
+                    inspect_target=running_destination, mounts={"deadbeef": source})
     r = run("logs", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert (r.returncode == 0) is recognized, r.stderr
 
@@ -535,7 +510,7 @@ def test_the_container_guard_survives_a_descriptor_flip(
 @pytest.mark.parametrize("kw", [{"command": ["gateway", "run"]}, {"entrypoint": ["gateway"]}],
                          ids=["command", "entrypoint"])
 def test_the_guard_refuses_a_plow_init_agent_whose_compose_still_resolves_a_command(
-    run, instance, tmp_path, kw
+    run, instance, tmp_path, home_dotenv, kw
 ):
     """compose.plow-init.yml itself never sets either key -- proved against
     real rendered compose output in test_compose.py -- so the only source a
@@ -543,10 +518,8 @@ def test_the_guard_refuses_a_plow_init_agent_whose_compose_still_resolves_a_comm
     reinstating the second-gateway path this whole contract exists to
     prevent. Simulated the way every other resolve_guard shape check in this
     file is: a fake docker whose `config` renders the shape under test."""
-    home = tmp_path / "home" / ".hermes-rowan"
-    home.mkdir(parents=True)
-    (home / ".env").write_text("AGENT_BOOT_CONTRACT=plow-init\n")
     run("register", "rowan", str(instance("rowan")), check=True)
+    home = home_dotenv("rowan", "AGENT_BOOT_CONTRACT=plow-init\n")
     b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes", **kw)
     r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
@@ -564,16 +537,14 @@ def test_the_guard_refuses_a_plow_init_agent_whose_compose_still_resolves_a_comm
     ids=["exact", "wrong-source", "mount-missing", "writable"],
 )
 def test_the_guard_only_accepts_an_exact_read_only_credential_mount(
-    run, instance, tmp_path, kw, allowed
+    run, instance, tmp_path, home_dotenv, kw, allowed
 ):
     """An override can replace the credential mount the same way it can
     replace command/entrypoint -- a sibling's path, a writable source, or
     dropping it entirely all leave a live token somewhere resolve_guard did
     not expect it, or hand the container write access to it."""
-    home = tmp_path / "home" / ".hermes-rowan"
-    home.mkdir(parents=True)
-    (home / ".env").write_text("AGENT_BOOT_CONTRACT=plow-init\n")
     run("register", "rowan", str(instance("rowan")), check=True)
+    home = home_dotenv("rowan", "AGENT_BOOT_CONTRACT=plow-init\n")
     b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes", **kw)
     r = run("resolve-guard", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert (r.returncode == 0) is allowed, r.stderr

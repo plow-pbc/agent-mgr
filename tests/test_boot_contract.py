@@ -23,23 +23,25 @@ def _agent(run, instance, registry, tmp_path, monkeypatch, name="rowan", descrip
 
 
 @pytest.mark.parametrize(
-    "home_env, plow_init, target",
+    "descriptor, home_env, plow_init, target",
     [
-        ("", False, "/opt/data"),
-        ("AGENT_BOOT_CONTRACT=plow-init\n", True, "/var/lib/hermes"),
-        ("AGENT_BOOT_CONTRACT=\n", False, "/opt/data"),
+        ("", "", False, "/opt/data"),
+        ("", "AGENT_BOOT_CONTRACT=plow-init\n", True, "/var/lib/hermes"),
+        ("", "AGENT_BOOT_CONTRACT=\n", False, "/opt/data"),
+        # The repo descriptor used to be the shared source of truth for this
+        # key; it no longer owns it at all, so setting it there is a no-op,
+        # not a refusal.
+        ("AGENT_BOOT_CONTRACT=plow-init\n", "", False, "/opt/data"),
     ],
-    ids=["absent", "plow-init", "blank"],
+    ids=["absent", "plow-init", "blank", "repo-level-is-a-no-op"],
 )
 def test_the_boot_contract_selects_the_home_target_and_credentials_path(
-    run, instance, registry, tmp_path, monkeypatch, home_env, plow_init, target
+    run, instance, registry, tmp_path, monkeypatch, home_dotenv,
+    descriptor, home_env, plow_init, target,
 ):
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    run("register", "rowan", str(instance("rowan")), check=True)
-    if home_env:
-        home = tmp_path / "home" / ".hermes-rowan"
-        home.mkdir(parents=True)
-        (home / ".env").write_text(home_env)
+    run("register", "rowan", str(instance("rowan", descriptor=descriptor)), check=True)
+    home_dotenv("rowan", home_env)
     agent = resolve_agent("rowan", Registry(registry), ROOT)
     assert agent.plow_init is plow_init
     assert agent.home_mount_target == target
@@ -52,7 +54,7 @@ def test_the_boot_contract_selects_the_home_target_and_credentials_path(
 
 
 def test_a_sibling_sharing_the_repo_does_not_inherit_a_boot_contract_set_on_another_homes_dotenv(
-    run, instance, registry, tmp_path, monkeypatch
+    run, instance, registry, tmp_path, monkeypatch, home_dotenv
 ):
     """Two names against the same repo (README's 'One repo, several people')
     resolve to separate homes -- rowan opting into plow-init in its OWN home
@@ -62,9 +64,7 @@ def test_a_sibling_sharing_the_repo_does_not_inherit_a_boot_contract_set_on_anot
     repo = instance("rowan")
     run("register", "rowan", str(repo), check=True)
     run("register", "bob", str(repo), check=True)
-    rowan_home = tmp_path / "home" / ".hermes-rowan"
-    rowan_home.mkdir(parents=True)
-    (rowan_home / ".env").write_text("AGENT_BOOT_CONTRACT=plow-init\n")
+    home_dotenv("rowan", "AGENT_BOOT_CONTRACT=plow-init\n")
 
     rowan = resolve_agent("rowan", Registry(registry), ROOT)
     bob = resolve_agent("bob", Registry(registry), ROOT)
@@ -72,20 +72,6 @@ def test_a_sibling_sharing_the_repo_does_not_inherit_a_boot_contract_set_on_anot
     assert rowan.plow_init is True
     assert bob.plow_init is False
     assert bob.home_mount_target == "/opt/data"
-
-
-def test_a_repo_level_boot_contract_does_not_opt_anyone_in(
-    run, instance, registry, tmp_path, monkeypatch
-):
-    """AGENT_BOOT_CONTRACT in agent.env used to be the shared source of
-    truth; it no longer is. Setting it there is a no-op, not a refusal --
-    the repo descriptor simply does not own this key any more."""
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    run("register", "rowan",
-        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
-    agent = resolve_agent("rowan", Registry(registry), ROOT)
-    assert agent.plow_init is False
-    assert agent.home_mount_target == "/opt/data"
 
 
 def test_credentials_land_outside_a_repo_declared_home_not_beside_it(
@@ -146,7 +132,7 @@ def test_scrub_covers_every_key_environment_exports(run, instance, registry, tmp
          "down-allowed", "logs-allowed"],
 )
 def test_the_credential_gate_covers_every_start_verb_and_only_those(
-    run, instance, tmp_path, argv, materialized, allowed
+    run, instance, tmp_path, home_dotenv, argv, materialized, allowed
 ):
     """One seam (compose() in local.py) gates every verb that creates or
     (re)starts a container -- up, create, and run (which bypasses
@@ -158,15 +144,13 @@ def test_the_credential_gate_covers_every_start_verb_and_only_those(
     logs, the position they are in when something has already gone wrong.
     (start/restart/unpause are covered separately: transition() refuses
     them outright for a plow-init agent, credentials or not -- see below.)"""
-    home = tmp_path / "home" / ".hermes-rowan"
     run("register", "rowan", str(instance("rowan")), check=True)
-    home.mkdir(parents=True, exist_ok=True)
     dotenv_text = "AGENT_BOOT_CONTRACT=plow-init\n"
     if materialized:
         credential_text = "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
         dotenv_text += credential_text
-        (home.parent / ".plow-credentials-rowan").write_text(credential_text)
-    (home / ".env").write_text(dotenv_text)
+        (tmp_path / "home" / ".plow-credentials-rowan").write_text(credential_text)
+    home = home_dotenv("rowan", dotenv_text)
     b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
     r = run("compose", "rowan", *argv, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert (r.returncode == 0) is allowed, r.stderr
@@ -175,30 +159,39 @@ def test_the_credential_gate_covers_every_start_verb_and_only_those(
 
 
 @pytest.mark.parametrize(
-    "cli_args, refused",
+    "cli_args, target, inspect_target, refused",
     [
-        (("compose", "rowan", "start"), True),
-        (("compose", "rowan", "restart"), True),
-        (("compose", "rowan", "unpause"), True),
-        (("up", "rowan"), False),
+        (("compose", "rowan", "start"), "/var/lib/hermes", "/var/lib/hermes", True),
+        (("compose", "rowan", "restart"), "/var/lib/hermes", "/var/lib/hermes", True),
+        (("compose", "rowan", "unpause"), "/var/lib/hermes", "/var/lib/hermes", True),
+        (("up", "rowan"), "/var/lib/hermes", "/var/lib/hermes", False),
+        # Rollback: the descriptor now resolves legacy (no AGENT_BOOT_CONTRACT
+        # in the home dotenv), but the running container is still the
+        # plow-init one -- refused on the OBSERVED mount alone, since the
+        # refusal above keys on agent.plow_init, which this window disagrees
+        # with by construction.
+        (("compose", "rowan", "restart"), "/opt/data", "/var/lib/hermes", True),
     ],
-    ids=["start-refused", "restart-refused", "unpause-refused", "up-force-recreates"],
+    ids=["start-refused", "restart-refused", "unpause-refused", "up-force-recreates",
+         "rollback-restart-still-refused"],
 )
-def test_plow_init_transition_policy(run, instance, tmp_path, cli_args, refused):
+def test_plow_init_transition_policy(
+    run, instance, tmp_path, home_dotenv, cli_args, target, inspect_target, refused
+):
     """transition() refuses every native verb that can resume an existing
     plow-init container without recreating it -- start, restart, unpause --
     since none of them re-resolves the bind mount, so none can be trusted to
     see a credential rotation already on disk, even with a currently-valid
     file. up is the one verb that is always safe, because this forces it to
     --force-recreate regardless of whether a rotation just happened."""
-    home = tmp_path / "home" / ".hermes-rowan"
     run("register", "rowan", str(instance("rowan")), check=True)
-    home.mkdir(parents=True)
+    boot_contract = "AGENT_BOOT_CONTRACT=plow-init\n" if target == "/var/lib/hermes" else ""
     credential_text = "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
-    (home / ".env").write_text("AGENT_BOOT_CONTRACT=plow-init\n" + credential_text)
+    home = home_dotenv("rowan", boot_contract + credential_text)
     (home.parent / ".plow-credentials-rowan").write_text(credential_text)
     log = tmp_path / "docker.log"
-    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes", log=log)
+    b = fake_docker(tmp_path, home=home, name="rowan", target=target,
+                    inspect_target=inspect_target, log=log)
     r = run(*cli_args, env={"PATH": f"{b}:{os.environ['PATH']}"})
     if refused:
         assert r.returncode != 0

@@ -218,11 +218,29 @@ def instance(tmp_path):
     return _instance
 
 
+@pytest.fixture
+def home_dotenv(tmp_path):
+    """Create <name>'s conventional home (~/.hermes-<name>) and write `text`
+    to its dotenv, returning the home path. The shared arrange every
+    AGENT_TZ/AGENT_BOOT_CONTRACT test needs, since the home does not exist
+    until something creates it; empty text still creates the home so a
+    "not set" row and an "absent home" row read the same."""
+
+    def _home_dotenv(name, text=""):
+        home = tmp_path / "home" / f".hermes-{name}"
+        home.mkdir(parents=True, exist_ok=True)
+        if text:
+            (home / ".env").write_text(text)
+        return home
+
+    return _home_dotenv
+
+
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
                 exists=None, all_cids=(), mounts=None, image=None, build=False,
-                pull_policy=None, target="/opt/data", command=None, entrypoint=None,
-                credentials=None, credentials_ro=True):
+                pull_policy=None, target="/opt/data", inspect_target=None, command=None,
+                entrypoint=None, credentials=None, credentials_ro=True):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -236,6 +254,11 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     defaults to the one resolve_guard expects (agent.credentials); pass a
     different path to simulate an override that replaced it, or `False` to
     omit the mount entirely. Ignored for the legacy target, which has none.
+
+    `inspect_target`: the destination `docker inspect` reports the existing
+    container actually mounted -- defaults to `target`, the one `config`
+    would render fresh. Set it differently to simulate the window between a
+    descriptor flip and the container's own recreation, in either direction.
     """
     import json
 
@@ -278,9 +301,10 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     if pull_policy:
         svc["pull_policy"] = pull_policy
     cfg = json.dumps({"name": project, "services": {"hermes": svc}})
+    seen = target if inspect_target is None else inspect_target
     parts = [
         "#!/usr/bin/env bash",
-        f'case "$*" in *inspect*) echo "{mount}"; exit 0 ;; esac' if mount is not None else "",
+        f'case "$*" in *inspect*) echo {seen} {mount}; exit 0 ;; esac' if mount is not None else "",
         f'printf "%s\\n" "$*" >> {log}' if log else "",
         # And one word per line beside it: the joined form cannot tell an intact
         # argv word from one the caller re-split, which is what the sh -c escape
@@ -306,9 +330,13 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # seam was blind to, so a test can now set them independently.
         f'  *"ps -a --quiet"*) {"printf '%s\\n' " + " ".join(all_cids) if all_cids else ("echo deadbeef" if (running if exists is None else exists) else ":")} ;;',
         f'  *"ps --status running --quiet"*) {"echo deadbeef" if running else ":"} ;;',
+        # Destination then source, space-separated -- real docker's own
+        # format template now asks for both, so require_container_ours can
+        # report which of the two a running container actually mounts.
         (f'  *inspect*) case "$*" in ' + " ".join(
-            f'*{c}*) echo {m} ;;' for c, m in (mounts or {}).items())
-         + f' *) echo {home} ;; esac ;;') if mounts else f'  *inspect*) echo {home} ;;',
+            f'*{c}*) echo {seen} {m} ;;' for c, m in (mounts or {}).items())
+         + f' *) echo {seen} {home} ;; esac ;;') if mounts else
+        f'  *inspect*) echo {seen} {home} ;;',
     ]
     if exec_output is not None:
         parts.append(f'  *exec*) echo {exec_output} ;;')
