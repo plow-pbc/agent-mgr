@@ -71,6 +71,22 @@ def test_materialize_fails_loud_naming_the_missing_key_and_agent(
     assert not agent.credentials.exists(), "a partial file is worse than none"
 
 
+def test_materialize_not_required_skips_silently_instead_of_raising(
+    run, instance, registry, tmp_path, monkeypatch
+):
+    """A never-activated home has no real values yet -- deploy() and
+    reload_if_running() pass required=False so that case is a silent no-op,
+    not the failure test_materialize_fails_loud_... asserts for every other
+    caller. Missing dotenv and missing keys both take this path."""
+    agent = _agent(run, instance, registry, tmp_path, monkeypatch, dotenv=None)
+    assert materialize_plow_credentials(agent, Registry(registry), required=False) is None
+    assert not agent.credentials.exists()
+
+    (agent.home / ".env").write_text("PLOW_AGENT_TOKEN=tok_secret\n")
+    assert materialize_plow_credentials(agent, Registry(registry), required=False) is None
+    assert not agent.credentials.exists()
+
+
 def test_materialize_refuses_before_the_home_has_a_dotenv(
     run, instance, registry, tmp_path, monkeypatch
 ):

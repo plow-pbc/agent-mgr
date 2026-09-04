@@ -28,19 +28,29 @@ def _publish_home_file(source: Path, home: Path, name: str) -> None:
     atomic_write(resolved / name, source.read_bytes(), stage_in=resolved.parent)
 
 
-def materialize_plow_credentials(agent: ResolvedAgent, registry: Registry) -> Path:
+def materialize_plow_credentials(
+    agent: ResolvedAgent, registry: Registry, *, required: bool = True
+) -> Path | None:
     """Write agent.credentials (under the operator's own home, never inside
     the agent's) from this agent's own home dotenv. The base's root
-    cont-init step promotes it to root:root, so nothing here runs privileged."""
+    cont-init step promotes it to root:root, so nothing here runs privileged.
+
+    A not-yet-activated home has no real values yet; required=False skips
+    that silently instead of aborting a caller with other work still to do,
+    leaving the start-time gate in compose() as what actually refuses to boot."""
     require_own_home(agent, registry)
     dotenv = agent.home / ".env"
     if not dotenv.is_file():
+        if not required:
+            return None
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr deploy {agent.name}' first"
         )
     values = read_dotenv_values(dotenv, frozenset(CREDENTIAL_KEYS))
     missing = [key for key in CREDENTIAL_KEYS if not values.get(key)]
     if missing:
+        if not required:
+            return None
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
             f"{agent.name}'s dotenv ({dotenv}) is missing {' and '.join(missing)} -- "
@@ -168,17 +178,20 @@ def replay_skills(agent: ResolvedAgent) -> None:
 
 def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> None:
     resolve_guard(agent, registry)
-    if agent.plow_init:
-        # Every caller reaches this right after writing something that might
-        # include a fresh PLOW_AGENT_TOKEN, so this is the one place to keep
-        # the mounted credential file from serving a token a reload replaced.
-        materialize_plow_credentials(agent, registry)
     running = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
     if running.returncode:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"could not ask docker whether {agent.name}'s gateway is running"
         )
-    if not running.stdout.strip():
+    is_running = bool(running.stdout.strip())
+    if agent.plow_init:
+        # Every caller reaches this right after writing something that might
+        # include a fresh PLOW_AGENT_TOKEN, so this is the one place to keep
+        # the mounted credential file from serving a token a reload replaced.
+        # Required only while running: a not-yet-activated home has nothing
+        # running to protect, and the start-time gate refuses its first boot.
+        materialize_plow_credentials(agent, registry, required=is_running)
+    if not is_running:
         print(f"{agent.name} is not running -- {reason}; it will be read on next start")
         return
     print(f"restarting {agent.name}'s gateway -- {reason}")
@@ -211,8 +224,10 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
     if agent.plow_init:
         # After install_plugin, not before: migrate_plugin_env runs inside
         # it, carrying a legacy PLOW_CHAT_*-only dotenv onto the canonical
-        # names this needs -- before this, that agent aborted here instead.
-        materialize_plow_credentials(agent, registry)
+        # names this needs. Not yet required: a fresh or unactivated home has
+        # no real values yet, and deploy still has config.yaml and skills to
+        # install -- the start-time gate is what actually refuses to boot.
+        materialize_plow_credentials(agent, registry, required=False)
     install_fleet_skills(
         agent, "The dotenv skeleton and the plugin ARE installed; config.yaml was not updated."
     )

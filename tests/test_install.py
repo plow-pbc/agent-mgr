@@ -103,6 +103,27 @@ def test_deploy_materializes_plow_credentials_from_a_legacy_only_dotenv(run, ins
     assert "PLOW_API_BASE=https://api.plow.co" in text
 
 
+def test_deploy_of_a_never_activated_plow_init_home_completes_without_credentials(
+    run, instance, tmp_path
+):
+    """A second agent onboarded against a repo that already opted in to
+    plow-init inherits the shared descriptor before it has ever activated --
+    it cannot decline the contract, and its home starts out with no real
+    PLOW_API_BASE/PLOW_AGENT_TOKEN at all. deploy must still finish installing
+    config.yaml and skills rather than aborting on that; the start-time gate
+    in compose() is what actually refuses to boot without credentials."""
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+    home = tmp_path / "home" / ".hermes-rowan"
+    d = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes", running=False)
+
+    r = run("deploy", "rowan", env={"PATH": f"{d}:{os.environ['PATH']}"})
+
+    assert r.returncode == 0, r.stderr
+    assert (home / "config.yaml").is_file()
+    assert not (home.parent / ".plow-credentials-rowan").exists()
+
+
 def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp_path):
     """Last declaration wins -- dotenv_read and the compose env_file loader
     both resolve a duplicated key to its last line, so the migrated value must
