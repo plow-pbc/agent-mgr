@@ -373,7 +373,7 @@ def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
             # credential file rotation already replaced on disk -- see
             # require_plow_init_credentials for the matching value check.
             args = [*args, "--force-recreate"]
-        elif args[0] in {"start", "restart"}:
+        elif args[0] in {"start", "restart", "unpause"}:
             raise AgentMgrError(
                 ErrorCode.INVALID_ARGUMENT,
                 f"refusing 'compose {args[0]}' for {agent.name}: neither recreates the "

@@ -102,8 +102,8 @@ def test_the_credential_gate_covers_every_start_verb_and_only_those(
     logs are unaffected regardless: an operator whose plow-init agent lost
     its credentials mid-migration must still be able to stop it or read its
     logs, the position they are in when something has already gone wrong.
-    (start/restart are covered separately: transition() refuses them
-    outright for a plow-init agent, credentials or not -- see below.)"""
+    (start/restart/unpause are covered separately: transition() refuses
+    them outright for a plow-init agent, credentials or not -- see below.)"""
     home = tmp_path / "home" / ".hermes-rowan"
     run("register", "rowan",
         str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
@@ -119,44 +119,39 @@ def test_the_credential_gate_covers_every_start_verb_and_only_those(
         assert "run 'agent-mgr deploy rowan' first" in r.stderr
 
 
-def _plow_init_agent_with_matching_credentials(run, instance, tmp_path, name="rowan"):
-    """A plow-init agent whose materialized credentials already agree with
-    its current home dotenv -- the normal, post-deploy state."""
-    home = tmp_path / "home" / f".hermes-{name}"
-    run("register", name,
-        str(instance(name, descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
+@pytest.mark.parametrize(
+    "cli_args, refused",
+    [
+        (("compose", "rowan", "start"), True),
+        (("compose", "rowan", "restart"), True),
+        (("compose", "rowan", "unpause"), True),
+        (("up", "rowan"), False),
+    ],
+    ids=["start-refused", "restart-refused", "unpause-refused", "up-force-recreates"],
+)
+def test_plow_init_transition_policy(run, instance, tmp_path, cli_args, refused):
+    """transition() refuses every native verb that can resume an existing
+    plow-init container without recreating it -- start, restart, unpause --
+    since none of them re-resolves the bind mount, so none can be trusted to
+    see a credential rotation already on disk, even with a currently-valid
+    file. up is the one verb that is always safe, because this forces it to
+    --force-recreate regardless of whether a rotation just happened."""
+    home = tmp_path / "home" / ".hermes-rowan"
+    run("register", "rowan",
+        str(instance("rowan", descriptor="AGENT_BOOT_CONTRACT=plow-init\n")), check=True)
     home.mkdir(parents=True)
     credential_text = "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
     (home / ".env").write_text(credential_text)
-    (home.parent / f".plow-credentials-{name}").write_text(credential_text)
-    return home
-
-
-@pytest.mark.parametrize("argv", [("start",), ("restart",)], ids=["start", "restart"])
-def test_native_start_and_restart_are_refused_for_a_plow_init_agent_even_with_valid_credentials(
-    run, instance, tmp_path, argv
-):
-    """Neither recreates the container by nature -- an already-created
-    container can stay bound to a credential a rotation has since replaced
-    on disk, even though the file itself is perfectly valid right now.
-    Refused outright rather than trusted, with the safe verb named."""
-    home = _plow_init_agent_with_matching_credentials(run, instance, tmp_path)
-    b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes")
-    r = run("compose", "rowan", *argv, env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "run 'agent-mgr up rowan' instead" in r.stderr
-
-
-def test_up_always_force_recreates_for_a_plow_init_agent(run, instance, tmp_path):
-    """The other half of the guarantee: up is the one verb that recreates,
-    so it -- not start/restart -- is the safe way to (re)start a plow-init
-    agent after a credential rotation, whether or not one just happened."""
-    home = _plow_init_agent_with_matching_credentials(run, instance, tmp_path)
+    (home.parent / ".plow-credentials-rowan").write_text(credential_text)
     log = tmp_path / "docker.log"
     b = fake_docker(tmp_path, home=home, name="rowan", target="/var/lib/hermes", log=log)
-    r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr
-    assert "--force-recreate" in log.read_text()
+    r = run(*cli_args, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    if refused:
+        assert r.returncode != 0
+        assert "run 'agent-mgr up rowan' instead" in r.stderr
+    else:
+        assert r.returncode == 0, r.stderr
+        assert "--force-recreate" in log.read_text()
 
 
 def test_a_repointed_home_is_refused_not_silently_booted_with_the_old_credential(
