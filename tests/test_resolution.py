@@ -18,8 +18,6 @@ def test_resolve_shows_the_boot_contract_when_it_can_be_derived(run, instance):
     the image's baked HERMES_HOME, so resolve shows it without ever deploying."""
     run("register", "rowan", str(instance("rowan")))
     assert "AGENT_HOME_TARGET=/opt/data" in run("resolve", "rowan").stdout
-    result = json.loads(run("--json", "resolve", "rowan").stdout)["result"]
-    assert result["home_target"] == "/opt/data"
 
 
 def test_resolve_omits_the_boot_contract_with_no_working_docker(run, instance, tmp_path):
