@@ -267,11 +267,10 @@ write one (derived image or extra mounts). Three rules for that override:
 
 - **Relative paths don't work** — Compose resolves them against `agent-mgr`'s
   directory. Name paths through a variable set in `agent.env`.
-- **The boot contract outranks you** — agent-mgr layers its own contract
-  overlay *after* this file, so a key that overlay declares (the legacy
-  `entrypoint`/`command`, the current contract's credential bind) is not
-  yours to replace. Everything it leaves alone — a `build:`, `env_file`,
-  extra mounts — still merges through.
+- **The boot contract outranks you** — agent-mgr layers its contract overlay
+  *after* this file, so what that overlay declares (the legacy
+  `entrypoint`/`command`, the current credential bind) is not yours to replace.
+  What it leaves alone — `build:`, `env_file`, extra mounts — still merges through.
 - **A `build:` must carry `pull_policy: never`** (or `build`) — the default
   *pulls* the tag when absent locally, so a registry image could land over
   what this host built and run with the agent's credentials. (A digest-pinned

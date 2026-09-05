@@ -1,7 +1,6 @@
-# Layered in LAST by agent-mgr for the legacy boot contract
-# (HERMES_HOME=/opt/data), after the instance's own compose.override.yml: an
-# image with no supervised gateway of its own, so agent-mgr must start one, and
-# the boot chain below is agent-mgr's rather than an override's.
+# Layered in by agent-mgr for the legacy boot contract (HERMES_HOME=/opt/data),
+# LAST -- after the instance's own compose.override.yml, so the boot chain below
+# is agent-mgr's: this image supervises no gateway of its own, so it must.
 services:
   hermes:
     # Named rather than inherited. `command` below is arguments FOR the

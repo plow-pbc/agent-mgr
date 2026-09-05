@@ -33,24 +33,19 @@ def test_the_guard_passes_when_the_resolved_config_matches(run, instance):
     assert r.returncode == 0, r.stderr + r.stdout
 
 
-@pytest.mark.parametrize(("home_env", "swap", "label"), [
-    # The home, even though every descriptor variable resolved exactly as
-    # written. The credential bind beside it is NOT here: the contract overlay
-    # merges after the instance override, so nothing can retarget it and there
-    # is no mismatch to detect -- test_compose.py asserts that prevention
-    # against the real merge instead.
-    ("/opt/data", (".hermes-rowan", ".hermes-SOMEONE-ELSE"), "home"),
-])
-def test_the_guard_refuses_an_override_that_retargets_a_bind(
-        run, instance, tmp_path, home_env, swap, label):
+def test_the_guard_refuses_an_override_that_retargets_the_home(run, instance, tmp_path):
+    """Caught though every descriptor variable resolved exactly as written. The
+    last bind an override can still reach: the credential beside it belongs to
+    the contract overlay, merged after it -- prevention, asserted against the
+    real merge in test_compose.py rather than detected here."""
     _agent(run, instance, "rowan")
-    env = _mismatched(tmp_path, "rowan", home_env=home_env)
+    env = _mismatched(tmp_path, "rowan")
     docker = tmp_path / "bin" / "docker"
-    docker.write_text(docker.read_text().replace(*swap))
+    docker.write_text(docker.read_text().replace(".hermes-rowan", ".hermes-SOMEONE-ELSE"))
     r = run("resolve-guard", "rowan", env=env)
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
-    assert label in r.stderr
+    assert "home" in r.stderr
 
 
 def test_the_guard_refuses_when_an_override_forges_the_agents_identity(run, instance, tmp_path):

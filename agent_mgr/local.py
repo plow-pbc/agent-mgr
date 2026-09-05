@@ -99,11 +99,10 @@ def compose_argv(agent: ResolvedAgent, args: Sequence[str], target: str) -> list
     override = agent.repo / "compose.override.yml"
     if override.is_file():
         files.extend(["-f", str(override)])
-    # LAST, so every key the boot contract declares is beyond an instance
-    # override's reach -- prevention, rather than a guard enumerating one more
-    # boot-critical field per round. What the overlay leaves alone still merges
-    # through: measured, an operator's build, pull_policy, env_file and extra
-    # mounts all survive, Compose merging volumes by target rather than whole.
+    # LAST, so every key the boot contract declares is beyond an override's
+    # reach -- prevention, not a guard enumerating one more boot-critical field
+    # per round. What the overlay leaves alone still merges through: measured,
+    # build, pull_policy, env_file and extra mounts all survive.
     contract_file = "compose.current.yml" if target == CURRENT_HOME else "compose.legacy.yml"
     files += ["-f", str(ROOT / "templates" / contract_file)]
     return [
@@ -271,9 +270,8 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         ) from exc
     # Exactly what an override can still reach: the SHARED base template's keys,
     # which it merges after -- measured, an override naming AGENT_ID wins, and
-    # usage is then attributed to a sibling on the same checkout invisibly, the
-    # wrong agent simply looking busier. The contract overlay's own keys are
-    # absent because compose_argv merges it last; nothing can retarget them.
+    # usage is then attributed to a sibling invisibly, the wrong agent simply
+    # looking busier. The overlay's own keys are absent: it merges last.
     checks = [
         (project, agent.project, "project"),
         (container, agent.container, "container"),

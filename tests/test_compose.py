@@ -113,11 +113,8 @@ def test_the_template_mounts_nothing_but_the_agents_own_home(tmp_path):
 def test_the_current_contract_starts_no_second_gateway_and_mounts_credentials(tmp_path):
     """The current base already boots a supervised gateway of its own; layering
     in the legacy entrypoint/command here would start a second one beside it.
-
     Through an override retargeting the credential bind at a sibling and
-    dropping `:ro`: the overlay merges after it, so the agent's own file is
-    the only thing that can land there. Prevention, not detection.
-    """
+    dropping `:ro`, which the overlay -- merged after it -- simply overwrites."""
     override = tmp_path / "compose.override.yml"
     override.write_text(
         "services:\n"
@@ -160,8 +157,7 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
         # sibling, and says nothing while doing it.
         "    environment:\n"
         "      - AGENT_ID=someone-else\n"
-        # ...except a key the CONTRACT overlay declares: it merges last, so
-        # this pair loses -- no override leaves a legacy image ungatewayed.
+        # ...except a key the CONTRACT overlay declares: merged last, it wins.
         "    entrypoint: [\"/bin/sh\"]\n"
         "    command: [\"-c\", \"sleep infinity\"]\n"
     )
