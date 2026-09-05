@@ -253,7 +253,7 @@ shape: a second copy of something `agent-mgr` already owns.
 | `skills.tsv` | if it installs a **shared** skill | written by `add-skill`; one pinned SHA per skill |
 | a cron spec | if it ships scheduled jobs | named by `AGENT_CRON_SPEC`; declarative rows `cron-sync` converges onto the scheduler, reading hermes's own `jobs.json` — never `cron list` output. `deliver` is explicit on every row — a card-only job declares `local`, hermes's own no-chat-delivery target — and a `${VAR}` in it may only name a delivery identifier ending `_UID` or `_CHANNEL` — the env it expands from holds credentials one line away, and the expansion lands in argv and persists in `jobs.json`. A row's `blocked` reason keeps it versioned but unregistered. Agent-authored crons are invisible to it |
 | `SKILL.md`, `scripts/`, `references/` | if the agent does something | its own skill: the instructions the container reads, and whatever runs for them |
-| `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` (or `build`) beside it — [HOWTO](docs/HOWTO.md#where-does-my-code-go) has the shape and what `resolve-guard` refuses without it |
+| `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` beside it — [HOWTO](docs/HOWTO.md#where-does-my-code-go) has the shape and what `resolve-guard` refuses without it |
 | `AGENT_LIVE=1` | if real people's workflows run through it | declared in `agent.env`; the gateway messages its person at every restart, so a restart of a live agent is user-visible. agent-mgr asks `[y/N]` at a terminal before any transition and refuses non-interactively unless `AGENT_TRANSITION_ACK=1` — the explicit acknowledgement for automation that means to restart. Once admitted, container shutdown gives Hermes up to 30 seconds to checkpoint the interrupted session and release its database leases before s6 escalates |
 | a deploy hook | if it has its own deploy step | named by `AGENT_DEPLOY_HOOK`; `deploy` sequences it, so one command is the whole deploy -- except crons, which are `cron-sync`'s and run against a live gateway |
 | a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `deploy` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
@@ -270,11 +270,13 @@ an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image
 by `sha256:` digest — never a tag or a branch. (One exception: an image this host
 **builds**, which may carry any tag — the rentals agent's
 `sams-str-hermes-agent:local`, say. A `build:` service must declare
-`pull_policy: never` (or `build`), because the default and `missing` both
-**pull** when the local tag is absent — measured, not assumed — and the fetched
-image then runs with the agent's credentials. With that set, there is nothing
-mutable to substitute. A `pull`, or a `--pull` naming anything but
-`never`/`build`, is refused through this tool for the same reason — `pull` with
+`pull_policy: never`, because every other policy swaps the image out between
+agent-mgr reading the boot contract off it and Compose starting it: the default
+and `missing` **pull** when the local tag is absent — measured, not assumed —
+and `build` *rebuilds* under `up`. With `never` set, there is nothing
+mutable to substitute, and building is its own step: `compose <name> build`,
+then `up`. A `pull`, a `--pull` naming anything but `never`, or a `--build`,
+is refused through this tool for the same reason — `pull` with
 no admitted form, because which spellings of `--ignore-buildable` Compose
 honours is a fact about its flag parser, and every miss fails open. (`build
 --pull` is the exception: there it is a boolean that re-pulls the base image and

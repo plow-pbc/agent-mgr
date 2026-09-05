@@ -123,11 +123,11 @@ def fetch_is_safe(args: Sequence[str]) -> bool:
     if args[0] == "build":
         return True
     for index, word in enumerate(args):
-        if word.startswith("--pull=") and word not in {"--pull=never", "--pull=build"}:
+        if word == "--build" or word.startswith("--build="):
             return False
-        if word == "--pull" and (
-            index + 1 == len(args) or args[index + 1] not in {"never", "build"}
-        ):
+        if word.startswith("--pull=") and word != "--pull=never":
+            return False
+        if word == "--pull" and (index + 1 == len(args) or args[index + 1] != "never"):
             return False
     return True
 
@@ -136,10 +136,11 @@ def require_fetch_safe(args: Sequence[str]) -> None:
     if not fetch_is_safe(args):
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: "
-            "'pull' has no accepted form, and '--pull' takes only 'never' or 'build'. "
+            "refusing an argv that could replace a built image. Here it is the COMMAND LINE: "
+            "'pull' has no accepted form, '--pull' takes only 'never', and '--build' takes "
+            "none -- building is its own step, so run 'compose <name> build' first, then 'up'. "
             "Editing pull_policy will not clear this one. resolve-guard enforces the file "
-            "policy, which is the other door. If --pull belongs to a command running "
+            "policy, which is the other door. If --pull or --build belongs to a command running "
             "INSIDE the container, wrap it with sh -c so the flag is not on this argv.",
         )
 
@@ -285,12 +286,14 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
                 f"refusing to act: compose resolved {label} '{got}' but {agent.name} expects '{expected}'",
             )
     if build:
-        if pull_policy not in {"never", "build"}:
+        if pull_policy != "never":
             shown = "unset (the default, which pulls)" if pull_policy is None else repr(pull_policy)
             raise AgentMgrError(
                 ErrorCode.INVALID_DESCRIPTOR,
                 f"refusing to act: {agent.name}'s service builds its image but its pull_policy is {shown}, "
-                "and only 'never' or 'build' keep Compose from fetching over the host build",
+                "and only 'never' keeps Compose from replacing the image agent-mgr read this "
+                "agent's boot contract from -- 'build' rebuilds it under `up`, which lands the new "
+                "image under the old contract's overlay. Rebuild with 'compose <name> build'.",
             )
     elif not isinstance(image, str) or "@sha256:" not in image:
         raise AgentMgrError(

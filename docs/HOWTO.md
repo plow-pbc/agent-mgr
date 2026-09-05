@@ -275,9 +275,11 @@ write one (derived image or extra mounts). Three rules for that override:
   `AGENT_IMAGE`, never bare here — agent-mgr inspects that one to pick the
   contract, so the two must be the same image. What the overlay leaves alone —
   `build:`, `env_file`, extra mounts — still merges through.
-- **A `build:` must carry `pull_policy: never`** (or `build`) — the default
-  *pulls* the tag when absent locally, so a registry image could land over
-  what this host built and run with the agent's credentials. (A digest-pinned
+- **A `build:` must carry `pull_policy: never`** — the default *pulls* the tag
+  when absent locally, so a registry image could land over what this host built
+  and run with the agent's credentials, and `build` *rebuilds* it under `up`,
+  after agent-mgr has already read the boot contract off the image it replaces.
+  Build separately: `compose <name> build`, then `up`. (A digest-pinned
   `image:` satisfies the guard only for a service *without* `build:`.) Until
   the line is there,
   `resolve-guard` refuses every Compose-resolving command — everything but
@@ -351,8 +353,8 @@ measured cost of the second gateway is in *Why it exists* in the
 |---|---|
 | `refusing to act: compose resolved ...` | the descriptor or override disagrees with the agent you named — this is the guard working |
 | `HERMES_UID ... must be set` | you ran `docker compose` directly; go through `agent-mgr` |
-| `... builds its image but its pull_policy is ...` | a service that builds must set `pull_policy: never` (or `build`). The default and `missing` both **pull** when the local tag is absent, replacing what this host built |
-| `refusing a fetch that could replace a built image` | `pull` has no accepted form — use `up`, which fetches under the file's `pull_policy` that `resolve-guard` checks. A `--pull` takes only `never` or `build`, except on `build`, where it is a boolean that re-pulls the base image and rebuilds |
+| `... builds its image but its pull_policy is ...` | a service that builds must set `pull_policy: never`. The default and `missing` both **pull** when the local tag is absent, and `build` rebuilds under `up` — each replaces the image the boot contract was read from. Build separately: `compose <name> build`, then `up` |
+| `refusing an argv that could replace a built image` | `pull` has no accepted form — use `up`, which runs under the file's `pull_policy` that `resolve-guard` checks. A `--pull` takes only `never`, and `--build` is refused outright: run `compose <name> build`, then `up`. On `build` itself, `--pull` is a boolean that re-pulls the base image and rebuilds |
 | `refusing 'compose run'...` | `--entrypoint` must be the **first** argument after `run` and carry a non-empty value — see § Running a one-off container |
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |

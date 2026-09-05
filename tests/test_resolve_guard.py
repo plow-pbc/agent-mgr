@@ -356,22 +356,25 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     ({"build": True, "pull_policy": "missing"}, True,
      "`missing` PULLS when the local tag is absent -- the earlier probe said "
      "otherwise only because its registry was unresolvable and the failed pull "
-     "fell back to the build", "pull_policy is 'missing', and only 'never' or 'build'"),
+     "fell back to the build", "pull_policy is 'missing', and only 'never'"),
     ({"build": True, "pull_policy": "always"}, True,
      "and a policy that refetches IS the hole -- it fetches over the top of "
-     "what this host built", "pull_policy is 'always', and only 'never' or 'build'"),
+     "what this host built", "pull_policy is 'always', and only 'never'"),
     ({"build": True, "pull_policy": "refresh"}, True,
      "a real Compose policy that refetches and was absent from the denylist -- "
-     "which is why the arm is an allowlist", "pull_policy is 'refresh', and only 'never' or 'build'"),
-    ({"build": True, "pull_policy": "build"}, False,
-     "`build` leaves a built image alone", ""),
+     "which is why the arm is an allowlist", "pull_policy is 'refresh', and only 'never'"),
+    ({"build": True, "pull_policy": "build"}, True,
+     "`build` REBUILDS under `up`, after require_home_target has already read the "
+     "boot contract off the image it replaces -- so a legacy-to-current rebuild "
+     "starts the current image under the legacy overlay, against an empty home. "
+     "Building is its own step", "pull_policy is 'build', and only 'never'"),
     ({"build": True}, True,
      "no policy at all is the default, and the default pulls",
      "pull_policy is unset (the default, which pulls)"),
     ({"build": True, "pull_policy": "daily"}, True,
-     "the periodic policies refetch like `always`", "pull_policy is 'daily', and only 'never' or 'build'"),
+     "the periodic policies refetch like `always`", "pull_policy is 'daily', and only 'never'"),
     ({"build": True, "pull_policy": "every_12h"}, True,
-     "including the parameterised one", "pull_policy is 'every_12h', and only 'never' or 'build'"),
+     "including the parameterised one", "pull_policy is 'every_12h', and only 'never'"),
 ])
 def test_the_image_rule_reads_what_compose_resolved(
         run, instance, tmp_path, kw, refused, why, expect):
