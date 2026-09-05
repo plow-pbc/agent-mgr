@@ -268,6 +268,13 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         "environment": {"AGENT_ID": name},
         "volumes": [{"target": home_env, "source": str(home)}],
     }
+    if home_env == "/var/lib/hermes":
+        # What compose.current.yml renders from AGENT_CREDENTIALS_HOST, which
+        # resolves against the subprocess HOME the `run` fixture sets -- the
+        # parent of every fixture agent's home. resolve_guard now checks it.
+        svc["volumes"].append({"target": "/var/lib/plow/credentials.host",
+                               "source": str(Path(home).parent / f".plow-credentials-{name}"),
+                               "read_only": True})
     # The image Compose would resolve. A digest by default, because that is what
     # the fleet pins; `image=` or `build=True` let a test say otherwise.
     if build:

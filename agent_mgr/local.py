@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .boot_contract import (
+    CREDENTIALS_TARGET,
     CURRENT_HOME,
     credentials_host_path,
     ensure_credentials,
@@ -235,6 +236,9 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         home = next(
             (item.get("source", "") for item in volumes if item.get("target") == target), "-"
         )
+        credential: dict[str, object] = next(
+            (item for item in volumes if item.get("target") == CREDENTIALS_TARGET), {}
+        )
         agent_id = service.get("environment", {}).get("AGENT_ID", "-")
         image = service.get("image", "-")
         build = bool(service.get("build"))
@@ -244,7 +248,7 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to act: could not read a Compose config for {agent.name}",
         ) from exc
-    checks = (
+    checks = [
         (project, agent.project, "project"),
         (container, agent.container, "container"),
         (home, str(agent.home), "home"),
@@ -254,7 +258,19 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         # checkout, and the misattribution is invisible: the wrong agent simply
         # looks busier.
         (agent_id, agent.name, "agent id"),
-    )
+    ]
+    if target == CURRENT_HOME:
+        # The same merge reaches the credential bind, and retargeting THAT is
+        # silent in a way the home check cannot see: the gateway starts, boots
+        # clean, and posts as whichever sibling the source names.
+        checks += [
+            (credential.get("source", "-"), str(credentials_host_path(agent)), "credential source"),
+            (
+                "read-only" if credential.get("read_only") else "writable",
+                "read-only",
+                "credential mode",
+            ),
+        ]
     for got, expected, label in checks:
         if got != expected:
             raise AgentMgrError(

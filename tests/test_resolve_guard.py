@@ -33,18 +33,28 @@ def test_the_guard_passes_when_the_resolved_config_matches(run, instance):
     assert r.returncode == 0, r.stderr + r.stdout
 
 
-def test_the_guard_refuses_when_an_override_retargets_the_home(run, instance, tmp_path):
-    """An override that mounts a different home at /opt/data must be caught, even
-    though every descriptor variable resolved exactly as written."""
+@pytest.mark.parametrize(("home_env", "swap", "label"), [
+    # The home, even though every descriptor variable resolved exactly as written.
+    ("/opt/data", (".hermes-rowan", ".hermes-SOMEONE-ELSE"), "home"),
+    # The credential beside it, under the current contract. Retargeting THIS
+    # is silent in a way the home check cannot see: the gateway starts, boots
+    # clean, and posts as whichever sibling the source names.
+    ("/var/lib/hermes", (".plow-credentials-rowan", ".plow-credentials-sibling"),
+     "credential source"),
+    # And dropping :ro, which hands the agent's own container write access to
+    # the one copy of its credential that lives outside its home.
+    ("/var/lib/hermes", ('"read_only": true', '"read_only": false'), "credential mode"),
+])
+def test_the_guard_refuses_an_override_that_retargets_a_bind(
+        run, instance, tmp_path, home_env, swap, label):
     _agent(run, instance, "rowan")
-    env = _mismatched(tmp_path, "rowan")
-    # The mismatch: Compose resolves a different home at /opt/data.
-    (tmp_path / "bin" / "docker").write_text(
-        (tmp_path / "bin" / "docker").read_text().replace(
-            str(tmp_path / "home" / ".hermes-rowan"), str(tmp_path / ".hermes-SOMEONE-ELSE")))
+    env = _mismatched(tmp_path, "rowan", home_env=home_env)
+    docker = tmp_path / "bin" / "docker"
+    docker.write_text(docker.read_text().replace(*swap))
     r = run("resolve-guard", "rowan", env=env)
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
+    assert label in r.stderr
 
 
 def test_the_guard_refuses_when_an_override_forges_the_agents_identity(run, instance, tmp_path):
