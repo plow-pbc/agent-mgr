@@ -280,17 +280,14 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         (agent_id, agent.name, "agent id"),
     ]
     if target == CURRENT_HOME:
-        # The same merge reaches the credential bind, and retargeting THAT is
-        # silent in a way the home check cannot see: the gateway starts, boots
-        # clean, and posts as whichever sibling the source names.
-        checks += [
-            (credential.get("source", "-"), str(credentials_host_path(agent)), "credential source"),
-            (
-                "read-only" if credential.get("read_only") else "writable",
-                "read-only",
-                "credential mode",
-            ),
-        ]
+        # The same merge reaches the credential bind, where it is silent in a
+        # way the home check cannot see: the gateway boots clean and posts as
+        # whichever sibling the source names. Source and mode as one string --
+        # one bind, one invariant, and the refusal names both halves.
+        rendered = (
+            f"{credential.get('source', '-')} {'ro' if credential.get('read_only') else 'rw'}"
+        )
+        checks.append((rendered, f"{credentials_host_path(agent)} ro", "credential bind"))
     for got, expected, label in checks:
         if got != expected:
             raise AgentMgrError(

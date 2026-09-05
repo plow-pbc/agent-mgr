@@ -40,10 +40,10 @@ def test_the_guard_passes_when_the_resolved_config_matches(run, instance):
     # is silent in a way the home check cannot see: the gateway starts, boots
     # clean, and posts as whichever sibling the source names.
     ("/var/lib/hermes", (".plow-credentials-rowan", ".plow-credentials-sibling"),
-     "credential source"),
+     "credential bind"),
     # And dropping :ro, which hands the agent's own container write access to
     # the one copy of its credential that lives outside its home.
-    ("/var/lib/hermes", ('"read_only": true', '"read_only": false'), "credential mode"),
+    ("/var/lib/hermes", ('"read_only": true', '"read_only": false'), "credential bind"),
 ])
 def test_the_guard_refuses_an_override_that_retargets_a_bind(
         run, instance, tmp_path, home_env, swap, label):

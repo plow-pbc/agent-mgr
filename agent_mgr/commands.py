@@ -456,12 +456,9 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
 
 def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
     # The RUNNING container's contract, not the image's -- and not the two
-    # COMPARED either, the way the exec paths do it: a deploy that made a
-    # current image inspectable and then failed before recreation leaves the
-    # legacy container live, and reading its still-valid dotenv token is
-    # exactly the recovery the operator needs during that interval. Not
-    # agent.home/.env unconditionally either -- the current contract's own
-    # gateway truncates PLOW_AGENT_TOKEN out of it after first boot.
+    # COMPARED either, the way the exec paths do it: mid-migration the legacy
+    # container is still live, and reading its still-valid dotenv token is
+    # exactly the recovery the operator came here for.
     container = require_running(agent, registry)
     target = home_target(container)
     if target is None:
