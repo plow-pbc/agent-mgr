@@ -315,8 +315,15 @@ thing that works.
 
 ### Where a per-person value goes
 
-**The instance's own dotenv** — `$AGENT_HOME/.env`, the file that already holds
-its Plow token and its Latch credential, mounted at `/opt/data`.
+**The instance's own dotenv** — `$AGENT_HOME/.env`, the file that holds its
+Latch credential, mounted at the image's own HERMES_HOME (`/opt/data` for the
+legacy contract, `/var/lib/hermes` for the current one). It is also where the
+Plow token lives for a **legacy**-contract agent. A **current**-contract
+agent's Plow token instead lives OUTSIDE every home, in its own credential
+file (`~/.plow-credentials-<name>`, never under `$AGENT_HOME` — an agent's own
+container must not be able to reach a sibling's): the current base's own
+gateway truncates the token out of the dotenv after first boot, so that file
+is the durable copy from then on.
 
 `$AGENT_HOME` is `~/.hermes-<name>` by convention, but it is whatever the
 instance *resolved* — an agent whose descriptor declares `AGENT_HOME` keeps its

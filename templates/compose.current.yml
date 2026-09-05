@@ -5,10 +5,14 @@
 # here -- overriding them would leave that supervised gateway un-started while
 # agent-mgr's own `command:` started a second one beside it.
 #
-# agent-mgr writes only the bind-mounted .host copy; a root cont-init step
-# (baked into the image) promotes it into /var/lib/plow/credentials, which is
-# why this side can stay a normally-owned file.
+# AGENT_CREDENTIALS_HOST is a path OUTSIDE every agent's own home
+# (boot_contract.credentials_host_path) -- never under the mount above, which
+# this same container fully controls and could otherwise replace with a
+# symlink to a SIBLING agent's credential file. The bind is read-only in
+# addition to that, not instead of it: a root cont-init step (baked into the
+# image) promotes the read side into /var/lib/plow/credentials, and this
+# container never needs write access to its own source copy.
 services:
   hermes:
     volumes:
-      - ${AGENT_CREDENTIALS_HOST:?set by agent-mgr, derived from the image}:/var/lib/plow/credentials.host
+      - ${AGENT_CREDENTIALS_HOST:?set by agent-mgr, derived from the image}:/var/lib/plow/credentials.host:ro

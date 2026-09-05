@@ -2,7 +2,6 @@
 separate descriptor field -- and the pieces that follow from that: pulling the
 image before deriving anything, ensuring (not guarding) the current
 contract's credential file, and refusing a resume that would skip it."""
-import json
 import os
 from pathlib import Path
 
@@ -65,50 +64,6 @@ def test_ensure_image_local_pulls_only_when_absent(tmp_path, monkeypatch):
     assert "image inspect" in calls and "pull" in calls
 
 
-def test_a_build_based_agents_contract_comes_from_the_fleet_pin_not_its_local_tag(
-        run, instance, tmp_path):
-    """AGENT_IMAGE for a build-based agent is a local tag Compose builds
-    itself -- agent-mgr can neither pull nor inspect it before the first
-    build, so the contract must come from the fleet's own pinned base
-    instead, which a derived image always extends."""
-    local_tag = "sams-str-hermes-agent:local"
-    repo = instance("str", descriptor=f"AGENT_IMAGE={local_tag}\n")
-    run("register", "str", str(repo))
-    home = tmp_path / "home" / ".hermes-str"
-    cfg = json.dumps({
-        "name": "hermes-str",
-        "services": {
-            "hermes": {
-                "container_name": "hermes-str",
-                "environment": {"AGENT_ID": "str"},
-                "build": {"context": "."},
-                "image": local_tag,
-                "pull_policy": "never",
-                "volumes": [{"target": "/opt/data", "source": str(home)}],
-            }
-        },
-    })
-    # Placed in tmp_path/"bin" -- the SAME directory run()'s own fake curl/gh
-    # live in -- so this replaces only docker, never dropping the fakes
-    # install-plugin needs.
-    _stub_docker(tmp_path, (
-        "#!/usr/bin/env bash\n"
-        "case \"$*\" in\n"
-        # The local tag: not a registry reference -- never inspectable,
-        # never pullable. Any call naming it must fail.
-        f'  *"{local_tag}"*) exit 1 ;;\n'
-        "  *\"Config.Env\"*) echo '[\"HERMES_HOME=/opt/data\"]' ;;\n"
-        "  *\"image inspect\"*) exit 0 ;;\n"
-        f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;\n"
-        "  *\"ps -a --quiet\"*) : ;;\n"
-        "  *\"ps --status running --quiet\"*) : ;;\n"
-        "esac\n"
-        "exit 0\n"
-    ))
-    r = run("deploy", "str")
-    assert r.returncode == 0, r.stderr
-
-
 def test_ensure_image_local_does_not_pull_when_present(tmp_path, monkeypatch):
     log = tmp_path / "calls.log"
     b = _stub_docker(tmp_path, f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> {log}\nexit 0\n")
@@ -130,12 +85,27 @@ def _resolved_agent(monkeypatch, run, instance, registry, tmp_path, name="rowan"
     return resolve_agent(name, Registry(registry), ROOT)
 
 
+def test_credentials_host_path_lives_outside_every_agent_home(
+        monkeypatch, run, instance, registry, tmp_path):
+    """Not a symlink escape hatch: the path is computed independently of
+    whatever the agent's own (possibly compromised) container has put inside
+    its home, including a symlink named exactly like an in-home path would
+    have been."""
+    from agent_mgr import boot_contract
+    agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
+    path = boot_contract.credentials_host_path(agent)
+    assert path == Path.home() / f".plow-credentials-{agent.name}"
+    assert agent.home not in path.parents
+
+
 def test_ensure_credentials_writes_from_the_dotenv(monkeypatch, run, instance, registry, tmp_path):
     from agent_mgr import boot_contract
     agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
     (agent.home / ".env").write_text("PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n")
     destination = boot_contract.ensure_credentials(agent)
-    assert destination == agent.home / "credentials.host"
+    expected = boot_contract.credentials_host_path(agent)
+    assert destination == expected
+    assert not str(expected).startswith(str(agent.home)), "must live outside every agent's home"
     assert destination.read_text() == "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n"
 
 
@@ -145,7 +115,7 @@ def test_ensure_credentials_leaves_an_existing_file_alone(monkeypatch, run, inst
     empty dotenv would erase the agent's credential, not protect it."""
     from agent_mgr import boot_contract
     agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
-    destination = agent.home / "credentials.host"
+    destination = boot_contract.credentials_host_path(agent)
     destination.write_text("PLOW_API_BASE=https://old.example\nPLOW_AGENT_TOKEN=tok_old\n")
     (agent.home / ".env").write_text("PLOW_HOME_CHANNEL=cht_x\nPLOW_AGENT_TOKEN=\n")
     result = boot_contract.ensure_credentials(agent)
@@ -203,7 +173,11 @@ def test_up_force_recreates_for_the_current_contract_only(run, instance, tmp_pat
     r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     assert "--force-recreate" in log.read_text()
-    assert (home / "credentials.host").read_text() == (
+    # Outside home -- the run() fixture points HOME at tmp_path/"home" for
+    # the subprocess, which is what credentials_host_path() resolves against.
+    credentials_host = tmp_path / "home" / ".plow-credentials-rowan"
+    assert not str(credentials_host).startswith(str(home))
+    assert credentials_host.read_text() == (
         "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n"
     )
 

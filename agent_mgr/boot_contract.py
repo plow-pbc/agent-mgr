@@ -122,13 +122,19 @@ def ensure_image_local(image: str) -> None:
 
 
 def credentials_host_path(agent: ResolvedAgent) -> Path:
-    """Where the current contract's two-key credential file lives on the host.
+    """Where the current contract's two-key credential file lives on the
+    host -- OUTSIDE every agent's own home, deliberately.
 
-    Inside the agent's own home, so no new per-instance path convention is
-    needed -- it is also visible (harmlessly) under the HERMES_HOME mount,
-    but the bind at /var/lib/plow/credentials.host is what makes it matter.
+    A path under agent.home is one the agent's own (possibly compromised)
+    container fully controls, since that whole directory is its mount: it
+    could replace this file with a symlink to a SIBLING agent's credential
+    file. `Path.is_file()` follows symlinks, and the compose bind is
+    read-only, but read-only on the wrong host path still discloses another
+    agent's live token -- so the fix is not access mode, it is location.
+    Living outside every home means no agent's container has write access to
+    this path or its parent at all, symlink or not.
     """
-    return agent.home / "credentials.host"
+    return Path.home() / f".plow-credentials-{agent.name}"
 
 
 def ensure_credentials(agent: ResolvedAgent) -> Path:
@@ -160,6 +166,23 @@ def ensure_credentials(agent: ResolvedAgent) -> Path:
         f"PLOW_API_BASE/PLOW_AGENT_TOKEN and {destination} does not exist yet. "
         f"Run 'agent-mgr activate {agent.name}' first.",
     )
+
+
+def read_plow_credentials(agent: ResolvedAgent) -> tuple[str, str]:
+    """(PLOW_API_BASE, PLOW_AGENT_TOKEN), from whichever source is canonical
+    for this agent's boot contract right now.
+
+    The current contract's own gateway truncates both keys out of the home
+    dotenv after first boot -- credentials_host_path() is the durable copy
+    there, the same file ensure_credentials() writes. The legacy contract has
+    no such file; its dotenv stays canonical. Read-only: callers that need to
+    WRITE go through ensure_credentials() instead.
+    """
+    current = require_home_target(agent) == CURRENT_HOME
+    source = credentials_host_path(agent) if current else agent.home / ".env"
+    if not source.is_file():
+        return "", ""
+    return dotenv_read(source, "PLOW_API_BASE"), dotenv_read(source, "PLOW_AGENT_TOKEN")
 
 
 def require_running_contract_matches(agent: ResolvedAgent, container_id: str) -> None:

@@ -10,7 +10,11 @@ import termios
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
-from .boot_contract import require_home_target, require_running_contract_matches
+from .boot_contract import (
+    read_plow_credentials,
+    require_home_target,
+    require_running_contract_matches,
+)
 from .cloud_http import HttpCloudTransport
 from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
@@ -456,14 +460,16 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
 
 
 def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
-    dotenv = agent.home / ".env"
-    token = dotenv_read(dotenv, "PLOW_AGENT_TOKEN") if dotenv.is_file() else ""
+    # Not agent.home/.env unconditionally: the current contract's own
+    # gateway truncates PLOW_AGENT_TOKEN out of it after first boot, and
+    # read_plow_credentials() knows where the durable copy actually lives.
+    base, token = read_plow_credentials(agent)
     if not token:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            f"PLOW_AGENT_TOKEN is empty in {dotenv} -- run 'agent-mgr activate {agent.name}' first",
+            f"PLOW_AGENT_TOKEN is empty for {agent.name} -- run 'agent-mgr activate {agent.name}' first",
         )
-    base = dotenv_read(dotenv, "PLOW_API_BASE") or "https://api.plow.co"
+    base = base or "https://api.plow.co"
     response = compose(
         agent,
         [

@@ -116,9 +116,13 @@ def test_the_current_contract_starts_no_second_gateway_and_mounts_credentials(tm
     svc = json.loads(r.stdout)["services"]["hermes"]
     assert not svc.get("command")
     assert not svc.get("entrypoint")
-    targets = {v["target"]: v["source"] for v in svc["volumes"]}
-    assert targets[CURRENT_HOME] == str(tmp_path / ".hermes-test-rowan")
-    assert targets["/var/lib/plow/credentials.host"] == str(tmp_path / "credentials.host")
+    volumes = {v["target"]: v for v in svc["volumes"]}
+    assert volumes[CURRENT_HOME]["source"] == str(tmp_path / ".hermes-test-rowan")
+    credentials = volumes["/var/lib/plow/credentials.host"]
+    assert credentials["source"] == str(tmp_path / "credentials.host")
+    # Read-only in addition to living outside the agent's own home (asserted
+    # in test_boot_contract.py) -- never write access to its own source copy.
+    assert credentials["read_only"] is True
 
 
 def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):

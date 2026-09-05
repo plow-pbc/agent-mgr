@@ -361,6 +361,26 @@ def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
     return env_file
 
 
+def test_chats_reads_the_token_from_the_credential_file_for_a_current_contract_agent(
+        run, instance, tmp_path):
+    """The current base's own gateway truncates PLOW_AGENT_TOKEN out of the
+    home dotenv after first boot -- the credential file, not the dotenv, is
+    where a migrated agent's token actually lives. PLOW_HOME_CHANNEL is
+    unaffected either way: it is not one of the truncated keys."""
+    run("register", "property", str(instance("property")))
+    run("deploy", "property")
+    home = tmp_path / "home" / ".hermes-property"
+    (home / ".env").write_text("HOSTEX_TOKEN=keepme\nPLOW_HOME_CHANNEL=cht_old_dm\n")
+    (tmp_path / "home" / ".plow-credentials-property").write_text(
+        "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_plow\n"
+    )
+    r = run("chats", "property", env=_bin(
+        tmp_path, "property", home_env="/var/lib/hermes",
+        exec_output=_chats_response(("cht_old_dm", None))))
+    assert r.returncode == 0, r.stderr
+    assert "cht_old_dm" in r.stdout
+
+
 def test_chats_marks_the_home_and_keeps_the_token_off_argv(run, instance, tmp_path):
     _with_plow(run, instance, tmp_path)
     log = tmp_path / "docker.log"
