@@ -1,5 +1,7 @@
-# Layered in by agent-mgr for the current boot contract (HERMES_HOME=/var/lib/hermes):
-# CMD ["/init"] boots the image's own supervised hermes-gateway, gated by a
+# Layered in LAST by agent-mgr for the current boot contract
+# (HERMES_HOME=/var/lib/hermes), after the instance's own compose.override.yml:
+# what this file declares is the boot contract's and no override can retarget
+# it. CMD ["/init"] boots the image's own supervised hermes-gateway, gated by a
 # plow-init oneshot that refuses to start unless /var/lib/plow/credentials
 # exists as root:root mode 600. Neither entrypoint nor command is overridden
 # here -- overriding them would leave that supervised gateway un-started while

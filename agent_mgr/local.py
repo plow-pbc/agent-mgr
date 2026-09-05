@@ -8,7 +8,6 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from .boot_contract import (
-    CREDENTIALS_TARGET,
     CURRENT_HOME,
     credentials_host_path,
     ensure_credentials,
@@ -97,11 +96,16 @@ def environment(agent: ResolvedAgent, target: str) -> dict[str, str]:
 
 def compose_argv(agent: ResolvedAgent, args: Sequence[str], target: str) -> list[str]:
     files = ["-f", str(ROOT / "templates" / "compose.yml")]
-    contract_file = "compose.current.yml" if target == CURRENT_HOME else "compose.legacy.yml"
-    files += ["-f", str(ROOT / "templates" / contract_file)]
     override = agent.repo / "compose.override.yml"
     if override.is_file():
         files.extend(["-f", str(override)])
+    # LAST, so every key the boot contract declares is beyond an instance
+    # override's reach -- prevention, rather than a guard enumerating one more
+    # boot-critical field per round. What the overlay leaves alone still merges
+    # through: measured, an operator's build, pull_policy, env_file and extra
+    # mounts all survive, Compose merging volumes by target rather than whole.
+    contract_file = "compose.current.yml" if target == CURRENT_HOME else "compose.legacy.yml"
+    files += ["-f", str(ROOT / "templates" / contract_file)]
     return [
         "docker",
         "compose",
@@ -256,9 +260,6 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         home = next(
             (item.get("source", "") for item in volumes if item.get("target") == target), "-"
         )
-        credential: dict[str, object] = next(
-            (item for item in volumes if item.get("target") == CREDENTIALS_TARGET), {}
-        )
         agent_id = service.get("environment", {}).get("AGENT_ID", "-")
         image = service.get("image", "-")
         build = bool(service.get("build"))
@@ -268,26 +269,17 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to act: could not read a Compose config for {agent.name}",
         ) from exc
+    # Exactly what an override can still reach: the SHARED base template's keys,
+    # which it merges after -- measured, an override naming AGENT_ID wins, and
+    # usage is then attributed to a sibling on the same checkout invisibly, the
+    # wrong agent simply looking busier. The contract overlay's own keys are
+    # absent because compose_argv merges it last; nothing can retarget them.
     checks = [
         (project, agent.project, "project"),
         (container, agent.container, "container"),
         (home, str(agent.home), "home"),
-        # The override merges AFTER the template, so it can replace any value
-        # the template set -- measured: an override naming AGENT_ID wins.
-        # Unchecked, usage would be attributed to a sibling on the same
-        # checkout, and the misattribution is invisible: the wrong agent simply
-        # looks busier.
         (agent_id, agent.name, "agent id"),
     ]
-    if target == CURRENT_HOME:
-        # The same merge reaches the credential bind, where it is silent in a
-        # way the home check cannot see: the gateway boots clean and posts as
-        # whichever sibling the source names. Source and mode as one string --
-        # one bind, one invariant, and the refusal names both halves.
-        rendered = (
-            f"{credential.get('source', '-')} {'ro' if credential.get('read_only') else 'rw'}"
-        )
-        checks.append((rendered, f"{credentials_host_path(agent)} ro", "credential bind"))
     for got, expected, label in checks:
         if got != expected:
             raise AgentMgrError(

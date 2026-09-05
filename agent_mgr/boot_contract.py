@@ -14,9 +14,6 @@ from .models import ResolvedAgent
 LEGACY_HOME = "/opt/data"
 CURRENT_HOME = "/var/lib/hermes"
 KNOWN_HOME_TARGETS = frozenset({LEGACY_HOME, CURRENT_HOME})
-# Where templates/compose.current.yml binds credentials_host_path() -- the one
-# mount besides the home whose source decides whose token the gateway posts as.
-CREDENTIALS_TARGET = "/var/lib/plow/credentials.host"
 
 
 def _baked_home_env(target: str) -> str | None:

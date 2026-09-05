@@ -43,9 +43,11 @@ def compose_config(tmp_path, home, name, override=None, extra_env=None, contract
     if extra_env:
         env.update(extra_env)
     contract_file = "compose.current.yml" if contract == "current" else "compose.legacy.yml"
-    files = ["-f", str(ROOT / "templates" / "compose.yml"), "-f", str(ROOT / "templates" / contract_file)]
+    files = ["-f", str(ROOT / "templates" / "compose.yml")]
     if override:
         files += ["-f", str(override)]
+    # Last, the way compose_argv() layers it.
+    files += ["-f", str(ROOT / "templates" / contract_file)]
     with allow_real_docker():
         return subprocess.run(["docker", "compose", *files, "config", "--format", "json"],
                               capture_output=True, text=True, env=env)
@@ -110,8 +112,20 @@ def test_the_template_mounts_nothing_but_the_agents_own_home(tmp_path):
 
 def test_the_current_contract_starts_no_second_gateway_and_mounts_credentials(tmp_path):
     """The current base already boots a supervised gateway of its own; layering
-    in the legacy entrypoint/command here would start a second one beside it."""
-    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", contract="current")
+    in the legacy entrypoint/command here would start a second one beside it.
+
+    Through an override retargeting the credential bind at a sibling and
+    dropping `:ro`: the overlay merges after it, so the agent's own file is
+    the only thing that can land there. Prevention, not detection.
+    """
+    override = tmp_path / "compose.override.yml"
+    override.write_text(
+        "services:\n"
+        "  hermes:\n"
+        "    volumes:\n"
+        "      - /tmp/sibling-credentials:/var/lib/plow/credentials.host\n")
+    r = compose_config(tmp_path, tmp_path / ".hermes-test-rowan", "rowan", contract="current",
+                       override=override)
     assert r.returncode == 0, r.stderr
     svc = json.loads(r.stdout)["services"]["hermes"]
     assert not svc.get("command")
@@ -146,6 +160,10 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
         # sibling, and says nothing while doing it.
         "    environment:\n"
         "      - AGENT_ID=someone-else\n"
+        # ...except a key the CONTRACT overlay declares: it merges last, so
+        # this pair loses -- no override leaves a legacy image ungatewayed.
+        "    entrypoint: [\"/bin/sh\"]\n"
+        "    command: [\"-c\", \"sleep infinity\"]\n"
     )
     r = compose_config(tmp_path, tmp_path / ".hermes", "str", override=override,
                        extra_env={"STR_REPO": str(build_ctx), "STR_VAULT": str(vault)})
@@ -156,6 +174,8 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
     assert svc["environment"]["AGENT_ID"] == "someone-else", \
         "the override no longer wins; resolve_guard's premise is gone"
     assert {v["target"] for v in svc["volumes"]} == {LEGACY_HOME, "/opt/data/repo/vault"}
+    assert svc["entrypoint"] == ["/opt/hermes/docker/entrypoint-dispatch.sh"]
+    assert svc["command"] == ["gateway", "run"]
 
 
 def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):

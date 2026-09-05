@@ -34,16 +34,12 @@ def test_the_guard_passes_when_the_resolved_config_matches(run, instance):
 
 
 @pytest.mark.parametrize(("home_env", "swap", "label"), [
-    # The home, even though every descriptor variable resolved exactly as written.
+    # The home, even though every descriptor variable resolved exactly as
+    # written. The credential bind beside it is NOT here: the contract overlay
+    # merges after the instance override, so nothing can retarget it and there
+    # is no mismatch to detect -- test_compose.py asserts that prevention
+    # against the real merge instead.
     ("/opt/data", (".hermes-rowan", ".hermes-SOMEONE-ELSE"), "home"),
-    # The credential beside it, under the current contract. Retargeting THIS
-    # is silent in a way the home check cannot see: the gateway starts, boots
-    # clean, and posts as whichever sibling the source names.
-    ("/var/lib/hermes", (".plow-credentials-rowan", ".plow-credentials-sibling"),
-     "credential bind"),
-    # And dropping :ro, which hands the agent's own container write access to
-    # the one copy of its credential that lives outside its home.
-    ("/var/lib/hermes", ('"read_only": true', '"read_only": false'), "credential bind"),
 ])
 def test_the_guard_refuses_an_override_that_retargets_a_bind(
         run, instance, tmp_path, home_env, swap, label):
