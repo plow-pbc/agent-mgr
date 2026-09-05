@@ -460,19 +460,33 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     assert "tok_xyz" not in r.stdout
 
 
+MAC = [{"device_uid": "dev_mac"}]
+RELAY_SCOPES = ["relay:call", "chats:use", "llm:chat", "payments:request"]
+
+
 @pytest.mark.parametrize(
-    ("preexisting", "expected_home"),
+    ("preexisting", "expected_home", "devices", "expected_scopes"),
     [
-        ("", "cht_fresh"),
-        ("PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n", "cht_existing"),
-        ("PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n", "cht_legacy"),
+        ("", "cht_fresh", MAC, RELAY_SCOPES),
+        (
+            "PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n",
+            "cht_existing", MAC, RELAY_SCOPES,
+        ),
+        (
+            "PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n",
+            "cht_legacy", [], ["chats:use", "llm:chat"],
+        ),
     ],
 )
 def test_activate_narrows_bootstrap_to_line_granted_canonical_credential(
-    run, instance, tmp_path, credential_api, preexisting, expected_home
+    run, instance, tmp_path, credential_api, preexisting, expected_home, devices,
+    expected_scopes,
 ):
     """The frozen upstream activation remains the phone bind; agent-mgr only
-    narrows its broad result through Plow's existing key endpoint."""
+    narrows its broad result through Plow's existing key endpoint -- to the
+    relay-holding role when the account has a Mac, the chat-only one when not,
+    the same split plow's cloud seam makes."""
+    credential_api.devices = devices
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
@@ -504,18 +518,29 @@ printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE
     assert f"PLOW_CHAT_CHAT_UID={expected_home}" in dotenv
     assert "PLOW_CHAT_TOKEN=plow_fresh" in dotenv
     assert credential_api.requests[0][0:2] == ("GET", f"/v1/chats/{expected_home}")
+    assert credential_api.requests[1][0:2] == ("GET", "/v1/relay/info")
     assert all(request[3] == "Bearer plow_fresh" for request in credential_api.requests)
-    request = credential_api.requests[1][2]
+    request = credential_api.requests[2][2]
     assert request == {
         "name": "agent-mgr:rowan",
-        "scopes": ["chats:use", "llm:chat"],
+        "scopes": expected_scopes,
         "chat_uids": ["line:ln_elm"],
     }
 
 
+@pytest.mark.parametrize(
+    ("relay_info_status", "chat_status"), [(200, 200), (403, 200), (200, 403)]
+)
 def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
-    run, instance, tmp_path, credential_api
+    run, instance, tmp_path, credential_api, relay_info_status, chat_status
 ):
+    """Re-run on a credential Plow already narrowed -- the reply to a committed
+    PUT lost, or an operator repeating the command -- it stops at the 403 from
+    /v1/relay/info rather than failing the recovery it was named as. A 403
+    from anything else in the flow is still the failure it always was."""
+    credential_api.relay_info_status = relay_info_status
+    credential_api.chat_status = chat_status
+    already_narrowed = relay_info_status == 403
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
@@ -524,7 +549,7 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
         "PLOW_CHAT_TOKEN=plow_bootstrap\n"
         f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
     )
-    docker_bin, _ = _fake_docker(tmp_path)
+    docker_bin, docker_log = _fake_docker(tmp_path)
     b = tmp_path / "credential-api-bin"
     b.mkdir()
     (b / "docker").symlink_to(docker_bin / "docker")
@@ -537,11 +562,22 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
         },
     )
 
+    if chat_status != 200:
+        assert r.returncode != 0
+        assert "already narrowed" not in r.stdout
+        return
     assert r.returncode == 0, r.stderr
     dotenv = (home / ".env").read_text()
     assert "PLOW_HOME_CHANNEL=cht_home" in dotenv
     assert "PLOW_AGENT_TOKEN=plow_bootstrap" in dotenv
-    assert credential_api.requests[1][2]["chat_uids"] == ["line:ln_elm"]
+    puts = [request for request in credential_api.requests if request[0] == "PUT"]
+    if already_narrowed:
+        assert puts == []
+        assert "already narrowed" in r.stdout
+        # Reloaded anyway: the recovery case is an activate() that never got to.
+        assert "up" in docker_log.read_text().split()
+    else:
+        assert puts[0][2]["chat_uids"] == ["line:ln_elm"]
 
 
 def test_scope_chat_credential_finishes_an_interrupted_activation_publication(

@@ -16,7 +16,7 @@ from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write, dotenv_read, read_regular_text
 from .local import compose, require_own_home, require_running, resolve_guard
-from .models import ResolvedAgent
+from .models import JsonValue, ResolvedAgent
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -117,6 +117,12 @@ def activate(agent: ResolvedAgent, registry: Registry) -> int:
     return 0
 
 
+class AlreadyNarrowed(AgentMgrError):
+    """/v1/relay/info refused the credential: it no longer holds the wildcard
+    grant, so it was narrowed already. Distinct from any other rejection in
+    the same flow, which stays a failure."""
+
+
 def narrow_chat_credential(agent: ResolvedAgent) -> int:
     """Convert an activation credential to line reach in place."""
     dotenv = agent.home / ".env"
@@ -156,12 +162,37 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, "home chat did not identify exactly one current agent line"
         )
+    # The same role plow's own cloud seam mints (relay/agent_credentials.py):
+    # with a Mac on the account the credential reaches it -- `relay:call` is
+    # what makes `GET /v1/agents/cloud/me` answer an `mcp_url`, which is how a
+    # plow-init image learns it has a relay server at all -- and without one it
+    # keeps to its chats and its model. Asked of the bootstrap credential,
+    # whose wildcard grant clears the relay:device gate on /v1/relay/info.
+    try:
+        info = transport.request("GET", "/v1/relay/info")
+    except AgentMgrError as error:
+        # This one request, and only its 403: relay:device is what the
+        # bootstrap credential's wildcard grant clears, so a credential that
+        # lacks it was narrowed already and its role settled then.
+        if (
+            error.code is ErrorCode.REMOTE_REJECTED
+            and "(403)" in error.message
+            and "relay:device" in error.message
+        ):
+            raise AlreadyNarrowed(ErrorCode.REMOTE_REJECTED, error.message) from None
+        raise
+    has_relay = isinstance(info, dict) and bool(info.get("devices"))
+    scopes: list[JsonValue] = (
+        ["relay:call", "chats:use", "llm:chat", "payments:request"]
+        if has_relay
+        else ["chats:use", "llm:chat"]
+    )
     transport.request(
         "PUT",
         "/v1/api-keys/current",
         {
             "name": f"agent-mgr:{agent.name}",
-            "scopes": ["chats:use", "llm:chat"],
+            "scopes": scopes,
             "chat_uids": [f"line:{line_uid}"],
         },
     )
@@ -173,7 +204,19 @@ def scope_chat_credential(agent: ResolvedAgent, registry: Registry) -> int:
     require_own_home(agent, registry)
     resolve_guard(agent, registry)
     publish_activation_env(agent)
-    result = narrow_chat_credential(agent)
+    try:
+        result = narrow_chat_credential(agent)
+    except AlreadyNarrowed:
+        # An activation whose reply was lost after Plow committed the PUT, or
+        # an operator repeating this command. Narrowing cannot widen, so
+        # nothing is written; a different role is a fresh activation. The
+        # reload still runs: in the lost-reply case activate() never reloaded,
+        # so the gateway is on the pre-activation token until this does. Only
+        # here, not in activate(): a fresh bootstrap credential answering 403
+        # is an anomaly its own handler reports.
+        print(f"{agent.name}'s credential is already narrowed -- nothing to write")
+        reload_if_running(agent, registry, "the credential activation already narrowed")
+        return 0
     reload_if_running(agent, registry, "the scoped chat credential just written")
     return result
 
