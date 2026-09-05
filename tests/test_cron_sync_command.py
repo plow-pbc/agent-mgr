@@ -43,19 +43,10 @@ def test_refuses_when_the_running_container_predates_a_contract_change(run, inst
     (repo / "crons.json").write_text(
         '[{"name": "j", "schedule": "0 6 * * *", "prompt": "p", "deliver": "local"}]')
     run("register", "str", str(repo))
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-str", name="str",
-                    home_env="/var/lib/hermes")
-    # The fake answers every Config.Env inspect the same way regardless of
-    # target, so patch in a container id that answers differently -- the
-    # running container was created before the image moved to the current
+    # The running container was created before the image moved to the current
     # contract.
-    script = (b / "docker").read_text().replace(
-        'case "$*" in *"Config.Env"*) echo \'["HERMES_HOME=/var/lib/hermes"]\'; exit 0 ;; esac',
-        'case "$*" in *"Config.Env"*deadbeef*) echo \'["HERMES_HOME=/opt/data"]\'; exit 0 ;; '
-        '*"Config.Env"*) echo \'["HERMES_HOME=/var/lib/hermes"]\'; exit 0 ;; esac',
-    )
-    (b / "docker").write_text(script)
-    r = run("cron-sync", "str", env={"PATH": f"{b}:{os.environ['PATH']}"})
+    r = run("cron-sync", "str", env=_bin(tmp_path, "str", home_env="/var/lib/hermes",
+                                         container_home_env="/opt/data"))
     assert r.returncode != 0
     assert "/opt/data" in r.stderr and "/var/lib/hermes" in r.stderr
 

@@ -218,31 +218,6 @@ def test_ensure_credentials_fails_loudly_when_neither_exists(monkeypatch, run, i
     assert "rowan" in str(exc.value) and "activate" in str(exc.value)
 
 
-def test_require_running_contract_matches_refuses_on_a_stale_container(
-        monkeypatch, run, instance, registry, tmp_path):
-    """cron_sync and check_connectors run via exec, which Compose's own
-    image-diff never protects -- a container created under one contract but
-    now resolving to another must be caught directly."""
-    from agent_mgr import boot_contract
-    from agent_mgr.errors import AgentMgrError
-    agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
-    b = tmp_path / "stale-bin"
-    b.mkdir()
-    (b / "docker").write_text(
-        "#!/usr/bin/env bash\n"
-        "case \"$*\" in\n"
-        "  *stalecontainer*) echo '[\"HERMES_HOME=/var/lib/hermes\"]' ;;\n"
-        "  *) echo '[\"HERMES_HOME=/opt/data\"]' ;;\n"
-        "esac\n"
-    )
-    (b / "docker").chmod(0o755)
-    monkeypatch.setenv("PATH", f"{b}{os.pathsep}{os.environ['PATH']}")
-    with pytest.raises(AgentMgrError) as exc:
-        boot_contract.require_running_contract_matches(agent, "stalecontainer")
-    assert "rowan" in str(exc.value)
-    assert "/var/lib/hermes" in str(exc.value) and "/opt/data" in str(exc.value)
-
-
 def _seed_credentials(tmp_path, name):
     home = tmp_path / "home" / f".hermes-{name}"
     home.mkdir(parents=True, exist_ok=True)
