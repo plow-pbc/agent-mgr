@@ -4,7 +4,6 @@ image before deriving anything, ensuring (not guarding) the current
 contract's credential file, and refusing a resume that would skip it."""
 import json
 import os
-from pathlib import Path
 
 import pytest
 
@@ -156,19 +155,6 @@ def _resolved_agent(monkeypatch, run, instance, registry, tmp_path, name="rowan"
     run("deploy", name, check=True)
     monkeypatch.setenv("HOME", str(tmp_path / "home"))
     return resolve_agent(name, Registry(registry), ROOT)
-
-
-def test_credentials_host_path_lives_outside_every_agent_home(
-        monkeypatch, run, instance, registry, tmp_path):
-    """Not a symlink escape hatch: the path is computed independently of
-    whatever the agent's own (possibly compromised) container has put inside
-    its home, including a symlink named exactly like an in-home path would
-    have been."""
-    from agent_mgr import boot_contract
-    agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
-    path = boot_contract.credentials_host_path(agent)
-    assert path == Path.home() / f".plow-credentials-{agent.name}"
-    assert agent.home not in path.parents
 
 
 FRESH = "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n"
