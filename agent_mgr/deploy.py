@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -47,7 +48,9 @@ def materialize_plow_credentials(agent: ResolvedAgent, registry: Registry) -> Pa
             "plow-init needs both PLOW_API_BASE and PLOW_AGENT_TOKEN before it can boot. "
             "Nothing was written.",
         )
-    body = "".join(f"{key}={values[key]}\n" for key in CREDENTIAL_KEYS)
+    # Quoted, not written verbatim: a value carrying shell syntax must not
+    # execute as root wherever this file is shell-evaluated rather than parsed.
+    body = "".join(f"{key}={shlex.quote(values[key])}\n" for key in CREDENTIAL_KEYS)
     atomic_write(agent.credentials, body.encode())
     return agent.credentials
 

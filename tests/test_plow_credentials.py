@@ -48,6 +48,25 @@ def test_materialize_writes_exactly_the_two_credential_keys_outside_the_home(
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
+def test_materialize_quotes_a_value_carrying_shell_syntax(
+    run, instance, registry, tmp_path, monkeypatch
+):
+    """Whichever consumer of this file turns out to shell-evaluate it rather
+    than parse it, a token carrying shell syntax must not execute as root
+    there -- defense in depth regardless of which consumer is careless."""
+    dangerous = "tok_$(whoami)"
+    agent = _agent(
+        run, instance, registry, tmp_path, monkeypatch,
+        dotenv=f"PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN={dangerous}\n",
+    )
+
+    materialize_plow_credentials(agent, Registry(registry))
+
+    text = agent.credentials.read_text()
+    assert "PLOW_AGENT_TOKEN='tok_$(whoami)'" in text
+    assert f"PLOW_AGENT_TOKEN={dangerous}\n" not in text
+
+
 @pytest.mark.parametrize(
     "dotenv, missing",
     [
