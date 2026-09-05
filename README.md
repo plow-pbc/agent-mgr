@@ -123,7 +123,7 @@ detaches terminal stdin: pipe input (for example, `credential-helper | agent-mgr
 --json set-latch errands`), and set `AGENT_TRANSITION_ACK=1` for an intentional
 live transition. `logs` and `compose` reject JSON because they can stream forever.
 
-## Cloud agents
+## Cloud assistants
 
 The cloud-control commands use Plow's API and return structured JSON:
 
@@ -131,18 +131,23 @@ The cloud-control commands use Plow's API and return structured JSON:
 export PLOW_API_BASE=https://api.plow.co
 read -rsp 'Plow API token: ' PLOW_API_TOKEN; export PLOW_API_TOKEN
 
-printf '%s\n' '{"name":"Mary","provider":"exe:hermes","chat_uids":["cht_example"]}' \
+printf '%s\n' '{"name":"Mary","provider":"exe:hermes","line_uid":"ln_example"}' \
   | agent-mgr --json cloud-create
 agent-mgr --json cloud-list
-agent-mgr --json cloud-get AGENT_ID
-printf '%s\n' '{"chat_uids":["cht_example","cht_second"]}' \
-  | agent-mgr --json cloud-update-chats AGENT_ID
-agent-mgr --json cloud-delete AGENT_ID
+agent-mgr --json cloud-get ASSISTANT_UID
+agent-mgr --json cloud-move ASSISTANT_UID ln_other
+agent-mgr --json cloud-delete ASSISTANT_UID
 ```
 
+An assistant is one runtime on one line, and the slot is 1:1 — so an assistant
+is created *for a line*, not for a set of chats, and `cloud-list` answers one
+slot per line in the pool, carrying either the assistant on it or `null`. Its
+lifecycle-anchor chats are lifecycle state rather than something a caller sets:
+moving an assistant to another line is `cloud-move`, and the anchors follow.
+
 Create normally returns `status: "provisioning"`. Callers should poll
-`cloud-get` until the agent reaches `running`, `failed`, or `teardown`. Retry
-creation after `failed`; repeat deletion after `teardown`. agent-mgr never
+`cloud-get` until the assistant reaches `running`, `failed`, or `teardown`.
+Retry creation after `failed`; repeat deletion after `teardown`. agent-mgr never
 contacts exe.dev or handles tenant credentials. Local Compose commands remain
 separate from the cloud-control commands.
 
@@ -422,7 +427,7 @@ that ref deliberate.
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow)'s `cloud-agents/hermes`
 is the cloud side this tool mirrors: the same Hermes runtime for Plow's
 customers, one VM per tenant, native under systemd, provisioned by
-`POST /v1/agents/cloud`. Same protocol underneath, different products around
+`POST /v1/assistants`. Same protocol underneath, different products around
 it. So the posture is:
 
 **Converge on the artifacts.** The plugin, the base image and the integration
