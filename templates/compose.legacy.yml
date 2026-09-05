@@ -3,6 +3,12 @@
 # is agent-mgr's: this image supervises no gateway of its own, so it must.
 services:
   hermes:
+    # Reasserted, not inherited. agent-mgr inspects AGENT_IMAGE to derive this
+    # contract and the home target, so an override naming a different image
+    # would have Compose run one image under another's derived boot chain. An
+    # agent that builds its own image names that tag in AGENT_IMAGE -- see
+    # docs/HOWTO.md.
+    image: ${AGENT_IMAGE:?set by agent-mgr from the instance descriptor}
     # Named rather than inherited. `command` below is arguments FOR the
     # image's entrypoint, not a program -- and the shared cloud image clears
     # ENTRYPOINT so its host can boot /sbin/init, which leaves `gateway` to be

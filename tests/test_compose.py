@@ -136,7 +136,19 @@ def test_the_current_contract_starts_no_second_gateway_and_mounts_credentials(tm
     assert credentials["read_only"] is True
 
 
-def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
+@pytest.mark.parametrize(("contract", "entrypoint", "command", "targets"), [
+    ("legacy", ["/opt/hermes/docker/entrypoint-dispatch.sh"], ["gateway", "run"],
+     {LEGACY_HOME, "/srv/vault"}),
+    # The same hostile override through the contract whose overlay names no
+    # boot chain of its own. Merging last only carries the keys the overlay
+    # DECLARES, so these must be reset to the image's own /init rather than
+    # left out -- otherwise a legacy override survives the migration and the
+    # credential promotion never runs.
+    ("current", None, None,
+     {CURRENT_HOME, "/srv/vault", "/var/lib/plow/credentials.host"}),
+])
+def test_an_instance_override_merges_but_never_outranks_the_contract(
+        tmp_path, contract, entrypoint, command, targets):
     """This is what 'an agent inherits from agent-mgr' means concretely."""
     build_ctx = tmp_path / "str-repo"
     (build_ctx / "bin").mkdir(parents=True)
@@ -148,9 +160,12 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
         "services:\n"
         "  hermes:\n"
         "    build: ${STR_REPO:?}\n"
+        # agent-mgr inspected AGENT_IMAGE to choose this overlay and the home
+        # target; a bare tag here would run a different image under that
+        # derivation. A build-based agent names its tag in AGENT_IMAGE instead.
         "    image: sams-str-hermes-agent:local\n"
         "    volumes:\n"
-        "      - ${STR_VAULT:?}:/opt/data/repo/vault\n"
+        "      - ${STR_VAULT:?}:/srv/vault\n"
         # An override can replace anything the template set, identity
         # included -- which is why resolve_guard checks AGENT_ID after
         # the merge. A forged one attributes a person's usage to a
@@ -162,16 +177,17 @@ def test_an_instance_override_adds_a_build_and_merges_volumes(tmp_path):
         "    command: [\"-c\", \"sleep infinity\"]\n"
     )
     r = compose_config(tmp_path, tmp_path / ".hermes", "str", override=override,
+                       contract=contract,
                        extra_env={"STR_REPO": str(build_ctx), "STR_VAULT": str(vault)})
     assert r.returncode == 0, r.stderr
     svc = json.loads(r.stdout)["services"]["hermes"]
     assert svc["build"]["context"] == str(build_ctx)
-    assert svc["image"] == "sams-str-hermes-agent:local"
+    assert svc["image"] == DIGEST, "compose would run an image agent-mgr never inspected"
     assert svc["environment"]["AGENT_ID"] == "someone-else", \
         "the override no longer wins; resolve_guard's premise is gone"
-    assert {v["target"] for v in svc["volumes"]} == {LEGACY_HOME, "/opt/data/repo/vault"}
-    assert svc["entrypoint"] == ["/opt/hermes/docker/entrypoint-dispatch.sh"]
-    assert svc["command"] == ["gateway", "run"]
+    assert {v["target"] for v in svc["volumes"]} == targets
+    assert svc.get("entrypoint") == entrypoint
+    assert svc.get("command") == command
 
 
 def test_an_override_that_names_a_missing_variable_fails_loud(tmp_path):

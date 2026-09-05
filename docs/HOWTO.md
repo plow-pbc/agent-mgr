@@ -268,9 +268,13 @@ write one (derived image or extra mounts). Three rules for that override:
 - **Relative paths don't work** — Compose resolves them against `agent-mgr`'s
   directory. Name paths through a variable set in `agent.env`.
 - **The boot contract outranks you** — agent-mgr layers its contract overlay
-  *after* this file, so what that overlay declares (the legacy
-  `entrypoint`/`command`, the current credential bind) is not yours to replace.
-  What it leaves alone — `build:`, `env_file`, extra mounts — still merges through.
+  *after* this file, so what that overlay declares is not yours to replace:
+  `image:` under both contracts, plus the legacy `entrypoint`/`command`, and
+  under the current contract the credential bind and an `entrypoint`/`command`
+  *reset* to the image's own. Name a derived image in `agent.env`'s
+  `AGENT_IMAGE`, never bare here — agent-mgr inspects that one to pick the
+  contract, so the two must be the same image. What the overlay leaves alone —
+  `build:`, `env_file`, extra mounts — still merges through.
 - **A `build:` must carry `pull_policy: never`** (or `build`) — the default
   *pulls* the tag when absent locally, so a registry image could land over
   what this host built and run with the agent's credentials. (A digest-pinned
@@ -286,10 +290,11 @@ write one (derived image or extra mounts). Three rules for that override:
   refuses until you do.
 
 ```yaml
+# with AGENT_IMAGE=my-agent:local in agent.env — the tag agent-mgr inspects
 services:
   hermes:
     build: { context: "${AGENT_BUILD_CONTEXT}" }
-    image: my-agent:local
+    image: ${AGENT_IMAGE}
     pull_policy: never
 ```
 

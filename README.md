@@ -456,7 +456,7 @@ layout (#130).
 
 That image declares `CMD ["/sbin/init"]` so its host can unpack it into a VM
 rootfs under systemd; the fleet overrides both `entrypoint` and `command` in
-`templates/compose.yml` and boots the same filesystem through s6 instead. One
+`templates/compose.legacy.yml` and boots the same filesystem through s6 instead. One
 image, two boot paths — which is why sharing it was possible at all, and why
 the home path and the credential hand-off are the two things that must agree.
 
