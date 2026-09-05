@@ -48,13 +48,14 @@ def test_home_target_is_none_when_the_image_cannot_be_inspected(tmp_path, monkey
     assert boot_contract.home_target("some/image:tag") is None
 
 
-def test_ensure_image_local_pulls_only_when_absent(tmp_path, monkeypatch):
+@pytest.mark.parametrize(("inspect_status", "pulled"), [(1, True), (0, False)])
+def test_ensure_image_local_pulls_iff_absent(tmp_path, monkeypatch, inspect_status, pulled):
     log = tmp_path / "calls.log"
     b = _stub_docker(tmp_path, (
         "#!/usr/bin/env bash\n"
         f'printf "%s\\n" "$*" >> {log}\n'
         'case "$*" in\n'
-        '  *"image inspect"*) exit 1 ;;\n'
+        f'  *"image inspect"*) exit {inspect_status} ;;\n'
         '  *pull*) exit 0 ;;\n'
         'esac\n'
     ))
@@ -62,7 +63,8 @@ def test_ensure_image_local_pulls_only_when_absent(tmp_path, monkeypatch):
     from agent_mgr import boot_contract
     boot_contract.ensure_image_local("some/image:tag")
     calls = log.read_text()
-    assert "image inspect" in calls and "pull" in calls
+    assert "image inspect" in calls
+    assert ("pull" in calls) is pulled
 
 
 def test_a_build_based_agents_own_image_determines_its_contract_even_when_current(
@@ -148,15 +150,6 @@ def test_deploy_builds_rather_than_pulls_a_not_yet_present_local_tag(run, instan
     calls = log.read_text()
     assert "build" in calls
     assert "pull" not in calls
-
-
-def test_ensure_image_local_does_not_pull_when_present(tmp_path, monkeypatch):
-    log = tmp_path / "calls.log"
-    b = _stub_docker(tmp_path, f"#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> {log}\nexit 0\n")
-    monkeypatch.setenv("PATH", f"{b}{os.pathsep}{os.environ['PATH']}")
-    from agent_mgr import boot_contract
-    boot_contract.ensure_image_local("some/image:tag")
-    assert "pull" not in log.read_text()
 
 
 def _resolved_agent(monkeypatch, run, instance, registry, tmp_path, name="rowan"):
