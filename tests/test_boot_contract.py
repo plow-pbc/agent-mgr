@@ -2,6 +2,7 @@
 separate descriptor field -- and the pieces that follow from that: pulling the
 image before deriving anything, ensuring (not guarding) the current
 contract's credential file, and refusing a resume that would skip it."""
+import json
 import os
 from pathlib import Path
 
@@ -62,6 +63,50 @@ def test_ensure_image_local_pulls_only_when_absent(tmp_path, monkeypatch):
     boot_contract.ensure_image_local("some/image:tag")
     calls = log.read_text()
     assert "image inspect" in calls and "pull" in calls
+
+
+def test_a_build_based_agents_contract_comes_from_the_fleet_pin_not_its_local_tag(
+        run, instance, tmp_path):
+    """AGENT_IMAGE for a build-based agent is a local tag Compose builds
+    itself -- agent-mgr can neither pull nor inspect it before the first
+    build, so the contract must come from the fleet's own pinned base
+    instead, which a derived image always extends."""
+    local_tag = "sams-str-hermes-agent:local"
+    repo = instance("str", descriptor=f"AGENT_IMAGE={local_tag}\n")
+    run("register", "str", str(repo))
+    home = tmp_path / "home" / ".hermes-str"
+    cfg = json.dumps({
+        "name": "hermes-str",
+        "services": {
+            "hermes": {
+                "container_name": "hermes-str",
+                "environment": {"AGENT_ID": "str"},
+                "build": {"context": "."},
+                "image": local_tag,
+                "pull_policy": "never",
+                "volumes": [{"target": "/opt/data", "source": str(home)}],
+            }
+        },
+    })
+    # Placed in tmp_path/"bin" -- the SAME directory run()'s own fake curl/gh
+    # live in -- so this replaces only docker, never dropping the fakes
+    # install-plugin needs.
+    _stub_docker(tmp_path, (
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        # The local tag: not a registry reference -- never inspectable,
+        # never pullable. Any call naming it must fail.
+        f'  *"{local_tag}"*) exit 1 ;;\n'
+        "  *\"Config.Env\"*) echo '[\"HERMES_HOME=/opt/data\"]' ;;\n"
+        "  *\"image inspect\"*) exit 0 ;;\n"
+        f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;\n"
+        "  *\"ps -a --quiet\"*) : ;;\n"
+        "  *\"ps --status running --quiet\"*) : ;;\n"
+        "esac\n"
+        "exit 0\n"
+    ))
+    r = run("deploy", "str")
+    assert r.returncode == 0, r.stderr
 
 
 def test_ensure_image_local_does_not_pull_when_present(tmp_path, monkeypatch):

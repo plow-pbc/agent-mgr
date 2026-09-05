@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
-from .boot_contract import ensure_image_local
+from .boot_contract import contract_image, ensure_image_local
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write
 from .local import (
@@ -158,8 +158,10 @@ def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> 
 
 def deploy(agent: ResolvedAgent, registry: Registry) -> None:
     # Explicit and first: every other container-touching path assumes the
-    # image is already local and fails loudly instead of pulling.
-    ensure_image_local(agent.image)
+    # image is already local and fails loudly instead of pulling. A
+    # build-based agent's own AGENT_IMAGE is a local tag, not something to
+    # pull -- contract_image() names what actually needs to be present.
+    ensure_image_local(contract_image(agent))
     resolve_guard(agent, registry)
     confirm_transition(agent)
     require_transition_allowed(agent)

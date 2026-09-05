@@ -4,6 +4,7 @@ import json
 import subprocess
 from pathlib import Path
 
+from .artifacts import image_reference
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write, dotenv_read
 from .models import ResolvedAgent
@@ -68,15 +69,31 @@ def home_target(image: str) -> str | None:
     return baked
 
 
+def contract_image(agent: ResolvedAgent) -> str:
+    """Which image reference actually determines this agent's boot contract.
+
+    A build-based agent's own AGENT_IMAGE (compose.override.yml's `build:` +
+    a local `image:` tag) is not a registry reference -- agent-mgr can
+    neither pull it nor, before the first build, inspect it at all. What it
+    is built FROM is what matters instead: a derived image extends the
+    fleet's own pinned base (that is what needing "more than the base" -- see
+    compose.override.yml -- means), so the base's baked HERMES_HOME is what a
+    not-yet-built local tag will boot into. A digest-pinned AGENT_IMAGE names
+    itself.
+    """
+    return agent.image if "@sha256:" in agent.image else image_reference()
+
+
 def require_home_target(agent: ResolvedAgent) -> str:
     """Same derivation for a path that has already ensured the image is local
     (deploy) or otherwise needs to touch the container -- absence here is a
     real failure, not a diagnostic gap."""
-    target = home_target(agent.image)
+    image = contract_image(agent)
+    target = home_target(image)
     if target is None:
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
-            f"{agent.image} is not present locally -- run 'agent-mgr deploy {agent.name}' first",
+            f"{image} is not present locally -- run 'agent-mgr deploy {agent.name}' first",
         )
     return target
 
