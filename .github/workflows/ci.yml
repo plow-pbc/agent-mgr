@@ -35,10 +35,10 @@ jobs:
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
-      - run: uv run --no-project --python 3.13 --with mypy==1.17.1 mypy agent_mgr scripts/build_zipapp.py __main__.py
+      - run: uv run --no-project --python 3.13 --with mypy==1.17.1 mypy agent_mgr scripts/*.py __main__.py
       - run: uv run --no-project --python 3.13 --with mypy==1.17.1 mypy lib/fetch-tree
-      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff check agent_mgr scripts/build_zipapp.py __main__.py lib/fetch-tree
-      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff format --check agent_mgr scripts/build_zipapp.py __main__.py lib/fetch-tree
+      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff check agent_mgr scripts/*.py __main__.py lib/fetch-tree
+      - run: uv run --no-project --python 3.13 --with ruff==0.12.11 ruff format --check agent_mgr scripts/*.py __main__.py lib/fetch-tree
       - run: python3 scripts/build_zipapp.py /tmp/agent-mgr.pyz
       - run: tmp=$(mktemp -d); HOME="$tmp" AGENT_MGR_REGISTRY="$tmp/agents" /tmp/agent-mgr.pyz --json ls
 
