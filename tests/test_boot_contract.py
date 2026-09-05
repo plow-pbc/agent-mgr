@@ -19,33 +19,27 @@ def _stub_docker(tmp_path, script):
     return b
 
 
-@pytest.mark.parametrize("home", ["/opt/data", "/var/lib/hermes"])
-def test_home_target_recognises_both_contracts(tmp_path, monkeypatch, home):
-    b = _stub_docker(tmp_path, f"#!/usr/bin/env bash\necho '[\"HERMES_HOME={home}\"]'\n")
-    monkeypatch.setenv("PATH", f"{b}{os.pathsep}{os.environ['PATH']}")
-    from agent_mgr import boot_contract
-    assert boot_contract.home_target("some/image:tag") == home
-
-
-def test_home_target_fails_loudly_on_an_unrecognised_home(tmp_path, monkeypatch):
-    b = _stub_docker(tmp_path, "#!/usr/bin/env bash\necho '[\"HERMES_HOME=/srv/other\"]'\n")
+@pytest.mark.parametrize("baked", [
+    "/opt/data",
+    "/var/lib/hermes",
+    # A home agent-mgr cannot boot is loud, never guessed...
+    "/srv/other",
+    # ...and never confused with docker having no answer at all -- absent
+    # locally, or not on PATH -- where a diagnostic caller omits the field.
+    None,
+])
+def test_home_target_maps_docker_inspection(tmp_path, monkeypatch, baked):
+    body = "exit 1" if baked is None else f"""echo '["HERMES_HOME={baked}"]'"""
+    b = _stub_docker(tmp_path, f"#!/usr/bin/env bash\n{body}\n")
     monkeypatch.setenv("PATH", f"{b}{os.pathsep}{os.environ['PATH']}")
     from agent_mgr import boot_contract
     from agent_mgr.errors import AgentMgrError
+    if baked is None or baked in boot_contract.KNOWN_HOME_TARGETS:
+        assert boot_contract.home_target("some/image:tag") == baked
+        return
     with pytest.raises(AgentMgrError) as exc:
         boot_contract.home_target("some/image:tag")
-    assert "does not recognise" in str(exc.value)
-    assert "/srv/other" in str(exc.value)
-
-
-def test_home_target_is_none_when_the_image_cannot_be_inspected(tmp_path, monkeypatch):
-    """Not present locally, or no docker at all -- a diagnostic caller omits
-    the field rather than guessing; never confused with an unrecognised
-    HERMES_HOME on an image that DID answer."""
-    b = _stub_docker(tmp_path, "#!/usr/bin/env bash\nexit 1\n")
-    monkeypatch.setenv("PATH", f"{b}{os.pathsep}{os.environ['PATH']}")
-    from agent_mgr import boot_contract
-    assert boot_contract.home_target("some/image:tag") is None
+    assert "does not recognise" in str(exc.value) and baked in str(exc.value)
 
 
 @pytest.mark.parametrize(("inspect_status", "pulled"), [(1, True), (0, False)])
