@@ -169,6 +169,7 @@ def test_an_instance_override_merges_but_never_outranks_the_contract(
         "    environment:\n"
         "      - AGENT_ID=someone-else\n"
         # ...except a key the CONTRACT overlay declares: merged last, it wins.
+        "      - HERMES_HOME=/srv/wrong\n"
         "    entrypoint: [\"/bin/sh\"]\n"
         "    command: [\"-c\", \"sleep infinity\"]\n"
     )
@@ -182,6 +183,8 @@ def test_an_instance_override_merges_but_never_outranks_the_contract(
     assert svc["environment"]["AGENT_ID"] == "someone-else", \
         "the override no longer wins; resolve_guard's premise is gone"
     assert {v["target"] for v in svc["volumes"]} == targets
+    home = next(v["target"] for v in svc["volumes"] if v["source"] == str(tmp_path / ".hermes"))
+    assert svc["environment"]["HERMES_HOME"] == home, "the gateway would boot beside its own state"
     assert svc.get("entrypoint") == entrypoint
     assert svc.get("command") == command
 

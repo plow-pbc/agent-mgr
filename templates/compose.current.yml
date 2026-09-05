@@ -14,6 +14,9 @@
 # contract, the home target and the credential path: an override naming a
 # different image had Compose run one image under another's derivation,
 # silently. A build-based agent names its own tag there -- docs/HOWTO.md.
+# HERMES_HOME is reasserted for the mirror of that reason: agent-mgr mounts
+# the home at AGENT_HOME_TARGET, and an override naming a different one had
+# the gateway boot against an empty directory beside the real mount.
 #
 # AGENT_CREDENTIALS_HOST is a path OUTSIDE every agent's own home
 # (boot_contract.credentials_host_path) -- never under the mount above, which
@@ -27,5 +30,7 @@ services:
     image: ${AGENT_IMAGE:?set by agent-mgr from the instance descriptor}
     entrypoint: !reset null
     command: !reset null
+    environment:
+      - HERMES_HOME=${AGENT_HOME_TARGET}
     volumes:
       - ${AGENT_CREDENTIALS_HOST:?set by agent-mgr, derived from the image}:/var/lib/plow/credentials.host:ro

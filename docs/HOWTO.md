@@ -269,9 +269,11 @@ write one (derived image or extra mounts). Three rules for that override:
   directory. Name paths through a variable set in `agent.env`.
 - **The boot contract outranks you** — agent-mgr layers its contract overlay
   *after* this file, so what that overlay declares is not yours to replace:
-  `image:` under both contracts, plus the legacy `entrypoint`/`command`, and
-  under the current contract the credential bind and an `entrypoint`/`command`
-  *reset* to the image's own. Name a derived image in `agent.env`'s
+  `image:` and `HERMES_HOME` under both contracts, plus the legacy
+  `entrypoint`/`command`, and under the current contract the credential bind
+  and an `entrypoint`/`command` *reset* to the image's own. `HERMES_HOME`
+  follows the home mount agent-mgr derived, so setting it here would boot the
+  gateway beside its own state. Name a derived image in `agent.env`'s
   `AGENT_IMAGE`, never bare here — agent-mgr inspects that one to pick the
   contract, so the two must be the same image. What the overlay leaves alone —
   `build:`, `env_file`, extra mounts — still merges through.
