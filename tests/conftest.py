@@ -383,7 +383,11 @@ class CredentialAPI:
                     (self.command, self.path, body, self.headers.get("Authorization"))
                 )
                 if self.path == "/v1/relay/info":
-                    payload: object = {"uid": "usr_1", "mcp_url": "https://relay/mcp", "devices": owner.devices}
+                    payload: object = {
+                        "uid": "usr_1",
+                        "mcp_url": "https://relay/mcp",
+                        "devices": owner.devices,
+                    }
                 elif self.command == "GET":
                     payload = {"participants": [{"type": "agent", "line": {"uid": "ln_elm"}}]}
                 else:

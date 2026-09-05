@@ -460,19 +460,27 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     assert "tok_xyz" not in r.stdout
 
 
+MAC = [{"device_uid": "dev_mac"}]
+RELAY_SCOPES = ["relay:call", "chats:use", "llm:chat", "payments:request"]
+
+
 @pytest.mark.parametrize(
     ("preexisting", "expected_home", "devices", "expected_scopes"),
     [
-        ("", "cht_fresh", [{"device_uid": "dev_mac"}],
-         ["relay:call", "chats:use", "llm:chat", "payments:request"]),
-        ("PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n", "cht_existing",
-         [{"device_uid": "dev_mac"}], ["relay:call", "chats:use", "llm:chat", "payments:request"]),
-        ("PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n", "cht_legacy",
-         [], ["chats:use", "llm:chat"]),
+        ("", "cht_fresh", MAC, RELAY_SCOPES),
+        (
+            "PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n",
+            "cht_existing", MAC, RELAY_SCOPES,
+        ),
+        (
+            "PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n",
+            "cht_legacy", [], ["chats:use", "llm:chat"],
+        ),
     ],
 )
 def test_activate_narrows_bootstrap_to_line_granted_canonical_credential(
-    run, instance, tmp_path, credential_api, preexisting, expected_home, devices, expected_scopes
+    run, instance, tmp_path, credential_api, preexisting, expected_home, devices,
+    expected_scopes,
 ):
     """The frozen upstream activation remains the phone bind; agent-mgr only
     narrows its broad result through Plow's existing key endpoint -- to the
