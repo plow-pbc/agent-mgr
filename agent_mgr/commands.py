@@ -16,7 +16,7 @@ from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write, dotenv_read, read_regular_text
 from .local import compose, require_own_home, require_running, resolve_guard
-from .models import ResolvedAgent
+from .models import JsonValue, ResolvedAgent
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -182,7 +182,7 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
             raise AlreadyNarrowed(ErrorCode.REMOTE_REJECTED, error.message) from None
         raise
     has_relay = isinstance(info, dict) and bool(info.get("devices"))
-    scopes = (
+    scopes: list[JsonValue] = (
         ["relay:call", "chats:use", "llm:chat", "payments:request"]
         if has_relay
         else ["chats:use", "llm:chat"]
