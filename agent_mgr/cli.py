@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .backups import backup_homes, prune_backups
-from .boot_contract import CURRENT_HOME, contract_image, home_target, require_home_target
+from .boot_contract import CURRENT_HOME, home_target, require_home_target
 from .cloud_client import CloudClient
 from .cloud_http import HttpCloudTransport
 from .cloud_models import CreateAssistantRequest
@@ -285,7 +285,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         # Docker), the field is OMITTED rather than guessed -- a consumer
         # doing ${AGENT_HOME_TARGET:?} then fails loudly instead of
         # interpolating a bad path.
-        contract = home_target(contract_image(agent))
+        contract = home_target(agent.image)
         if json_output:
             result = agent.to_json()
             if contract is not None:

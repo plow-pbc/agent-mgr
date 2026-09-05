@@ -140,6 +140,38 @@ def compose(
     )
 
 
+def build_image(agent: ResolvedAgent) -> int:
+    """Materialize a build-based agent's own image from its override alone --
+    never the shared template, which needs the boot contract already
+    resolved, which is exactly what a not-yet-built image cannot answer yet.
+    `build` never starts a container and no Dockerfile reads
+    AGENT_HOME_TARGET, so this is the one compose invocation that runs
+    before anything can know it. None to inspect afterward if the agent
+    declares no override at all -- there is nothing to build."""
+    override = agent.repo / "compose.override.yml"
+    if not override.is_file():
+        return 1
+    env = {key: value for key, value in os.environ.items() if key not in SCRUB}
+    env.update(agent.environment())
+    env["HERMES_UID"] = str(os.getuid())
+    env["HERMES_GID"] = str(os.getgid())
+    return subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-p",
+            agent.project,
+            "-f",
+            str(override),
+            "--env-file",
+            str(agent.descriptor),
+            "build",
+        ],
+        env=env,
+        check=False,
+    ).returncode
+
+
 def require_own_home(agent: ResolvedAgent, registry: Registry) -> None:
     own = agent.home.resolve()
     unresolved: tuple[str, str] | None = None

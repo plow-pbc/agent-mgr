@@ -5,10 +5,11 @@ import subprocess
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
-from .boot_contract import contract_image, ensure_image_local
+from .boot_contract import ensure_image_local, image_present_locally
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write
 from .local import (
+    build_image,
     compose,
     confirm_transition,
     environment,
@@ -156,12 +157,32 @@ def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> 
         raise AgentMgrError(ErrorCode.IO_ERROR, f"could not restart {agent.name}")
 
 
+def _ensure_image_ready(agent: ResolvedAgent) -> None:
+    """deploy's own explicit first step: the image must be locally present
+    before anything downstream can derive its boot contract or touch its
+    container. A digest-pinned image is pulled if absent. A build-based
+    agent's own tag is not a registry reference at all -- it cannot be
+    pulled, so it is built instead, from its own override alone (never the
+    shared template, which needs the contract this not-yet-built image
+    cannot answer yet). Once agent.image exists, either way, it is inspected
+    directly for its own baked contract -- never substituted for the
+    fleet's pinned base, which would silently pick the wrong one for an
+    agent whose own build has already moved to the other contract."""
+    if image_present_locally(agent.image):
+        return
+    if "@sha256:" in agent.image:
+        ensure_image_local(agent.image)
+        return
+    if build_image(agent):
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"could not build {agent.image} -- does {agent.repo}/compose.override.yml "
+            "declare a build: for it?",
+        )
+
+
 def deploy(agent: ResolvedAgent, registry: Registry) -> None:
-    # Explicit and first: every other container-touching path assumes the
-    # image is already local and fails loudly instead of pulling. A
-    # build-based agent's own AGENT_IMAGE is a local tag, not something to
-    # pull -- contract_image() names what actually needs to be present.
-    ensure_image_local(contract_image(agent))
+    _ensure_image_ready(agent)
     resolve_guard(agent, registry)
     confirm_transition(agent)
     require_transition_allowed(agent)

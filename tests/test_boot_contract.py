@@ -2,6 +2,7 @@
 separate descriptor field -- and the pieces that follow from that: pulling the
 image before deriving anything, ensuring (not guarding) the current
 contract's credential file, and refusing a resume that would skip it."""
+import json
 import os
 from pathlib import Path
 
@@ -62,6 +63,91 @@ def test_ensure_image_local_pulls_only_when_absent(tmp_path, monkeypatch):
     boot_contract.ensure_image_local("some/image:tag")
     calls = log.read_text()
     assert "image inspect" in calls and "pull" in calls
+
+
+def test_a_build_based_agents_own_image_determines_its_contract_even_when_current(
+        run, instance, tmp_path):
+    """An already-built local tag is inspected DIRECTLY -- never substituted
+    for the fleet's pinned base, which would silently pick the legacy target
+    for an image that has already moved to the current contract. This is not
+    hypothetical: an operator's own build-based agent can already be current
+    while the fleet-wide pin is still legacy."""
+    stock = json.loads((ROOT / "runtime" / "stack.json").read_text())["images"]["hermes_local"][
+        "reference"
+    ]
+    local_tag = "sams-str-hermes-agent:local"
+    repo = instance("str", descriptor=f"AGENT_IMAGE={local_tag}\n")
+    run("register", "str", str(repo))
+    _stub_docker(tmp_path, (
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        # The fleet's own pinned base is still legacy. Substituting IT for
+        # the already-built local tag below would be exactly the bug under
+        # test -- resolve would report legacy for an agent that is current.
+        f'  *"Config.Env"*"{stock}"*) echo \'["HERMES_HOME=/opt/data"]\' ;;\n'
+        f'  *"Config.Env"*"{local_tag}"*) echo \'["HERMES_HOME=/var/lib/hermes"]\' ;;\n'
+        "  *\"image inspect\"*) exit 0 ;;\n"
+        "esac\n"
+        "exit 0\n"
+    ))
+    r = run("resolve", "str")
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_HOME_TARGET=/var/lib/hermes" in r.stdout
+
+
+def test_deploy_builds_rather_than_pulls_a_not_yet_present_local_tag(run, instance, tmp_path):
+    """A build-based agent's own tag is not a registry reference at all --
+    deploy must build it (from its own override alone), never attempt to
+    pull it, and the built image is what gets inspected afterward."""
+    local_tag = "sams-str-hermes-agent:local"
+    repo = instance("str", descriptor=f"AGENT_IMAGE={local_tag}\n")
+    (repo / "compose.override.yml").write_text(
+        "services:\n  hermes:\n    build: { context: . }\n"
+        f"    image: {local_tag}\n    pull_policy: never\n"
+    )
+    run("register", "str", str(repo))
+    home = tmp_path / "home" / ".hermes-str"
+    built_marker = tmp_path / "built"
+    log = tmp_path / "calls.log"
+    cfg = json.dumps({
+        "name": "hermes-str",
+        "services": {
+            "hermes": {
+                "container_name": "hermes-str",
+                "environment": {"AGENT_ID": "str"},
+                "build": {"context": "."},
+                "image": local_tag,
+                "pull_policy": "never",
+                "volumes": [{"target": "/opt/data", "source": str(home)}],
+            }
+        },
+    })
+    # Placed in tmp_path/"bin" -- the SAME directory run()'s own fake curl/gh
+    # live in -- so this replaces only docker, never dropping the fakes
+    # install-plugin needs.
+    _stub_docker(tmp_path, (
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> {log}\n'
+        "case \"$*\" in\n"
+        # Anchored at the end -- a bare substring match on "build" would also
+        # catch this TEST's own tmp_path, which pytest names after the test
+        # function and which appears in every invocation's --env-file path.
+        f'  *" build")  touch {built_marker} ;;\n'
+        # Absent until the build "runs" above -- present after, the way a
+        # real image would be.
+        f'  *"Config.Env"*) [ -e {built_marker} ] && echo \'["HERMES_HOME=/opt/data"]\' || exit 1 ;;\n'
+        f'  *"image inspect"*) [ -e {built_marker} ] && exit 0 || exit 1 ;;\n'
+        f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;\n"
+        "  *\"ps -a --quiet\"*) : ;;\n"
+        "  *\"ps --status running --quiet\"*) : ;;\n"
+        "esac\n"
+        "exit 0\n"
+    ))
+    r = run("deploy", "str")
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text()
+    assert "build" in calls
+    assert "pull" not in calls
 
 
 def test_ensure_image_local_does_not_pull_when_present(tmp_path, monkeypatch):
