@@ -203,10 +203,14 @@ What an archive is worth:
   the `&&` holds retention back.
 - **Watch for a home that fails every night**: retention never runs, the
   destination grows a full sweep per night, and it looks healthy from the
-  outside. Grep `~/backup-homes.log` for `one or more homes were not
-  archived`.
+  outside. Grep `~/backup-homes.log` for `were not archived`.
 - A killed run leaves a truncated newest archive; `gzip -t <archive>` before
   restoring, and fall back to the previous night's.
+- Every agent's **Plow credential** lives *outside* its home, at
+  `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`
+  beside the homes. After a current-contract first boot that file is the only
+  host-side copy of the token, so a run that cannot read it fails the night
+  rather than publishing a set that looks complete.
 
 ### Restoring a home
 
@@ -234,6 +238,14 @@ mkdir "$home" \
   && tar -C "$home" -xzf "$a" \
   && agent-mgr deploy errands \
   && agent-mgr up errands
+```
+
+Restoring the credential is its own line, into `$HOME` rather than the home --
+needed whenever you lost the host, and harmless when you didn't:
+
+```sh
+tar -C ~ -xzf ~/agent-backups/backup-homes/20260826T040112Z-4171/plow-credentials.tar.gz \
+  .plow-credentials-errands
 ```
 
 Notes: `&&` not `set -e` (this is pasted into your shell); `down` can
