@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeAlias
@@ -21,6 +22,13 @@ CREDENTIALS_MOUNT_TARGET = "/var/lib/plow/credentials.host"
 # guard can compare them against the agent's current home dotenv, not just
 # trust that a name-keyed file on disk still belongs to that home.
 CREDENTIAL_KEYS = ("PLOW_API_BASE", "PLOW_AGENT_TOKEN")
+
+
+def materialized_credentials_body(values: dict[str, str]) -> str:
+    """The exact bytes a materialized credential file holds, one place: the
+    writer and the start-time guard that re-derives and compares them must
+    never drift apart, or the guard silently stops proving anything."""
+    return "".join(f"{key}={shlex.quote(values[key])}\n" for key in CREDENTIAL_KEYS)
 
 
 @dataclass(frozen=True, slots=True)

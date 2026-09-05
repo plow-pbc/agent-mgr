@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import os
-import shlex
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -15,6 +14,7 @@ from .models import (
     CREDENTIALS_MOUNT_TARGET,
     HOME_MOUNT_TARGETS,
     ResolvedAgent,
+    materialized_credentials_body,
 )
 from .registry import Registry
 
@@ -142,12 +142,13 @@ def require_plow_init_credentials(agent: ResolvedAgent) -> None:
     dotenv = agent.home / ".env"
     current = read_dotenv_values(dotenv, keys) if dotenv.is_file() else {}
     # Compared as the file materialize_plow_credentials would produce from
-    # `current`, not re-parsed back out of the credentials file: shlex.quote
-    # can embed a quote character this repo's own naive quote-stripping
-    # parser cannot correctly reverse (it stops at the first one), which
-    # would desync an otherwise byte-identical round trip.
-    matches = set(current) == keys and agent.credentials.read_text() == "".join(
-        f"{key}={shlex.quote(current[key])}\n" for key in CREDENTIAL_KEYS
+    # `current` (the same shared body-builder both use), not re-parsed back
+    # out of the credentials file: shlex.quote can embed a quote character
+    # this repo's own naive quote-stripping parser cannot correctly reverse
+    # (it stops at the first one), which would desync an otherwise
+    # byte-identical round trip.
+    matches = set(current) == keys and (
+        agent.credentials.read_text() == materialized_credentials_body(current)
     )
     if not matches:
         # The path alone does not prove the content is this home's: a name
