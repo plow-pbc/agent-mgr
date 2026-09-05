@@ -65,20 +65,28 @@ SCRUB = frozenset(
 )
 
 
+def _base_environment(agent: ResolvedAgent) -> dict[str, str]:
+    """The env every docker invocation needs, with no boot-contract opinion
+    at all -- shared by environment() (which layers the resolved contract on
+    top) and build_image() (which deliberately never resolves one)."""
+    result = {key: value for key, value in os.environ.items() if key not in SCRUB}
+    result.update(agent.environment())
+    result["HERMES_UID"] = str(os.getuid())
+    result["HERMES_GID"] = str(os.getgid())
+    return result
+
+
 def environment(agent: ResolvedAgent, target: str) -> dict[str, str]:
     """`target` is the caller's already-derived AGENT_HOME_TARGET -- sampled
     once per operation, never re-derived here, so a docker-touching command
     never inspects the contract twice for one decision."""
-    result = {key: value for key, value in os.environ.items() if key not in SCRUB}
-    result.update(agent.environment())
+    result = _base_environment(agent)
     result["AGENT_HOME_TARGET"] = target
     if target == CURRENT_HOME:
         # The path only -- always safe to export. Whether the file at that
         # path is actually current is transition()'s job, right before a
         # container is created.
         result["AGENT_CREDENTIALS_HOST"] = str(credentials_host_path(agent))
-    result["HERMES_UID"] = str(os.getuid())
-    result["HERMES_GID"] = str(os.getgid())
     return result
 
 
@@ -154,10 +162,7 @@ def build_image(agent: ResolvedAgent) -> int:
     override = agent.repo / "compose.override.yml"
     if not override.is_file():
         return 1
-    env = {key: value for key, value in os.environ.items() if key not in SCRUB}
-    env.update(agent.environment())
-    env["HERMES_UID"] = str(os.getuid())
-    env["HERMES_GID"] = str(os.getgid())
+    env = _base_environment(agent)
     return subprocess.run(
         [
             "docker",
