@@ -370,6 +370,9 @@ def fake_curl(tmp_path, *, body="#!/usr/bin/env bash\nexit 0\n", fail=False):
 class CredentialAPI:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, object | None, str | None]] = []
+        # What /v1/relay/info lists: a Mac by default, so the narrowed
+        # credential keeps relay:call; a test empties it for the no-Mac role.
+        self.devices: list[dict[str, str]] = [{"device_uid": "dev_mac"}]
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -379,11 +382,12 @@ class CredentialAPI:
                 owner.requests.append(
                     (self.command, self.path, body, self.headers.get("Authorization"))
                 )
-                payload: object = (
-                    {"participants": [{"type": "agent", "line": {"uid": "ln_elm"}}]}
-                    if self.command == "GET"
-                    else {"chat_uids": ["line:ln_elm"]}
-                )
+                if self.path == "/v1/relay/info":
+                    payload: object = {"uid": "usr_1", "mcp_url": "https://relay/mcp", "devices": owner.devices}
+                elif self.command == "GET":
+                    payload = {"participants": [{"type": "agent", "line": {"uid": "ln_elm"}}]}
+                else:
+                    payload = {"chat_uids": ["line:ln_elm"]}
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")
                 self.end_headers()

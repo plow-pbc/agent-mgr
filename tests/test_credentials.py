@@ -461,18 +461,24 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
 
 
 @pytest.mark.parametrize(
-    ("preexisting", "expected_home"),
+    ("preexisting", "expected_home", "devices", "expected_scopes"),
     [
-        ("", "cht_fresh"),
-        ("PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n", "cht_existing"),
-        ("PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n", "cht_legacy"),
+        ("", "cht_fresh", [{"device_uid": "dev_mac"}],
+         ["relay:call", "chats:use", "llm:chat", "payments:request"]),
+        ("PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n", "cht_existing",
+         [{"device_uid": "dev_mac"}], ["relay:call", "chats:use", "llm:chat", "payments:request"]),
+        ("PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n", "cht_legacy",
+         [], ["chats:use", "llm:chat"]),
     ],
 )
 def test_activate_narrows_bootstrap_to_line_granted_canonical_credential(
-    run, instance, tmp_path, credential_api, preexisting, expected_home
+    run, instance, tmp_path, credential_api, preexisting, expected_home, devices, expected_scopes
 ):
     """The frozen upstream activation remains the phone bind; agent-mgr only
-    narrows its broad result through Plow's existing key endpoint."""
+    narrows its broad result through Plow's existing key endpoint -- to the
+    relay-holding role when the account has a Mac, the chat-only one when not,
+    the same split plow's cloud seam makes."""
+    credential_api.devices = devices
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
@@ -504,11 +510,12 @@ printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE
     assert f"PLOW_CHAT_CHAT_UID={expected_home}" in dotenv
     assert "PLOW_CHAT_TOKEN=plow_fresh" in dotenv
     assert credential_api.requests[0][0:2] == ("GET", f"/v1/chats/{expected_home}")
+    assert credential_api.requests[1][0:2] == ("GET", "/v1/relay/info")
     assert all(request[3] == "Bearer plow_fresh" for request in credential_api.requests)
-    request = credential_api.requests[1][2]
+    request = credential_api.requests[2][2]
     assert request == {
         "name": "agent-mgr:rowan",
-        "scopes": ["chats:use", "llm:chat"],
+        "scopes": expected_scopes,
         "chat_uids": ["line:ln_elm"],
     }
 
@@ -541,7 +548,7 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
     dotenv = (home / ".env").read_text()
     assert "PLOW_HOME_CHANNEL=cht_home" in dotenv
     assert "PLOW_AGENT_TOKEN=plow_bootstrap" in dotenv
-    assert credential_api.requests[1][2]["chat_uids"] == ["line:ln_elm"]
+    assert credential_api.requests[2][2]["chat_uids"] == ["line:ln_elm"]
 
 
 def test_scope_chat_credential_finishes_an_interrupted_activation_publication(

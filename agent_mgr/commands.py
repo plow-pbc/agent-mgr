@@ -156,12 +156,25 @@ def narrow_chat_credential(agent: ResolvedAgent) -> int:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, "home chat did not identify exactly one current agent line"
         )
+    # The same role plow's own cloud seam mints (relay/agent_credentials.py):
+    # with a Mac on the account the credential reaches it -- `relay:call` is
+    # what makes `GET /v1/agents/cloud/me` answer an `mcp_url`, which is how a
+    # plow-init image learns it has a relay server at all -- and without one it
+    # keeps to its chats and its model. Asked of the bootstrap credential,
+    # whose wildcard grant clears the relay:device gate on /v1/relay/info.
+    info = transport.request("GET", "/v1/relay/info")
+    has_relay = isinstance(info, dict) and bool(info.get("devices"))
+    scopes = (
+        ["relay:call", "chats:use", "llm:chat", "payments:request"]
+        if has_relay
+        else ["chats:use", "llm:chat"]
+    )
     transport.request(
         "PUT",
         "/v1/api-keys/current",
         {
             "name": f"agent-mgr:{agent.name}",
-            "scopes": ["chats:use", "llm:chat"],
+            "scopes": scopes,
             "chat_uids": [f"line:{line_uid}"],
         },
     )
