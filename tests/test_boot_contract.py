@@ -177,38 +177,35 @@ def test_credentials_host_path_lives_outside_every_agent_home(
     assert agent.home not in path.parents
 
 
-def test_ensure_credentials_writes_from_the_dotenv(monkeypatch, run, instance, registry, tmp_path):
-    from agent_mgr import boot_contract
-    agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
-    (agent.home / ".env").write_text("PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n")
-    destination = boot_contract.ensure_credentials(agent)
-    expected = boot_contract.credentials_host_path(agent)
-    assert destination == expected
-    assert not str(expected).startswith(str(agent.home)), "must live outside every agent's home"
-    assert destination.read_text() == "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n"
+FRESH = "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n"
+KEPT = "PLOW_API_BASE=https://old.example\nPLOW_AGENT_TOKEN=tok_old\n"
 
 
-def test_ensure_credentials_leaves_an_existing_file_alone(monkeypatch, run, instance, registry, tmp_path):
-    """After first boot the current base truncates these keys out of the
-    dotenv, so this file is the only remaining copy -- refreshing it from an
-    empty dotenv would erase the agent's credential, not protect it."""
-    from agent_mgr import boot_contract
-    agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
-    destination = boot_contract.credentials_host_path(agent)
-    destination.write_text("PLOW_API_BASE=https://old.example\nPLOW_AGENT_TOKEN=tok_old\n")
-    (agent.home / ".env").write_text("PLOW_HOME_CHANNEL=cht_x\nPLOW_AGENT_TOKEN=\n")
-    result = boot_contract.ensure_credentials(agent)
-    assert result == destination
-    assert destination.read_text() == "PLOW_API_BASE=https://old.example\nPLOW_AGENT_TOKEN=tok_old\n"
-
-
-def test_ensure_credentials_fails_loudly_when_neither_exists(monkeypatch, run, instance, registry, tmp_path):
+@pytest.mark.parametrize(("dotenv", "existing", "expected"), [
+    pytest.param(FRESH, None, FRESH, id="dotenv-wins"),
+    # After first boot the current base truncates these keys out of the
+    # dotenv, so this file is the only remaining copy -- refreshing it from an
+    # empty dotenv would erase the agent's credential, not protect it.
+    pytest.param("PLOW_HOME_CHANNEL=cht_x\nPLOW_AGENT_TOKEN=\n", KEPT, KEPT, id="existing-file"),
+    pytest.param(None, None, None, id="missing"),
+])
+def test_ensure_credentials_resolves_the_only_host_side_copy(
+        monkeypatch, run, instance, registry, tmp_path, dotenv, existing, expected):
     from agent_mgr import boot_contract
     from agent_mgr.errors import AgentMgrError
     agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
-    with pytest.raises(AgentMgrError) as exc:
-        boot_contract.ensure_credentials(agent)
-    assert "rowan" in str(exc.value) and "activate" in str(exc.value)
+    destination = boot_contract.credentials_host_path(agent)
+    if dotenv:
+        (agent.home / ".env").write_text(dotenv)
+    if existing:
+        destination.write_text(existing)
+    if expected is None:
+        with pytest.raises(AgentMgrError) as exc:
+            boot_contract.ensure_credentials(agent)
+        assert "rowan" in str(exc.value) and "activate" in str(exc.value)
+        return
+    assert boot_contract.ensure_credentials(agent) == destination
+    assert destination.read_text() == expected
 
 
 def _seed_credentials(tmp_path, name):
