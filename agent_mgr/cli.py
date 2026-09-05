@@ -13,7 +13,7 @@ from .backups import backup_homes, prune_backups
 from .boot_contract import CURRENT_HOME, home_target, require_home_target
 from .cloud_client import CloudClient
 from .cloud_http import HttpCloudTransport
-from .cloud_models import CreateCloudAgentRequest, UpdateCloudAgentChatsRequest
+from .cloud_models import CreateAssistantRequest
 from .commands import (
     activate,
     add_skill,
@@ -56,7 +56,7 @@ CLOUD_OPERATIONS = frozenset(
         "cloud-create",
         "cloud-list",
         "cloud-get",
-        "cloud-update-chats",
+        "cloud-move",
         "cloud-delete",
     }
 )
@@ -140,9 +140,9 @@ def _usage(stream: TextIO = sys.stdout) -> None:
   up | down | restart | logs | agent | compose | resolve-guard
   cloud-create
   cloud-list
-  cloud-get <agent-id>
-  cloud-update-chats <agent-id>
-  cloud-delete <agent-id>""",
+  cloud-get <assistant-uid>
+  cloud-move <assistant-uid> <line-uid>
+  cloud-delete <assistant-uid>""",
         file=stream,
     )
 
@@ -150,7 +150,7 @@ def _usage(stream: TextIO = sys.stdout) -> None:
 def _run(operation: str, args: list[str], json_output: bool, registry: Registry) -> int:
     if operation == "cloud-create":
         _need(args, 0, "agent-mgr --json cloud-create")
-        create_request = CreateCloudAgentRequest.from_json(_json_input())
+        create_request = CreateAssistantRequest.from_json(_json_input())
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
         try:
             resource = client.create(create_request)
@@ -162,27 +162,25 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                     "creation may have succeeded; run agent-mgr --json cloud-list before retrying",
                 ) from None
             raise
-        _emit(operation, {"agent": resource.to_json()})
+        _emit(operation, {"assistant": resource.to_json()})
         return 0
     if operation == "cloud-list":
         _need(args, 0, "agent-mgr --json cloud-list")
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        resources = client.list()
-        _emit(operation, {"agents": [resource.to_json() for resource in resources]})
+        _emit(operation, {"slots": [slot.to_json() for slot in client.list()]})
         return 0
     if operation == "cloud-get":
-        _need(args, 1, "agent-mgr --json cloud-get <agent-id>")
+        _need(args, 1, "agent-mgr --json cloud-get <assistant-uid>")
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        _emit(operation, {"agent": client.get(args[0]).to_json()})
+        _emit(operation, {"assistant": client.get(args[0]).to_json()})
         return 0
-    if operation == "cloud-update-chats":
-        _need(args, 1, "agent-mgr --json cloud-update-chats <agent-id>")
-        update_request = UpdateCloudAgentChatsRequest.from_json(_json_input())
+    if operation == "cloud-move":
+        _need(args, 2, "agent-mgr --json cloud-move <assistant-uid> <line-uid>")
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        _emit(operation, {"agent": client.update_chats(args[0], update_request).to_json()})
+        _emit(operation, {"assistant": client.move(args[0], args[1]).to_json()})
         return 0
     if operation == "cloud-delete":
-        _need(args, 1, "agent-mgr --json cloud-delete <agent-id>")
+        _need(args, 1, "agent-mgr --json cloud-delete <assistant-uid>")
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
         try:
             resource = client.delete(args[0])
@@ -194,7 +192,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                     "deletion may have succeeded; run agent-mgr --json cloud-list before retrying",
                 ) from None
             raise
-        _emit(operation, {"agent": resource.to_json()})
+        _emit(operation, {"assistant": resource.to_json()})
         return 0
     if operation == "ls":
         _need(args, 0, "agent-mgr ls")

@@ -5,18 +5,19 @@ from dataclasses import dataclass
 
 from agent_mgr.cloud_http import CloudTransport
 from agent_mgr.cloud_models import (
-    CloudAgentResource,
-    CreateCloudAgentRequest,
-    UpdateCloudAgentChatsRequest,
+    AssistantResource,
+    AssistantSlot,
+    CreateAssistantRequest,
+    nonempty_string,
 )
 from agent_mgr.errors import AgentMgrError, ErrorCode
 
-CLOUD_PATH = "/v1/agents/cloud"
+CLOUD_PATH = "/v1/assistants"
 
 
-def _agent_id(value: str) -> str:
+def _assistant_uid(value: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_-]+", value):
-        raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"invalid cloud agent id: {value}")
+        raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"invalid assistant uid: {value}")
     return value
 
 
@@ -24,27 +25,28 @@ def _agent_id(value: str) -> str:
 class CloudClient:
     transport: CloudTransport
 
-    def create(self, request: CreateCloudAgentRequest) -> CloudAgentResource:
+    def create(self, request: CreateAssistantRequest) -> AssistantResource:
         value = self.transport.request("POST", CLOUD_PATH, request.to_json())
-        return CloudAgentResource.from_json(value)
+        return AssistantResource.from_json(value)
 
-    def list(self) -> tuple[CloudAgentResource, ...]:
+    def list(self) -> tuple[AssistantSlot, ...]:
         value = self.transport.request("GET", CLOUD_PATH)
         if not isinstance(value, list):
-            raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "cloud agent list is not an array")
-        return tuple(CloudAgentResource.from_json(item) for item in value)
+            raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "assistant slot list is not an array")
+        return tuple(AssistantSlot.from_json(item) for item in value)
 
-    def get(self, agent_id: str) -> CloudAgentResource:
-        value = self.transport.request("GET", f"{CLOUD_PATH}/{_agent_id(agent_id)}")
-        return CloudAgentResource.from_json(value)
+    def get(self, uid: str) -> AssistantResource:
+        value = self.transport.request("GET", f"{CLOUD_PATH}/{_assistant_uid(uid)}")
+        return AssistantResource.from_json(value)
 
-    def update_chats(
-        self, agent_id: str, request: UpdateCloudAgentChatsRequest
-    ) -> CloudAgentResource:
-        path = f"{CLOUD_PATH}/{_agent_id(agent_id)}/chats"
-        value = self.transport.request("PUT", path, request.to_json())
-        return CloudAgentResource.from_json(value)
+    def move(self, uid: str, line_uid: str) -> AssistantResource:
+        """Put the assistant on another line. Its anchor chats follow the move."""
+        path = f"{CLOUD_PATH}/{_assistant_uid(uid)}/line"
+        value = self.transport.request(
+            "PUT", path, {"line_uid": nonempty_string(line_uid, "line_uid")}
+        )
+        return AssistantResource.from_json(value)
 
-    def delete(self, agent_id: str) -> CloudAgentResource:
-        value = self.transport.request("DELETE", f"{CLOUD_PATH}/{_agent_id(agent_id)}")
-        return CloudAgentResource.from_delete_json(value)
+    def delete(self, uid: str) -> AssistantResource:
+        value = self.transport.request("DELETE", f"{CLOUD_PATH}/{_assistant_uid(uid)}")
+        return AssistantResource.from_delete_json(value)

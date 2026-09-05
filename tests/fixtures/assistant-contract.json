@@ -1,0 +1,122 @@
+[
+  {
+    "uid": "00000000000000000000000000000001",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_running", "provider_type": "imessage", "provider_key": "+15550100001", "display_name": "Willow"},
+    "chat_uids": ["cht_running"],
+    "url": "https://running.agent.example",
+    "image": "public.ecr.aws/example/plow-hermes-agent:pinned",
+    "status": "running",
+    "failure_code": null,
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000002",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_provisioning", "provider_type": "imessage", "provider_key": "+15550100002", "display_name": "Willow"},
+    "chat_uids": ["cht_provisioning"],
+    "url": "https://provisioning.agent.example",
+    "image": null,
+    "status": "provisioning",
+    "failure_code": null,
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000003",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_teardown", "provider_type": "imessage", "provider_key": "+15550100003", "display_name": "Willow"},
+    "chat_uids": ["cht_teardown"],
+    "url": "https://teardown.agent.example",
+    "image": "public.ecr.aws/example/plow-hermes-agent:pinned",
+    "status": "teardown",
+    "failure_code": null,
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000004",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_deleted", "provider_type": "imessage", "provider_key": "+15550100004", "display_name": "Willow"},
+    "chat_uids": ["cht_deleted"],
+    "url": "https://deleted.agent.example",
+    "image": "public.ecr.aws/example/plow-hermes-agent:pinned",
+    "status": null,
+    "failure_code": null,
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000005",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_provider_unreachable", "provider_type": "imessage", "provider_key": "+15550100005", "display_name": "Willow"},
+    "chat_uids": ["cht_provider_unreachable"],
+    "url": "https://provider_unreachable.agent.example",
+    "image": "public.ecr.aws/example/plow-hermes-agent:pinned",
+    "status": "failed",
+    "failure_code": "provider_unreachable",
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000006",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_image_pull_timeout", "provider_type": "imessage", "provider_key": "+15550100006", "display_name": "Willow"},
+    "chat_uids": ["cht_image_pull_timeout"],
+    "url": "https://image_pull_timeout.agent.example",
+    "image": "public.ecr.aws/example/plow-hermes-agent:pinned",
+    "status": "failed",
+    "failure_code": "image_pull_timeout",
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000007",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_setup_failed", "provider_type": "imessage", "provider_key": "+15550100007", "display_name": "Willow"},
+    "chat_uids": ["cht_setup_failed"],
+    "url": "https://setup_failed.agent.example",
+    "image": "public.ecr.aws/example/plow-hermes-agent:pinned",
+    "status": "failed",
+    "failure_code": "setup_failed",
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000008",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_validation_failed", "provider_type": "imessage", "provider_key": "+15550100008", "display_name": "Willow"},
+    "chat_uids": ["cht_validation_failed"],
+    "url": "https://validation_failed.agent.example",
+    "image": "public.ecr.aws/example/plow-hermes-agent:pinned",
+    "status": "failed",
+    "failure_code": "validation_failed",
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000009",
+    "provider": "exe:hermes",
+    "line": {"object": "line", "uid": "ln_unknown", "provider_type": "imessage", "provider_key": "+15550100009", "display_name": "Willow"},
+    "chat_uids": ["cht_unknown"],
+    "url": "https://unknown.agent.example",
+    "image": "public.ecr.aws/example/plow-hermes-agent:pinned",
+    "status": "failed",
+    "failure_code": "unknown",
+    "daily_payment_cap_usd": "200.000000",
+    "verbose_output_enabled": false
+  },
+  {
+    "uid": "00000000000000000000000000000010",
+    "provider": "self_hosted",
+    "line": {"object": "line", "uid": "ln_self_hosted", "provider_type": "email", "provider_key": "help@example.com", "display_name": null},
+    "chat_uids": [],
+    "url": null,
+    "image": null,
+    "status": "running",
+    "failure_code": null,
+    "daily_payment_cap_usd": null,
+    "verbose_output_enabled": true
+  }
+]

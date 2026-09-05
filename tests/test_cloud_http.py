@@ -88,7 +88,7 @@ class _RecordingOpener:
 
     def raise_http_error(self, status: int, payload: bytes) -> None:
         self._error = error.HTTPError(
-            "https://api.example/v1/agents/cloud",
+            "https://api.example/v1/assistants",
             status,
             "remote error",
             None,
@@ -262,13 +262,13 @@ def test_transport_sends_authenticated_compact_utf8_json(
 ) -> None:
     recording_opener.respond(200, b'{"ok":true}')
     configured_transport(recording_opener).request(
-        "POST", "/v1/agents/cloud", {"name": "caf\N{LATIN SMALL LETTER E WITH ACUTE}"}
+        "POST", "/v1/assistants", {"name": "caf\N{LATIN SMALL LETTER E WITH ACUTE}"}
     )
 
     [sent] = recording_opener.requests
     headers = {name.lower(): value for name, value in sent.header_items()}
     assert sent.get_method() == "POST"
-    assert sent.full_url == "https://api.example/v1/agents/cloud"
+    assert sent.full_url == "https://api.example/v1/assistants"
     assert headers["content-type"] == "application/json"
     assert headers["accept"] == "application/json"
     assert headers["authorization"] == "Bearer secret-token"
@@ -277,9 +277,9 @@ def test_transport_sends_authenticated_compact_utf8_json(
 
 
 def test_transport_decodes_a_json_success(recording_opener: _RecordingOpener) -> None:
-    recording_opener.respond(200, b'{"agent_id":"abc"}')
+    recording_opener.respond(200, b'{"uid":"abc"}')
     transport = configured_transport(recording_opener)
-    assert transport.request("GET", "/v1/agents/cloud/abc") == {"agent_id": "abc"}
+    assert transport.request("GET", "/v1/assistants/abc") == {"uid": "abc"}
 
 
 def test_transport_rejects_malformed_success_json(
@@ -287,7 +287,7 @@ def test_transport_rejects_malformed_success_json(
 ) -> None:
     recording_opener.respond(200, b"not-json-secret-token")
     with pytest.raises(AgentMgrError) as raised:
-        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+        configured_transport(recording_opener).request("GET", "/v1/assistants")
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
     assert "secret-token" not in str(raised.value)
 
@@ -306,7 +306,7 @@ def test_transport_sanitizes_success_body_read_failures(
     recording_opener.fail_while_reading(read_error)
 
     with pytest.raises(AgentMgrError) as raised:
-        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+        configured_transport(recording_opener).request("GET", "/v1/assistants")
 
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
     assert str(raised.value) == "Plow API response could not be read"
@@ -322,7 +322,7 @@ def test_transport_reports_only_recognized_remote_detail(
         b'{"detail":"provider is not available","token":"secret-token"}',
     )
     with pytest.raises(AgentMgrError) as raised:
-        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+        configured_transport(recording_opener).request("GET", "/v1/assistants")
     assert raised.value.code is ErrorCode.REMOTE_REJECTED
     assert str(raised.value) == "Plow API rejected the request (400): provider is not available"
     assert "secret-token" not in str(raised.value)
@@ -341,7 +341,7 @@ def test_transport_does_not_report_unrecognized_remote_bodies(
 ) -> None:
     recording_opener.raise_http_error(400, payload)
     with pytest.raises(AgentMgrError) as raised:
-        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+        configured_transport(recording_opener).request("GET", "/v1/assistants")
     assert raised.value.code is ErrorCode.REMOTE_REJECTED
     assert str(raised.value) == "Plow API rejected the request (400)"
 
@@ -351,7 +351,7 @@ def test_transport_sanitizes_unreachable_failures(
 ) -> None:
     recording_opener.raise_url_error("upstream included secret-token")
     with pytest.raises(AgentMgrError) as raised:
-        configured_transport(recording_opener).request("GET", "/v1/agents/cloud")
+        configured_transport(recording_opener).request("GET", "/v1/assistants")
     assert raised.value.code is ErrorCode.REMOTE_UNREACHABLE
     assert str(raised.value) == "Plow API is unreachable"
     assert "secret-token" not in str(raised.value)
@@ -373,10 +373,10 @@ def test_transport_does_not_contact_a_real_redirect_target() -> None:
                 }
             )
             with pytest.raises(AgentMgrError) as raised:
-                transport.request("GET", "/v1/agents/cloud")
+                transport.request("GET", "/v1/assistants")
 
     assert raised.value.code is ErrorCode.REMOTE_REJECTED
-    assert source_requests == [("/v1/agents/cloud", "Bearer secret-token")]
+    assert source_requests == [("/v1/assistants", "Bearer secret-token")]
     assert target_requests == []
 
 
@@ -408,7 +408,7 @@ def test_loopback_transport_bypasses_an_ambient_http_proxy(
             }
         )
 
-        assert transport.request("GET", "/v1/agents/cloud") is None
+        assert transport.request("GET", "/v1/assistants") is None
 
-    assert target_requests == [("/v1/agents/cloud", "Bearer secret-token")]
+    assert target_requests == [("/v1/assistants", "Bearer secret-token")]
     assert proxy_requests == []

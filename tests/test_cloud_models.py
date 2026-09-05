@@ -1,80 +1,66 @@
-import json
-import sys
-from pathlib import Path
+from typing import Any
 
 import pytest
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from conftest import ASSISTANT_CONTRACT
 
 from agent_mgr.cloud_models import (
-    CloudAgentResource,
-    CloudStatus,
-    CreateCloudAgentRequest,
+    AssistantResource,
+    AssistantSlot,
+    AssistantStatus,
+    CreateAssistantRequest,
     FailureCode,
-    UpdateCloudAgentChatsRequest,
 )
 from agent_mgr.errors import AgentMgrError, ErrorCode
 
 
+def resource(**overrides: object) -> dict[str, Any]:
+    return ASSISTANT_CONTRACT[0] | overrides
+
+
 def test_create_request_round_trips_the_api_shape() -> None:
-    request = CreateCloudAgentRequest.from_json(
-        {"name": "Mary", "provider": "exe:hermes", "chat_uids": ["cht_a", "cht_b"]}
+    request = CreateAssistantRequest.from_json(
+        {"name": "Mary", "provider": "exe:hermes", "line_uid": "ln_a"}
     )
 
-    assert request.to_json() == {
-        "name": "Mary",
-        "provider": "exe:hermes",
-        "chat_uids": ["cht_a", "cht_b"],
-    }
-
-
-def test_update_request_deduplicates_chats_in_first_seen_order() -> None:
-    request = UpdateCloudAgentChatsRequest.from_json({"chat_uids": ["cht_b", "cht_a", "cht_b"]})
-
-    assert request.to_json() == {"chat_uids": ["cht_b", "cht_a"]}
-
-
-def test_resource_preserves_chat_order_and_multiplicity() -> None:
-    raw = {
-        "agent_id": "a" * 32,
-        "chat_uids": ["cht_a", "cht_b", "cht_a"],
-        "url": "https://agent.example",
-        "provider": "exe:hermes",
-        "status": "running",
-        "failure_code": None,
-    }
-
-    resource = CloudAgentResource.from_json(raw)
-
-    assert resource.status is CloudStatus.RUNNING
-    assert resource.failure_code is None
-    assert resource.to_json() == raw
+    assert request.to_json() == {"name": "Mary", "provider": "exe:hermes", "line_uid": "ln_a"}
 
 
 @pytest.mark.parametrize(
     "value",
     [
         {},
-        {"chat_uids": []},
-        {"chat_uids": [""]},
-        {"chat_uids": [1]},
-        {"chat_uids": ["cht_a"], "surprise": True},
-        ["cht_a"],
+        {"line_uid": ""},
+        {"line_uid": 1},
+        {"line_uid": "ln_a", "surprise": True},
+        # The old contract addressed a create by its chats. The route takes a
+        # line now, and a caller still sending chats must hear so.
+        {"line_uid": "ln_a", "chat_uids": ["cht_a"]},
+        ["ln_a"],
     ],
 )
-def test_update_request_rejects_every_non_contract_shape(value: object) -> None:
+def test_create_request_rejects_every_non_contract_shape(value: object) -> None:
     with pytest.raises(AgentMgrError) as raised:
-        UpdateCloudAgentChatsRequest.from_json(value)
+        CreateAssistantRequest.from_json(value)
 
     assert raised.value.code is ErrorCode.INVALID_ARGUMENT
 
 
 def test_request_unknown_field_diagnostic_keeps_the_local_field_name() -> None:
     with pytest.raises(AgentMgrError) as raised:
-        UpdateCloudAgentChatsRequest.from_json({"chat_uids": ["cht_a"], "surprise": True})
+        CreateAssistantRequest.from_json({"line_uid": "ln_a", "surprise": True})
 
     assert raised.value.code is ErrorCode.INVALID_ARGUMENT
     assert str(raised.value) == "unknown fields: surprise"
+
+
+def test_resource_preserves_chat_order_and_multiplicity() -> None:
+    raw = resource(chat_uids=["cht_a", "cht_b", "cht_a"])
+
+    decoded = AssistantResource.from_json(raw)
+
+    assert decoded.status is AssistantStatus.RUNNING
+    assert decoded.failure_code is None
+    assert decoded.to_json() == raw
 
 
 @pytest.mark.parametrize(
@@ -83,6 +69,7 @@ def test_request_unknown_field_diagnostic_keeps_the_local_field_name() -> None:
         ("running", "unknown"),
         ("failed", None),
         ("new-state", None),
+        (None, None),
         (None, "setup_failed"),
         ("failed", "vendor_message"),
         ([], None),
@@ -91,85 +78,75 @@ def test_request_unknown_field_diagnostic_keeps_the_local_field_name() -> None:
         ("failed", {}),
     ],
 )
-def test_resource_rejects_inconsistent_or_open_ended_states(status, failure_code) -> None:
-    raw = {
-        "agent_id": "a" * 32,
-        "chat_uids": ["cht_a"],
-        "url": "https://agent.example",
-        "provider": "exe:hermes",
-        "status": status,
-        "failure_code": failure_code,
-    }
-
+def test_resource_rejects_inconsistent_or_open_ended_states(
+    status: object, failure_code: object
+) -> None:
     with pytest.raises(AgentMgrError) as raised:
-        CloudAgentResource.from_json(raw)
+        AssistantResource.from_json(resource(status=status, failure_code=failure_code))
 
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
 
 
-def test_live_resource_rejects_null_status() -> None:
-    raw = {
-        "agent_id": "a" * 32,
-        "chat_uids": ["cht_a"],
-        "url": "https://agent.example",
-        "provider": "exe:hermes",
-        "status": None,
-        "failure_code": None,
-    }
-
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"uid": ""},
+        {"line": "ln_a"},
+        {"line": {"provider_key": "+15550100001"}},
+        {"url": ""},
+        {"chat_uids": "cht_a"},
+        {"chat_uids": [""]},
+        {"daily_payment_cap_usd": 200},
+        {"verbose_output_enabled": "yes"},
+        {"surprise": True},
+    ],
+)
+def test_resource_rejects_fields_the_contract_does_not_answer_with(
+    overrides: dict[str, object],
+) -> None:
     with pytest.raises(AgentMgrError) as raised:
-        CloudAgentResource.from_json(raw)
+        AssistantResource.from_json(resource(**overrides))
 
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
 
 
 def test_deleted_resource_rejects_live_status() -> None:
-    raw = {
-        "agent_id": "a" * 32,
-        "chat_uids": ["cht_a"],
-        "url": "https://agent.example",
-        "provider": "exe:hermes",
-        "status": "running",
-        "failure_code": None,
-    }
-
     with pytest.raises(AgentMgrError) as raised:
-        CloudAgentResource.from_delete_json(raw)
+        AssistantResource.from_delete_json(resource(status="running"))
 
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
 
 
-def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
-    fixture = Path(__file__).parent / "fixtures" / "cloud-agent-contract.json"
-    resources = json.loads(fixture.read_text())
+@pytest.mark.parametrize("taken", [True, False], ids=["taken", "free"])
+def test_slot_round_trips_a_taken_and_a_free_line(taken: bool) -> None:
+    raw = {"line": ASSISTANT_CONTRACT[0]["line"], "assistant": ASSISTANT_CONTRACT[0] if taken else None}
 
-    assert isinstance(resources, list)
+    slot = AssistantSlot.from_json(raw)
+
+    assert (slot.assistant is not None) is taken
+    assert slot.to_json() == raw
+
+
+def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
     decoded = [
         (
-            CloudAgentResource.from_delete_json(resource)
-            if resource["status"] is None
-            else CloudAgentResource.from_json(resource)
+            AssistantResource.from_delete_json(raw)
+            if raw["status"] is None
+            else AssistantResource.from_json(raw)
         ).to_json()
-        for resource in resources
+        for raw in ASSISTANT_CONTRACT
     ]
-    assert decoded == resources
-    assert {resource["status"] for resource in resources} == {
-        None,
-        "running",
-        "provisioning",
-        "teardown",
-        "failed",
+
+    assert decoded == ASSISTANT_CONTRACT
+    assert {raw["status"] for raw in ASSISTANT_CONTRACT} == {None} | {
+        status.value for status in AssistantStatus
     }
-    assert {
-        resource["failure_code"] for resource in resources if resource["failure_code"] is not None
-    } == {
-        "provider_unreachable",
-        "image_pull_timeout",
-        "setup_failed",
-        "validation_failed",
-        "unknown",
+    assert {raw["failure_code"] for raw in ASSISTANT_CONTRACT if raw["failure_code"] is not None} == {
+        code.value for code in FailureCode
     }
-    assert {status.value for status in CloudStatus} == {
+    # The wire vocabulary, pinned to the words the API publishes rather than to
+    # the fixture -- which the two assertions above hold to the same set.
+    assert {status.value for status in AssistantStatus} == {
         "running",
         "provisioning",
         "teardown",
@@ -182,3 +159,7 @@ def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:
         "validation_failed",
         "unknown",
     }
+    local = [raw for raw in ASSISTANT_CONTRACT if raw["provider"] == "self_hosted"]
+    assert local and local[0]["url"] is None and local[0]["chat_uids"] == [], (
+        "a self-hosted assistant has no runtime and no anchors: keep that row decodable"
+    )

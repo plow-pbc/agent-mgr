@@ -15,6 +15,13 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
+# The assistant wire contract, in the one place the suite reads it: every route
+# is exercised against these exact resources, so a shape that drifts reddens
+# every cloud module at once rather than whichever one loaded it.
+ASSISTANT_CONTRACT = json.loads(
+    (ROOT / "tests/fixtures/assistant-contract.json").read_text(encoding="utf-8")
+)
+
 # The PATH the suite inherited, before it was made docker-free. Only
 # tests/test_compose.py uses it -- see the fixture below.
 REAL_PATH = os.environ.get("PATH", "")

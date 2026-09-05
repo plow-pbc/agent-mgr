@@ -1,6 +1,41 @@
 # **Deprecated — use [`plow-pbc/plow-agents`](https://github.com/plow-pbc/plow-agents) instead.**
 ---
 
+## Where changes go
+
+This repo is one of several that assemble a Plow agent. The map of which repo
+owns what is in
+[`plow-hermes-agent` README § The repos](https://github.com/plow-pbc/plow-hermes-agent#the-repos);
+read it before a change that touches a neighbour. The test is **who else would
+have to change if this fact changed** — if the answer is a sibling, the change
+belongs there; this repo only follows, by bumping its pin if it holds one.
+
+**Not here:**
+
+- The boot contract — `HERMES_HOME`, the credentials file, the s6 ordering —
+  is [`plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent)'s.
+  This repo pins its digest and mounts a home; where it has to name one of
+  those paths (the compose template), that copy follows the base, never leads.
+- The seed skills' contents are
+  [`hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat)'s.
+  `runtime/stack.json` selects which of them the fleet installs, by key and
+  SHA, so adding or dropping a fleet skill is a change in both repos.
+- The API, the relay and the cloud registry are
+  [`plow-pbc/plow`](https://github.com/plow-pbc/plow)'s; the Mac side and the
+  gog grammar are [`plow-pbc/latch`](https://github.com/plow-pbc/latch)'s. This
+  repo is a client of both — it drives plow's cloud registry through
+  `CloudClient` and probes Latch and the connectors — and reimplements neither.
+
+**Examples:**
+
+- Adherence — #133 put the fleet on the shared `plow-hermes-agent` base, ending
+  the second independent upstream-digest path this repo had been carrying:
+  https://github.com/plow-pbc/agent-mgr/pull/133
+- Drift — #142 restates the base's boot paths (`/var/lib/hermes`,
+  `/var/lib/plow/credentials.host`) in a compose template here; the copy is
+  unavoidable, but nothing yet binds it to the repo that owns them:
+  https://github.com/plow-pbc/agent-mgr/pull/142
+
 A CLI that stands up, on a host of your own, the same kind of agent that
 [Plow](https://plow.co) runs for its customers in the cloud: a container
 running [Hermes](https://howto.plow.co/hermes) with **Plow Chat** — the
@@ -92,7 +127,7 @@ detaches terminal stdin: pipe input (for example, `credential-helper | agent-mgr
 --json set-latch errands`), and set `AGENT_TRANSITION_ACK=1` for an intentional
 live transition. `logs` and `compose` reject JSON because they can stream forever.
 
-## Cloud agents
+## Cloud assistants
 
 The cloud-control commands use Plow's API and return structured JSON:
 
@@ -100,18 +135,23 @@ The cloud-control commands use Plow's API and return structured JSON:
 export PLOW_API_BASE=https://api.plow.co
 read -rsp 'Plow API token: ' PLOW_API_TOKEN; export PLOW_API_TOKEN
 
-printf '%s\n' '{"name":"Mary","provider":"exe:hermes","chat_uids":["cht_example"]}' \
+printf '%s\n' '{"name":"Mary","provider":"exe:hermes","line_uid":"ln_example"}' \
   | agent-mgr --json cloud-create
 agent-mgr --json cloud-list
-agent-mgr --json cloud-get AGENT_ID
-printf '%s\n' '{"chat_uids":["cht_example","cht_second"]}' \
-  | agent-mgr --json cloud-update-chats AGENT_ID
-agent-mgr --json cloud-delete AGENT_ID
+agent-mgr --json cloud-get ASSISTANT_UID
+agent-mgr --json cloud-move ASSISTANT_UID ln_other
+agent-mgr --json cloud-delete ASSISTANT_UID
 ```
 
+An assistant is one runtime on one line, and the slot is 1:1 — so an assistant
+is created *for a line*, not for a set of chats, and `cloud-list` answers one
+slot per line in the pool, carrying either the assistant on it or `null`. Its
+lifecycle-anchor chats are lifecycle state rather than something a caller sets:
+moving an assistant to another line is `cloud-move`, and the anchors follow.
+
 Create normally returns `status: "provisioning"`. Callers should poll
-`cloud-get` until the agent reaches `running`, `failed`, or `teardown`. Retry
-creation after `failed`; repeat deletion after `teardown`. agent-mgr never
+`cloud-get` until the assistant reaches `running`, `failed`, or `teardown`.
+Retry creation after `failed`; repeat deletion after `teardown`. agent-mgr never
 contacts exe.dev or handles tenant credentials. Local Compose commands remain
 separate from the cloud-control commands.
 
@@ -391,7 +431,7 @@ that ref deliberate.
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow)'s `cloud-agents/hermes`
 is the cloud side this tool mirrors: the same Hermes runtime for Plow's
 customers, one VM per tenant, native under systemd, provisioned by
-`POST /v1/agents/cloud`. Same protocol underneath, different products around
+`POST /v1/assistants`. Same protocol underneath, different products around
 it. So the posture is:
 
 **Converge on the artifacts.** The plugin, the base image and the integration

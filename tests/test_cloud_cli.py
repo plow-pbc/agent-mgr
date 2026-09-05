@@ -5,18 +5,16 @@ import json
 import threading
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
 from typing import Any
 
 import pytest
-from conftest import ROOT
+from conftest import ASSISTANT_CONTRACT, ROOT
 
 TOKEN = "test-token"
 
 
-def _contract_resources() -> list[dict[str, Any]]:
-    fixture = Path(__file__).parent / "fixtures" / "cloud-agent-contract.json"
-    return json.loads(fixture.read_text(encoding="utf-8"))
+def _slot(resource: dict[str, Any] | None, line: dict[str, Any]) -> dict[str, Any]:
+    return {"line": line, "assistant": resource}
 
 
 class _CloudServer:
@@ -97,9 +95,9 @@ def _json_document(result, operation: str) -> dict[str, Any]:
     [
         ("cloud-create", ()),
         ("cloud-list", ()),
-        ("cloud-get", ("agent-id",)),
-        ("cloud-update-chats", ("agent-id",)),
-        ("cloud-delete", ("agent-id",)),
+        ("cloud-get", ("assistant-uid",)),
+        ("cloud-move", ("assistant-uid", "ln_target")),
+        ("cloud-delete", ("assistant-uid",)),
     ],
 )
 def test_cloud_commands_require_json(operation: str, args: tuple[str, ...], run) -> None:
@@ -109,87 +107,81 @@ def test_cloud_commands_require_json(operation: str, args: tuple[str, ...], run)
 
 
 def test_cloud_create_reads_the_api_request_shape_from_stdin(run, cloud_server) -> None:
-    resource = _contract_resources()[1]
+    resource = ASSISTANT_CONTRACT[1]
     cloud_server.respond(resource)
     result = run(
         "--json",
         "cloud-create",
         env=cloud_server.environment,
-        input=json.dumps({"name": "Mary", "provider": "exe:hermes", "chat_uids": ["cht_a"]}),
+        input=json.dumps({"name": "Mary", "provider": "exe:hermes", "line_uid": "ln_a"}),
     )
 
     assert result.returncode == 0
     body = _json_document(result, "cloud-create")
-    assert body["result"]["agent"] == resource
+    assert body["result"]["assistant"] == resource
     assert cloud_server.requests == [
         (
             "POST",
-            "/v1/agents/cloud",
-            {"name": "Mary", "provider": "exe:hermes", "chat_uids": ["cht_a"]},
+            "/v1/assistants",
+            {"name": "Mary", "provider": "exe:hermes", "line_uid": "ln_a"},
         )
     ]
 
 
-def test_cloud_list_emits_resources(run, cloud_server) -> None:
-    resources = _contract_resources()[:2]
-    cloud_server.respond(resources)
+def test_cloud_list_emits_taken_and_free_slots(run, cloud_server) -> None:
+    taken, spare = ASSISTANT_CONTRACT[:2]
+    slots = [_slot(taken, taken["line"]), _slot(None, spare["line"])]
+    cloud_server.respond(slots)
 
     result = run("--json", "cloud-list", env=cloud_server.environment)
 
     assert result.returncode == 0
-    assert _json_document(result, "cloud-list")["result"] == {"agents": resources}
-    assert cloud_server.requests == [("GET", "/v1/agents/cloud", None)]
+    assert _json_document(result, "cloud-list")["result"] == {"slots": slots}
+    assert cloud_server.requests == [("GET", "/v1/assistants", None)]
 
 
 def test_cloud_get_emits_a_resource(run, cloud_server) -> None:
-    resource = _contract_resources()[0]
+    resource = ASSISTANT_CONTRACT[0]
     cloud_server.respond(resource)
 
-    result = run("--json", "cloud-get", resource["agent_id"], env=cloud_server.environment)
+    result = run("--json", "cloud-get", resource["uid"], env=cloud_server.environment)
 
     assert result.returncode == 0
-    assert _json_document(result, "cloud-get")["result"] == {"agent": resource}
-    assert cloud_server.requests == [("GET", f"/v1/agents/cloud/{resource['agent_id']}", None)]
+    assert _json_document(result, "cloud-get")["result"] == {"assistant": resource}
+    assert cloud_server.requests == [("GET", f"/v1/assistants/{resource['uid']}", None)]
 
 
-def test_cloud_update_chats_reads_the_api_request_shape_from_stdin(run, cloud_server) -> None:
-    resource = _contract_resources()[0]
+def test_cloud_move_puts_the_assistant_on_the_named_line(run, cloud_server) -> None:
+    resource = ASSISTANT_CONTRACT[0]
     cloud_server.respond(resource)
+
     result = run(
-        "--json",
-        "cloud-update-chats",
-        resource["agent_id"],
-        env=cloud_server.environment,
-        input=json.dumps({"chat_uids": ["cht_a", "cht_b"]}),
+        "--json", "cloud-move", resource["uid"], "ln_target", env=cloud_server.environment
     )
 
     assert result.returncode == 0
-    assert _json_document(result, "cloud-update-chats")["result"] == {"agent": resource}
+    assert _json_document(result, "cloud-move")["result"] == {"assistant": resource}
     assert cloud_server.requests == [
-        (
-            "PUT",
-            f"/v1/agents/cloud/{resource['agent_id']}/chats",
-            {"chat_uids": ["cht_a", "cht_b"]},
-        )
+        ("PUT", f"/v1/assistants/{resource['uid']}/line", {"line_uid": "ln_target"})
     ]
 
 
 def test_cloud_delete_emits_the_teardown_resource(run, cloud_server) -> None:
-    resource = _contract_resources()[3]
+    resource = ASSISTANT_CONTRACT[3]
     cloud_server.respond(resource)
 
-    result = run("--json", "cloud-delete", resource["agent_id"], env=cloud_server.environment)
+    result = run("--json", "cloud-delete", resource["uid"], env=cloud_server.environment)
 
     assert result.returncode == 0
-    assert _json_document(result, "cloud-delete")["result"] == {"agent": resource}
-    assert cloud_server.requests == [("DELETE", f"/v1/agents/cloud/{resource['agent_id']}", None)]
+    assert _json_document(result, "cloud-delete")["result"] == {"assistant": resource}
+    assert cloud_server.requests == [("DELETE", f"/v1/assistants/{resource['uid']}", None)]
 
 
 @pytest.mark.parametrize(
     "contents,code",
     [
         ("not JSON", "invalid_argument"),
-        (json.dumps({"chat_uids": []}), "invalid_argument"),
+        (json.dumps({"chat_uids": ["cht_a"]}), "invalid_argument"),
     ],
 )
 def test_cloud_create_reports_input_failures(run, contents, code) -> None:
@@ -220,8 +212,8 @@ def test_cloud_create_refuses_terminal_stdin(monkeypatch, capsys) -> None:
 def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
     run, cloud_server
 ) -> None:
-    payload = r'{"chat_uids":["\ud800"]}'
-    cloud_server.respond(_contract_resources()[1])
+    payload = r'{"line_uid":"\ud800"}'
+    cloud_server.respond(ASSISTANT_CONTRACT[1])
     result = run(
         "--json",
         "cloud-create",
@@ -232,7 +224,21 @@ def test_cloud_create_rejects_lone_surrogates_as_one_json_document(
     assert result.returncode == 1
     body = _json_document(result, "cloud-create")
     assert body["error"]["code"] == "invalid_argument"
-    assert body["error"]["message"] == "chat_uids must contain valid Unicode"
+    assert body["error"]["message"] == "line_uid must contain valid Unicode"
+    assert cloud_server.requests == []
+
+
+def test_cloud_move_rejects_a_line_uid_the_request_could_not_carry(run, cloud_server) -> None:
+    """argv is bytes, and a byte that is not UTF-8 survives into `sys.argv` as a
+    surrogate. Encoding the request body is where that becomes fatal, so the
+    value is refused before it gets there -- as this tool's JSON error, which is
+    the only thing a `--json` caller can read."""
+    result = run("--json", "cloud-move", "a" * 32, "\udcff", env=cloud_server.environment)
+
+    assert result.returncode == 1
+    body = _json_document(result, "cloud-move")
+    assert body["error"]["code"] == "invalid_argument"
+    assert body["error"]["message"] == "line_uid must contain valid Unicode"
     assert cloud_server.requests == []
 
 
@@ -242,7 +248,7 @@ def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, cloud_server
         "--json",
         "cloud-create",
         env=cloud_server.environment,
-        input=json.dumps({"chat_uids": ["cht_a"]}),
+        input=json.dumps({"line_uid": "ln_a"}),
     )
 
     assert result.returncode == 1
@@ -255,10 +261,10 @@ def test_cloud_create_marks_an_unreadable_success_as_ambiguous(run, cloud_server
 
 
 def test_cloud_delete_marks_an_unreadable_success_as_ambiguous(run, cloud_server) -> None:
-    resource = _contract_resources()[0]
+    resource = ASSISTANT_CONTRACT[0]
     cloud_server.respond_bytes(b"not-json")
 
-    result = run("--json", "cloud-delete", resource["agent_id"], env=cloud_server.environment)
+    result = run("--json", "cloud-delete", resource["uid"], env=cloud_server.environment)
 
     assert result.returncode == 1
     body = _json_document(result, "cloud-delete")
@@ -276,8 +282,8 @@ def test_help_lists_every_cloud_argument_shape(run) -> None:
     for invocation in (
         "cloud-create",
         "cloud-list",
-        "cloud-get <agent-id>",
-        "cloud-update-chats <agent-id>",
-        "cloud-delete <agent-id>",
+        "cloud-get <assistant-uid>",
+        "cloud-move <assistant-uid> <line-uid>",
+        "cloud-delete <assistant-uid>",
     ):
         assert invocation in result.stdout
