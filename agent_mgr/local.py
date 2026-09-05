@@ -402,7 +402,10 @@ def running_container_id(agent: ResolvedAgent) -> str:
     return ids[0]
 
 
-def require_running(agent: ResolvedAgent, registry: Registry) -> None:
+def require_running(agent: ResolvedAgent, registry: Registry) -> str:
+    """The running container's id, so callers that go on to exec into it reuse
+    this one snapshot rather than asking docker again."""
     resolve_guard(agent, registry)
-    running_container_id(agent)
+    container_id = running_container_id(agent)
     require_container_ours(agent)
+    return container_id

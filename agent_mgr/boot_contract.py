@@ -176,12 +176,13 @@ def read_plow_credentials(agent: ResolvedAgent) -> tuple[str, str]:
     return dotenv_read(source, "PLOW_API_BASE"), dotenv_read(source, "PLOW_AGENT_TOKEN")
 
 
-def require_running_contract_matches(agent: ResolvedAgent, container_id: str) -> None:
+def require_running_contract_matches(agent: ResolvedAgent, container_id: str) -> str:
     """cron_sync and check_connectors run via `exec`, which Compose's own
     image-diff never protects -- so compare the running container's actual
     baked HERMES_HOME against the one the agent currently resolves to, and
     refuse on a mismatch. One direct comparison, not a general per-container
-    state model."""
+    state model. Returns the agreed target, which is what those callers pass
+    to exec as HOME."""
     resolved = require_home_target(agent)
     running = _baked_home_env(container_id)
     if running is None:
@@ -196,3 +197,4 @@ def require_running_contract_matches(agent: ResolvedAgent, container_id: str) ->
             f"its image now resolves to {resolved} -- exec would target the wrong path. "
             f"Recreate it first: agent-mgr restart {agent.name}",
         )
+    return resolved

@@ -10,16 +10,12 @@ import termios
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
-from .boot_contract import (
-    read_plow_credentials,
-    require_home_target,
-    require_running_contract_matches,
-)
+from .boot_contract import read_plow_credentials, require_running_contract_matches
 from .cloud_http import HttpCloudTransport
 from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write, dotenv_read, read_regular_text
-from .local import compose, require_own_home, require_running, resolve_guard, running_container_id
+from .local import compose, require_own_home, require_running, resolve_guard
 from .models import ResolvedAgent
 from .registry import Registry
 
@@ -49,9 +45,8 @@ def cron_sync(agent: ResolvedAgent, registry: Registry) -> int:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"AGENT_CRON_SPEC names {agent.cron_spec}, which does not exist"
         )
-    require_running(agent, registry)
-    target = require_home_target(agent)
-    require_running_contract_matches(agent, running_container_id(agent))
+    container_id = require_running(agent, registry)
+    target = require_running_contract_matches(agent, container_id)
     return compose(
         agent,
         [
@@ -559,9 +554,8 @@ def set_home(agent: ResolvedAgent, registry: Registry, uid: str) -> int:
 
 
 def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
-    require_running(agent, registry)
-    target = require_home_target(agent)
-    require_running_contract_matches(agent, running_container_id(agent))
+    container_id = require_running(agent, registry)
+    target = require_running_contract_matches(agent, container_id)
     skill = f"{target}/skills/productivity/plow-connectors/plow_connector.py"
     uid = f"{os.getuid()}:{os.getgid()}"
     present = compose(
