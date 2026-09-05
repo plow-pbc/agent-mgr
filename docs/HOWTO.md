@@ -132,15 +132,16 @@ Then the sequence (each step finishes before the next):
 
 | | who | what |
 |---|---|---|
-| 1 | you | `register` (or `new`), `deploy`, set `AGENT_TZ` in their dotenv, `up` |
+| 1 | you | `register` (or `new`), `deploy`, set `AGENT_TZ` in their dotenv |
 | 2 | you | `agent-mgr activate bob` — prints the code and number, then polls |
 | 3 | **them** | text the code **from the handset that should own the agent** |
-| 4 | you | `agent-mgr sign-in bob` — prints a device-code URL, waits on the browser |
-| 5 | **them** | open the URL in *their* browser, enter the code |
-| 6 | **them** | Plow Latch → Agents → *can't use OAuth? create a static credential* |
-| 7 | you | `set-latch bob`, paste the JSON it showed (it reloads a running agent itself), then `check-latch bob` |
-| 8 | you | `agent-mgr cron-sync bob` — only if the repo names a cron spec |
-| 9 | **them** | reply to the agent's 👋 from that handset — it runs setup (`life-assistant-hermes-agent` README § Bring-up) |
+| 4 | you | `agent-mgr up bob` — start the container. Not sooner: the current boot contract's credential is what `activate` (rows 2-3) just wrote, and `up` is what a not-yet-activated agent would refuse for |
+| 5 | you | `agent-mgr sign-in bob` — prints a device-code URL, waits on the browser |
+| 6 | **them** | open the URL in *their* browser, enter the code |
+| 7 | **them** | Plow Latch → Agents → *can't use OAuth? create a static credential* |
+| 8 | you | `set-latch bob`, paste the JSON it showed (it reloads a running agent itself), then `check-latch bob` |
+| 9 | you | `agent-mgr cron-sync bob` — only if the repo names a cron spec |
+| 10 | **them** | reply to the agent's 👋 from that handset — it runs setup (`life-assistant-hermes-agent` README § Bring-up) |
 
 The Latch pair is copy-once by design — Latch drops it from memory once
 saved. If it was relayed through a chat window to reach you, treat it as
