@@ -7,6 +7,12 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .boot_contract import (
+    CURRENT_HOME,
+    credentials_host_path,
+    ensure_credentials,
+    require_home_target,
+)
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
 from .models import ResolvedAgent
@@ -47,6 +53,8 @@ SCRUB = frozenset(
         "AGENT_PRE_TRANSITION",
         "AGENT_CRON_SPEC",
         "AGENT_DESCRIPTOR",
+        "AGENT_HOME_TARGET",
+        "AGENT_CREDENTIALS_HOST",
         "COMPOSE_PROJECT_NAME",
         "COMPOSE_FILE",
         "COMPOSE_ENV_FILE",
@@ -59,6 +67,13 @@ SCRUB = frozenset(
 def environment(agent: ResolvedAgent) -> dict[str, str]:
     result = {key: value for key, value in os.environ.items() if key not in SCRUB}
     result.update(agent.environment())
+    target = require_home_target(agent)
+    result["AGENT_HOME_TARGET"] = target
+    if target == CURRENT_HOME:
+        # The path only -- always safe to export. Whether the file at that
+        # path is actually current is transition()'s job, right before a
+        # container is created.
+        result["AGENT_CREDENTIALS_HOST"] = str(credentials_host_path(agent))
     result["HERMES_UID"] = str(os.getuid())
     result["HERMES_GID"] = str(os.getgid())
     return result
@@ -66,6 +81,9 @@ def environment(agent: ResolvedAgent) -> dict[str, str]:
 
 def compose_argv(agent: ResolvedAgent, args: Sequence[str]) -> list[str]:
     files = ["-f", str(ROOT / "templates" / "compose.yml")]
+    current = require_home_target(agent) == CURRENT_HOME
+    contract_file = "compose.current.yml" if current else "compose.legacy.yml"
+    files += ["-f", str(ROOT / "templates" / contract_file)]
     override = agent.repo / "compose.override.yml"
     if override.is_file():
         files.extend(["-f", str(override)])
@@ -159,6 +177,7 @@ def require_own_home(agent: ResolvedAgent, registry: Registry) -> None:
 
 def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
     require_own_home(agent, registry)
+    target = require_home_target(agent)
     result = compose(agent, ["config", "--format", "json"], capture=True)
     if result.returncode:
         raise AgentMgrError(
@@ -174,7 +193,7 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         container = service.get("container_name", "-")
         volumes = service.get("volumes", [])
         home = next(
-            (item.get("source", "") for item in volumes if item.get("target") == "/opt/data"), "-"
+            (item.get("source", "") for item in volumes if item.get("target") == target), "-"
         )
         agent_id = service.get("environment", {}).get("AGENT_ID", "-")
         image = service.get("image", "-")
@@ -218,6 +237,7 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
 
 
 def require_container_ours(agent: ResolvedAgent) -> None:
+    target = require_home_target(agent)
     found = compose(agent, ["ps", "-a", "--quiet", "hermes"], capture=True)
     if found.returncode:
         raise AgentMgrError(
@@ -230,7 +250,7 @@ def require_container_ours(agent: ResolvedAgent) -> None:
                 "docker",
                 "inspect",
                 "--format",
-                '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}',
+                f'{{{{range .Mounts}}}}{{{{if eq .Destination "{target}"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}',
                 container_id,
             ],
             env=environment(agent),
@@ -249,7 +269,7 @@ def require_container_ours(agent: ResolvedAgent) -> None:
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to touch the container running as {agent.project} -- it mounts {mounted or '<nothing>'} "
-            f"at /opt/data, not {agent.name}'s home ({agent.home}). The compose project comes from the agent NAME; "
+            f"at {target}, not {agent.name}'s home ({agent.home}). The compose project comes from the agent NAME; "
             f"this descriptor may need its own name, or 'agent-mgr unregister {agent.name}'. "
             f"Check ownership first: docker inspect {container_id}",
         )
@@ -283,6 +303,11 @@ def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
     confirm_transition(agent)
     require_container_ours(agent)
     require_transition_allowed(agent)
+    if require_home_target(agent) == CURRENT_HOME:
+        # Right before the container is (re)created: cont-init only runs at
+        # creation, so this is the last moment a refreshed credential can
+        # still reach the container it is about to boot.
+        ensure_credentials(agent)
     return compose(agent, args).returncode
 
 
@@ -307,16 +332,22 @@ def require_transition_allowed(agent: ResolvedAgent) -> None:
         )
 
 
-def require_running(agent: ResolvedAgent, registry: Registry) -> None:
-    resolve_guard(agent, registry)
+def running_container_id(agent: ResolvedAgent) -> str:
     result = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
     if result.returncode:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"could not ask docker whether {agent.name}'s gateway is running"
         )
-    if not result.stdout.strip():
+    ids = result.stdout.split()
+    if not ids:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
             f"{agent.name}'s gateway is not running -- start it first: agent-mgr up {agent.name}",
         )
+    return ids[0]
+
+
+def require_running(agent: ResolvedAgent, registry: Registry) -> None:
+    resolve_guard(agent, registry)
+    running_container_id(agent)
     require_container_ours(agent)

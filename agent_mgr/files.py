@@ -8,6 +8,22 @@ from pathlib import Path
 from .errors import AgentMgrError, ErrorCode
 
 
+def dotenv_read(file: Path, key: str) -> str:
+    """The last value bound to `key` in a KEY=VALUE dotenv, or "" if absent.
+
+    Shared by every command that reads an agent's own .env for one credential
+    field -- deploy's dotenv skeleton, check-latch, activate's narrowing, and
+    the current boot contract's credential-file derivation all read the exact
+    same file the same way.
+    """
+    value = ""
+    for line in read_regular_text(file).split("\n"):
+        found, separator, raw = line.partition("=")
+        if separator and found == key:
+            value = raw.strip()
+    return value
+
+
 def read_regular_text(file: Path) -> str:
     directory = -1
     try:

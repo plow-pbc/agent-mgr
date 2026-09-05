@@ -1,0 +1,14 @@
+# Layered in by agent-mgr for the current boot contract (HERMES_HOME=/var/lib/hermes):
+# CMD ["/init"] boots the image's own supervised hermes-gateway, gated by a
+# plow-init oneshot that refuses to start unless /var/lib/plow/credentials
+# exists as root:root mode 600. Neither entrypoint nor command is overridden
+# here -- overriding them would leave that supervised gateway un-started while
+# agent-mgr's own `command:` started a second one beside it.
+#
+# agent-mgr writes only the bind-mounted .host copy; a root cont-init step
+# (baked into the image) promotes it into /var/lib/plow/credentials, which is
+# why this side can stay a normally-owned file.
+services:
+  hermes:
+    volumes:
+      - ${AGENT_CREDENTIALS_HOST:?set by agent-mgr, derived from the image}:/var/lib/plow/credentials.host

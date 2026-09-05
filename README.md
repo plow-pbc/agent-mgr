@@ -8,13 +8,17 @@ agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
 mirrors the cloud Hermes infrastructure in
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
 the same plugin at the same pin and the same protocol to the same API. The
-base image is shared only up to `plow-pbc/plow-hermes-agent` `089a6b1`:
-later bases move the home to `/var/lib/hermes` and gate the gateway behind a
-`/var/lib/plow/credentials` file this repository never writes, so under the
-`/opt/data` contract here they start no gateway at all. The fleet stays
-pinned at `089a6b1` until it adopts that contract — the `plow-agents`
-layout — tracked in [#130](https://github.com/plow-pbc/agent-mgr/issues/130).
-What differs is the product around it: there, one VM per tenant behind an
+base image forked at `plow-pbc/plow-hermes-agent` `089a6b1`: later bases move
+the home to `/var/lib/hermes` and gate the gateway behind a
+`/var/lib/plow/credentials` file, promoted at container creation from a
+bind-mounted `.host` copy this repository writes. agent-mgr derives which
+contract an agent's image needs from its own baked `HERMES_HOME` — never a
+separate switch — and runs either, one at a time, while the fleet migrates:
+the default pin in `runtime/stack.json` stays `089a6b1` (the `/opt/data`
+contract) until it adopts the newer layout — tracked in
+[#130](https://github.com/plow-pbc/agent-mgr/issues/130) — but an individual
+agent's `agent.env` may already point `AGENT_IMAGE` at a current-contract
+image. What differs is the product around it: there, one VM per tenant behind an
 HTTP endpoint; here, one host, many agents, Docker, a person at a terminal.
 Standing up a new agent is a command rather than a copy-paste of the last one.
 
@@ -398,9 +402,10 @@ too, up to `089a6b1`: this fleet runs `plow-pbc/plow-hermes-agent`'s published
 base, the image `life-assistant-hermes-agent` built its cloud variant on at the
 time. From `63c8b9c` the base moved its home to `/var/lib/hermes` and put
 `plow-init` — which needs a `/var/lib/plow/credentials` file — in front of the
-gateway, so under this repository's `/opt/data` contract those bases boot no
-gateway. The fleet stays on `089a6b1` until it adopts the base's contract, the
-`plow-agents` layout (#130).
+gateway. agent-mgr now derives and runs either contract from the image's own
+baked `HERMES_HOME`, but the fleet-wide default pin in `runtime/stack.json`
+stays `089a6b1` until it adopts the base's newer contract, the `plow-agents`
+layout (#130).
 
 That image declares `CMD ["/sbin/init"]` so its host can unpack it into a VM
 rootfs under systemd; the fleet overrides both `entrypoint` and `command` in

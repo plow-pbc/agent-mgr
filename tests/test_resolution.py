@@ -13,6 +13,33 @@ def test_home_defaults_to_the_conventional_path(run, instance, tmp_path):
     assert "AGENT_PROJECT=hermes-rowan" in r.stdout
 
 
+def test_resolve_shows_the_boot_contract_when_it_can_be_derived(run, instance):
+    """Derived from the image, not declared: the default fixture docker answers
+    the image's baked HERMES_HOME, so resolve shows it without ever deploying."""
+    run("register", "rowan", str(instance("rowan")))
+    assert "AGENT_HOME_TARGET=/opt/data" in run("resolve", "rowan").stdout
+    result = json.loads(run("--json", "resolve", "rowan").stdout)["result"]
+    assert result["home_target"] == "/opt/data"
+
+
+def test_resolve_omits_the_boot_contract_with_no_working_docker(run, instance, tmp_path):
+    """resolve is a diagnostic and must keep working with no Docker at all --
+    including for a never-deployed agent. Never a guessed placeholder: a
+    consumer doing ${AGENT_HOME_TARGET:?} must fail loudly, not interpolate a
+    bad path."""
+    run("register", "rowan", str(instance("rowan")))
+    b = tmp_path / "bin"
+    b.mkdir(exist_ok=True)
+    (b / "docker").write_text("#!/usr/bin/env bash\nexit 127\n")
+    (b / "docker").chmod(0o755)
+    env = {"PATH": f"{b}:{os.environ['PATH']}"}
+    r = run("resolve", "rowan", env=env)
+    assert r.returncode == 0, r.stderr
+    assert "AGENT_HOME_TARGET" not in r.stdout
+    result = json.loads(run("--json", "resolve", "rowan", env=env).stdout)["result"]
+    assert "home_target" not in result
+
+
 def test_the_image_defaults_to_the_fleet_wide_pinned_digest(run, instance):
     """Resolution hands back whatever runtime/stack.json pins.
 

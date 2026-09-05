@@ -5,8 +5,10 @@ Runs INSIDE the agent's container -- the one place `hermes`, jobs.json and the
 jobs' environment all live. Piped over stdin by `agent-mgr cron-sync <name>`;
 the spec travels as --spec-json. Nothing is installed, so nothing goes stale.
 
-Ground truth is /opt/data/cron/jobs.json -- hermes's own persisted state, where
-a name is a field and so are enabled/paused_at. Never the human rendering of
+Ground truth is $HOME/cron/jobs.json -- hermes's own persisted state, where
+a name is a field and so are enabled/paused_at. $HOME is the agent's data home
+(agent-mgr passes --env HOME=<its resolved boot-contract mount>, /opt/data or
+/var/lib/hermes), not a login directory. Never the human rendering of
 `hermes cron list`: matching on that text needed a new guard every time it was
 wrong (life-assistant's register_crons.py records the three review rounds).
 
@@ -28,7 +30,7 @@ import subprocess
 import sys
 
 HERMES = "/opt/hermes/bin/hermes"
-JOBS_FILE = "/opt/data/cron/jobs.json"
+JOBS_FILE = os.path.join(os.environ.get("HOME", "/opt/data"), "cron", "jobs.json")
 
 ROW_KEYS = {"name", "schedule", "prompt", "script", "no_agent", "skills",
             "deliver", "blocked"}

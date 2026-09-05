@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .backups import backup_homes, prune_backups
+from .boot_contract import CURRENT_HOME, home_target, require_home_target
 from .cloud_client import CloudClient
 from .cloud_http import HttpCloudTransport
 from .cloud_models import CreateCloudAgentRequest, UpdateCloudAgentChatsRequest
@@ -280,11 +281,23 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
             raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, "which agent? try 'agent-mgr ls'")
         _need(args, 1, "agent-mgr resolve <name>")
         agent = resolve_agent(args[0], registry, ROOT)
+        # Best-effort: resolve is a diagnostic and must keep working with no
+        # Docker at all, including for a never-deployed agent. Where the
+        # contract cannot be derived (the image is not local, or there is no
+        # Docker), the field is OMITTED rather than guessed -- a consumer
+        # doing ${AGENT_HOME_TARGET:?} then fails loudly instead of
+        # interpolating a bad path.
+        contract = home_target(agent.image)
         if json_output:
-            _emit("resolve", agent.to_json())
+            result = agent.to_json()
+            if contract is not None:
+                result["home_target"] = contract
+            _emit("resolve", result)
         else:
             for key, value in agent.environment().items():
                 print(f"{key}={value}")
+            if contract is not None:
+                print(f"AGENT_HOME_TARGET={contract}")
         return 0
     if operation == "resolve-guard":
         _need(args, 1, "agent-mgr resolve-guard <name>")
@@ -371,12 +384,17 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         _need(args, 1, f"agent-mgr {operation} <name>")
         agent = resolve_agent(args[0], registry, ROOT)
         resolve_guard(agent, registry)
+        recreate = ["up", "-d", "--force-recreate", "hermes"]
         command = {
-            "up": ["up", "-d"],
+            # A current-contract container's credential promotion only ever
+            # reruns at creation, so a plain `up` force-recreates too --
+            # otherwise resuming the old container would never pick up a
+            # refreshed credential.
+            "up": recreate if require_home_target(agent) == CURRENT_HOME else ["up", "-d"],
             "down": ["down"],
             # Compose restart retains the old container definition and misses
             # changes in the shared template.
-            "restart": ["up", "-d", "--force-recreate", "hermes"],
+            "restart": recreate,
             "logs": ["logs", "-f", "--tail", "100"],
         }[operation]
         if operation == "logs":
@@ -436,6 +454,15 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                     "without a replaced entrypoint the image's s6 starts a second gateway",
                 )
         resolve_guard(agent, registry)
+        native_resume = command[0] in {"start", "restart", "unpause"}
+        if native_resume and require_home_target(agent) == CURRENT_HOME:
+            raise AgentMgrError(
+                ErrorCode.INVALID_ARGUMENT,
+                f"refusing 'compose {command[0]}' for a current-contract agent -- it resumes "
+                "the existing container without recreating it, so the boot-time credential "
+                f"promotion never reruns. Use 'agent-mgr up {agent.name}' or 'restart', which "
+                "force-recreate.",
+            )
         if command[0] in LEAVES_RUNNING:
             if command[0] not in NO_IDENTIFICATION:
                 require_container_ours(agent)

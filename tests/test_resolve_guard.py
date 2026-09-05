@@ -139,7 +139,16 @@ def test_the_guard_refuses_cleanly_when_compose_cannot_produce_a_config(run, ins
     them, not how it is implemented."""
     b = tmp_path / "bin"
     b.mkdir(exist_ok=True)
-    (b / "docker").write_text("#!/usr/bin/env bash\necho 'not json'\nexit 0\n")
+    (b / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        # The boot-contract derivation must still succeed -- this test is
+        # about `compose config` producing garbage, not about the image.
+        "  *\"Config.Env\"*) echo '[\"HERMES_HOME=/opt/data\"]' ;;\n"
+        "  *) echo 'not json' ;;\n"
+        "esac\n"
+        "exit 0\n"
+    )
     (b / "docker").chmod(0o755)
     run("register", "rowan", str(instance("rowan")))
     import os

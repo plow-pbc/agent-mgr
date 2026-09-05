@@ -43,9 +43,14 @@ case "$*" in
  "services": {"hermes": {"container_name": "${AGENT_CONTAINER:-unset}",
    "image": "${AGENT_IMAGE:-nousresearch/hermes-agent@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc}",
    "environment": {"AGENT_ID": "${AGENT_NAME:-unset}"},
-   "volumes": [{"target": "/opt/data", "source": "${AGENT_HOME:-unset}"}]}}}
+   "volumes": [{"target": "${AGENT_HOME_TARGET:-/opt/data}", "source": "${AGENT_HOME:-unset}"}]}}}
 JSON
     ;;
+  # The image's baked HERMES_HOME -- the one fact the whole boot-contract
+  # derivation reads. Every fixture agent is legacy by default; a test that
+  # needs the current contract builds its own docker with fake_docker().
+  *"Config.Env"*) echo '["HERMES_HOME=/opt/data"]' ;;
+  *"image inspect"*) ;;
   *"ps -a --quiet"*) ;;
   *"ps --status running --quiet"*) ;;
   *)
@@ -221,12 +226,17 @@ def instance(tmp_path):
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
                 exists=None, all_cids=(), mounts=None, image=None, build=False,
-                pull_policy=None):
-    """A `docker` that answers the three things agent-mgr asks of it.
+                pull_policy=None, home_env="/opt/data"):
+    """A `docker` that answers the four things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
     resolve-guard, so every fake needs a parseable `config --format json` -- and
     three near-copies of that JSON drift the moment the guard reads a new field.
+
+    `home_env` is the image's baked HERMES_HOME -- legacy (/opt/data) by
+    default, matching the fleet's real fixtures. It drives BOTH the mount
+    target compose would resolve and the boot-contract derivation's own
+    `docker inspect`, so the two stay consistent the way the real image is.
 
     `log` records argv when given, so a test can assert on what actually ran
     rather than on what the source says.
@@ -244,7 +254,7 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # attributes usage to a sibling. A fake that omits it would leave that
         # guard asserting nothing.
         "environment": {"AGENT_ID": name},
-        "volumes": [{"target": "/opt/data", "source": str(home)}],
+        "volumes": [{"target": home_env, "source": str(home)}],
     }
     # The image Compose would resolve. A digest by default, because that is what
     # the fleet pins; `image=` or `build=True` let a test say otherwise.
@@ -258,6 +268,12 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     cfg = json.dumps({"name": project, "services": {"hermes": svc}})
     parts = [
         "#!/usr/bin/env bash",
+        # Unconditional and first: the boot-contract derivation's own
+        # `docker inspect --format {{json .Config.Env}}` call, for an image
+        # ref OR a running container id alike. Must win over the mount-echo
+        # shortcuts below, which answer a DIFFERENT inspect format
+        # (container Mounts) and would otherwise swallow this one too.
+        f'case "$*" in *"Config.Env"*) echo \'["HERMES_HOME={home_env}"]\'; exit 0 ;; esac',
         f'case "$*" in *inspect*) echo "{mount}"; exit 0 ;; esac' if mount is not None else "",
         f'printf "%s\\n" "$*" >> {log}' if log else "",
         # And one word per line beside it: the joined form cannot tell an intact

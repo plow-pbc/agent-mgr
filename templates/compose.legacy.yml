@@ -1,0 +1,11 @@
+# Layered in by agent-mgr for the legacy boot contract (HERMES_HOME=/opt/data):
+# an image with no supervised gateway of its own, so agent-mgr must start one.
+services:
+  hermes:
+    # Named rather than inherited. `command` below is arguments FOR the
+    # image's entrypoint, not a program -- and the shared cloud image clears
+    # ENTRYPOINT so its host can boot /sbin/init, which leaves `gateway` to be
+    # exec'd as a binary that does not exist. This is upstream's own
+    # entrypoint, so it is a no-op on an image that still declares one.
+    entrypoint: ["/opt/hermes/docker/entrypoint-dispatch.sh"]
+    command: ["gateway", "run"]
