@@ -43,13 +43,17 @@ agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
 mirrors the cloud Hermes infrastructure in
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
 the same plugin at the same pin and the same protocol to the same API. The
-base image is shared only up to `plow-pbc/plow-hermes-agent` `089a6b1`:
-later bases move the home to `/var/lib/hermes` and gate the gateway behind a
-`/var/lib/plow/credentials` file this repository never writes, so under the
-`/opt/data` contract here they start no gateway at all. The fleet stays
-pinned at `089a6b1` until it adopts that contract — the `plow-agents`
-layout — tracked in [#130](https://github.com/plow-pbc/agent-mgr/issues/130).
-What differs is the product around it: there, one VM per tenant behind an
+base image forked at `plow-pbc/plow-hermes-agent` `089a6b1`: later bases move
+the home to `/var/lib/hermes` and gate the gateway behind a
+`/var/lib/plow/credentials` file, promoted at container creation from a
+bind-mounted `.host` copy this repository writes. agent-mgr derives which
+contract an agent's image needs from its own baked `HERMES_HOME` — never a
+separate switch — and runs either, one at a time, while the fleet migrates:
+the default pin in `runtime/stack.json` stays `089a6b1` (the `/opt/data`
+contract) until it adopts the newer layout — tracked in
+[#130](https://github.com/plow-pbc/agent-mgr/issues/130) — but an individual
+agent's `agent.env` may already point `AGENT_IMAGE` at a current-contract
+image. What differs is the product around it: there, one VM per tenant behind an
 HTTP endpoint; here, one host, many agents, Docker, a person at a terminal.
 Standing up a new agent is a command rather than a copy-paste of the last one.
 
@@ -110,9 +114,12 @@ agent-mgr check-latch errands         # "latch reachable ... (HTTP 200)"
 
 Tearing a test agent down: capture the home first — `agent-mgr resolve
 <name>` prints `AGENT_HOME`, and after `unregister` nothing will resolve
-it — then `down`, `unregister`, and delete that directory yourself.
-Neither command touches it, and the nightly backup globs `~/.hermes*`, so
-a dead test home would be archived forever.
+it — then `down`, `unregister`, and delete that directory **and
+`~/.plow-credentials-<name>`** yourself. Neither command touches either, and
+the nightly backup globs both, so a dead test home would be archived forever.
+That credential file is the one thing that outlives the home: leave it and
+the next agent registered under the same name starts on the dead one's
+authorization instead of refusing until `activate`.
 
 Every command accepts `--json`. Reads return typed domain objects; operational
 commands return a versioned envelope with exit status and captured output.
@@ -246,7 +253,7 @@ shape: a second copy of something `agent-mgr` already owns.
 | `skills.tsv` | if it installs a **shared** skill | written by `add-skill`; one pinned SHA per skill |
 | a cron spec | if it ships scheduled jobs | named by `AGENT_CRON_SPEC`; declarative rows `cron-sync` converges onto the scheduler, reading hermes's own `jobs.json` — never `cron list` output. `deliver` is explicit on every row — a card-only job declares `local`, hermes's own no-chat-delivery target — and a `${VAR}` in it may only name a delivery identifier ending `_UID` or `_CHANNEL` — the env it expands from holds credentials one line away, and the expansion lands in argv and persists in `jobs.json`. A row's `blocked` reason keeps it versioned but unregistered. Agent-authored crons are invisible to it |
 | `SKILL.md`, `scripts/`, `references/` | if the agent does something | its own skill: the instructions the container reads, and whatever runs for them |
-| `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` (or `build`) beside it — [HOWTO](docs/HOWTO.md#where-does-my-code-go) has the shape and what `resolve-guard` refuses without it |
+| `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` beside it — [HOWTO](docs/HOWTO.md#where-does-my-code-go) has the shape and what `resolve-guard` refuses without it |
 | `AGENT_LIVE=1` | if real people's workflows run through it | declared in `agent.env`; the gateway messages its person at every restart, so a restart of a live agent is user-visible. agent-mgr asks `[y/N]` at a terminal before any transition and refuses non-interactively unless `AGENT_TRANSITION_ACK=1` — the explicit acknowledgement for automation that means to restart. Once admitted, container shutdown gives Hermes up to 30 seconds to checkpoint the interrupted session and release its database leases before s6 escalates |
 | a deploy hook | if it has its own deploy step | named by `AGENT_DEPLOY_HOOK`; `deploy` sequences it, so one command is the whole deploy -- except crons, which are `cron-sync`'s and run against a live gateway |
 | a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `deploy` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
@@ -263,11 +270,13 @@ an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image
 by `sha256:` digest — never a tag or a branch. (One exception: an image this host
 **builds**, which may carry any tag — the rentals agent's
 `sams-str-hermes-agent:local`, say. A `build:` service must declare
-`pull_policy: never` (or `build`), because the default and `missing` both
-**pull** when the local tag is absent — measured, not assumed — and the fetched
-image then runs with the agent's credentials. With that set, there is nothing
-mutable to substitute. A `pull`, or a `--pull` naming anything but
-`never`/`build`, is refused through this tool for the same reason — `pull` with
+`pull_policy: never`, because every other policy swaps the image out between
+agent-mgr reading the boot contract off it and Compose starting it: the default
+and `missing` **pull** when the local tag is absent — measured, not assumed —
+and `build` *rebuilds* under `up`. With `never` set, there is nothing
+mutable to substitute, and building is its own step: `compose <name> build`,
+then `up`. A `pull`, a `--pull` naming anything but `never`, or a `--build`,
+is refused through this tool for the same reason — `pull` with
 no admitted form, because which spellings of `--ignore-buildable` Compose
 honours is a fact about its flag parser, and every miss fails open. (`build
 --pull` is the exception: there it is a boolean that re-pulls the base image and
@@ -311,8 +320,15 @@ thing that works.
 
 ### Where a per-person value goes
 
-**The instance's own dotenv** — `$AGENT_HOME/.env`, the file that already holds
-its Plow token and its Latch credential, mounted at `/opt/data`.
+**The instance's own dotenv** — `$AGENT_HOME/.env`, the file that holds its
+Latch credential, mounted at the image's own HERMES_HOME (`/opt/data` for the
+legacy contract, `/var/lib/hermes` for the current one). It is also where the
+Plow token lives for a **legacy**-contract agent. A **current**-contract
+agent's Plow token instead lives OUTSIDE every home, in its own credential
+file (`~/.plow-credentials-<name>`, never under `$AGENT_HOME` — an agent's own
+container must not be able to reach a sibling's): the current base's own
+gateway truncates the token out of the dotenv after first boot, so that file
+is the durable copy from then on.
 
 `$AGENT_HOME` is `~/.hermes-<name>` by convention, but it is whatever the
 instance *resolved* — an agent whose descriptor declares `AGENT_HOME` keeps its
@@ -373,7 +389,7 @@ line, turning `PLOW_AGENT_TOKEN=…` into `PLOW_AGENT_TOKEN=…AGENT_INDEX=1`.
 `agent-mgr` does not read this key and does not pass it to Compose. The agent's
 home is already mounted at `/opt/data`, so the reporter reads the switch from
 that file itself. That is deliberate: `compose.override.yml` merges after the
-template and can replace anything the template sets — measured, an override
+shared template and can replace anything that file sets — measured, an override
 naming `AGENT_INDEX` wins — and that override is shared by every instance
 registered against the checkout. A switch there opts in siblings who never
 asked. Kept in the per-person file, nothing in Compose can forge it.
@@ -438,13 +454,14 @@ too, up to `089a6b1`: this fleet runs `plow-pbc/plow-hermes-agent`'s published
 base, the image `life-assistant-hermes-agent` built its cloud variant on at the
 time. From `63c8b9c` the base moved its home to `/var/lib/hermes` and put
 `plow-init` — which needs a `/var/lib/plow/credentials` file — in front of the
-gateway, so under this repository's `/opt/data` contract those bases boot no
-gateway. The fleet stays on `089a6b1` until it adopts the base's contract, the
-`plow-agents` layout (#130).
+gateway. agent-mgr now derives and runs either contract from the image's own
+baked `HERMES_HOME`, but the fleet-wide default pin in `runtime/stack.json`
+stays `089a6b1` until it adopts the base's newer contract, the `plow-agents`
+layout (#130).
 
 That image declares `CMD ["/sbin/init"]` so its host can unpack it into a VM
 rootfs under systemd; the fleet overrides both `entrypoint` and `command` in
-`templates/compose.yml` and boots the same filesystem through s6 instead. One
+`templates/compose.legacy.yml` and boots the same filesystem through s6 instead. One
 image, two boot paths — which is why sharing it was possible at all, and why
 the home path and the credential hand-off are the two things that must agree.
 

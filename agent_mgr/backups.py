@@ -80,9 +80,17 @@ def backup_homes(destination_name: str) -> int:
         homes.extend(path for path in sorted(home_root.glob(".hermes-*")) if path.is_dir())
         if not homes:
             raise _backup_error(f"no homes matched {home_root}/.hermes*")
+        jobs = [(run / f"{h.name.removeprefix('.')}.tar.gz", h, ["."], str(h)) for h in homes]
+        # Outside every home, deliberately, so no home's archive reaches it --
+        # and after a current-contract first boot it is the only host-side copy
+        # of that agent's Plow token (boot_contract.credentials_host_path).
+        credentials = sorted(p.name for p in home_root.glob(".plow-credentials-*") if p.is_file())
+        if credentials:
+            jobs.append(
+                (run / "plow-credentials.tar.gz", home_root, credentials, "the credentials")
+            )
         failed = False
-        for home in homes:
-            archive = run / f"{home.name.removeprefix('.')}.tar.gz"
+        for archive, source, members, subject in jobs:
             result = subprocess.run(
                 [
                     "tar",
@@ -90,10 +98,10 @@ def backup_homes(destination_name: str) -> int:
                     "--exclude=./cache",
                     "--exclude=./lazy-packages",
                     "-C",
-                    str(home),
+                    str(source),
                     "-czf",
                     str(archive),
-                    ".",
+                    *members,
                 ],
                 text=True,
                 capture_output=True,
@@ -108,12 +116,12 @@ def backup_homes(destination_name: str) -> int:
             if result.returncode and not (result.returncode == 1 and tolerated):
                 archive.unlink(missing_ok=True)
                 print(
-                    f"backup-homes: tar failed on {home} (status {result.returncode}) -- no archive kept",
+                    f"backup-homes: tar failed on {subject} (status {result.returncode}) -- no archive kept",
                     file=sys.stderr,
                 )
                 failed = True
         if failed:
-            raise _backup_error("one or more homes were not archived")
+            raise _backup_error("one or more homes or credentials were not archived")
         return 0
     finally:
         os.umask(previous_umask)

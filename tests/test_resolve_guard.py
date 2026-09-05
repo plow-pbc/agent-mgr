@@ -33,18 +33,19 @@ def test_the_guard_passes_when_the_resolved_config_matches(run, instance):
     assert r.returncode == 0, r.stderr + r.stdout
 
 
-def test_the_guard_refuses_when_an_override_retargets_the_home(run, instance, tmp_path):
-    """An override that mounts a different home at /opt/data must be caught, even
-    though every descriptor variable resolved exactly as written."""
+def test_the_guard_refuses_an_override_that_retargets_the_home(run, instance, tmp_path):
+    """Caught though every descriptor variable resolved exactly as written. The
+    last bind an override can still reach: the credential beside it belongs to
+    the contract overlay, merged after it -- prevention, asserted against the
+    real merge in test_compose.py rather than detected here."""
     _agent(run, instance, "rowan")
     env = _mismatched(tmp_path, "rowan")
-    # The mismatch: Compose resolves a different home at /opt/data.
-    (tmp_path / "bin" / "docker").write_text(
-        (tmp_path / "bin" / "docker").read_text().replace(
-            str(tmp_path / "home" / ".hermes-rowan"), str(tmp_path / ".hermes-SOMEONE-ELSE")))
+    docker = tmp_path / "bin" / "docker"
+    docker.write_text(docker.read_text().replace(".hermes-rowan", ".hermes-SOMEONE-ELSE"))
     r = run("resolve-guard", "rowan", env=env)
     assert r.returncode != 0
     assert "refusing to act" in r.stderr
+    assert "home" in r.stderr
 
 
 def test_the_guard_refuses_when_an_override_forges_the_agents_identity(run, instance, tmp_path):
@@ -139,7 +140,16 @@ def test_the_guard_refuses_cleanly_when_compose_cannot_produce_a_config(run, ins
     them, not how it is implemented."""
     b = tmp_path / "bin"
     b.mkdir(exist_ok=True)
-    (b / "docker").write_text("#!/usr/bin/env bash\necho 'not json'\nexit 0\n")
+    (b / "docker").write_text(
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        # The boot-contract derivation must still succeed -- this test is
+        # about `compose config` producing garbage, not about the image.
+        "  *\"Config.Env\"*) echo '[\"HERMES_HOME=/opt/data\"]' ;;\n"
+        "  *) echo 'not json' ;;\n"
+        "esac\n"
+        "exit 0\n"
+    )
     (b / "docker").chmod(0o755)
     run("register", "rowan", str(instance("rowan")))
     import os
@@ -346,22 +356,25 @@ def test_an_unresolvable_sibling_refuses_every_home(run, instance, name, descrip
     ({"build": True, "pull_policy": "missing"}, True,
      "`missing` PULLS when the local tag is absent -- the earlier probe said "
      "otherwise only because its registry was unresolvable and the failed pull "
-     "fell back to the build", "pull_policy is 'missing', and only 'never' or 'build'"),
+     "fell back to the build", "pull_policy is 'missing', and only 'never'"),
     ({"build": True, "pull_policy": "always"}, True,
      "and a policy that refetches IS the hole -- it fetches over the top of "
-     "what this host built", "pull_policy is 'always', and only 'never' or 'build'"),
+     "what this host built", "pull_policy is 'always', and only 'never'"),
     ({"build": True, "pull_policy": "refresh"}, True,
      "a real Compose policy that refetches and was absent from the denylist -- "
-     "which is why the arm is an allowlist", "pull_policy is 'refresh', and only 'never' or 'build'"),
-    ({"build": True, "pull_policy": "build"}, False,
-     "`build` leaves a built image alone", ""),
+     "which is why the arm is an allowlist", "pull_policy is 'refresh', and only 'never'"),
+    ({"build": True, "pull_policy": "build"}, True,
+     "`build` REBUILDS under `up`, after require_home_target has already read the "
+     "boot contract off the image it replaces -- so a legacy-to-current rebuild "
+     "starts the current image under the legacy overlay, against an empty home. "
+     "Building is its own step", "pull_policy is 'build', and only 'never'"),
     ({"build": True}, True,
      "no policy at all is the default, and the default pulls",
      "pull_policy is unset (the default, which pulls)"),
     ({"build": True, "pull_policy": "daily"}, True,
-     "the periodic policies refetch like `always`", "pull_policy is 'daily', and only 'never' or 'build'"),
+     "the periodic policies refetch like `always`", "pull_policy is 'daily', and only 'never'"),
     ({"build": True, "pull_policy": "every_12h"}, True,
-     "including the parameterised one", "pull_policy is 'every_12h', and only 'never' or 'build'"),
+     "including the parameterised one", "pull_policy is 'every_12h', and only 'never'"),
 ])
 def test_the_image_rule_reads_what_compose_resolved(
         run, instance, tmp_path, kw, refused, why, expect):

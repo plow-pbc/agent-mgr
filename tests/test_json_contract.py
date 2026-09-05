@@ -40,6 +40,10 @@ def test_resolve_json_is_a_versioned_typed_object(run, instance):
             "deploy_hook": None,
             "pre_transition_hook": None,
             "cron_spec": None,
+            # Derived from the image's own baked HERMES_HOME, not a copy of a
+            # separate field -- the default fixture docker answers it, so a
+            # never-deployed agent still reports its contract.
+            "home_target": "/opt/data",
         },
     }
 

@@ -10,24 +10,16 @@ import termios
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
+from .boot_contract import home_target, read_plow_credentials, require_running_contract_matches
 from .cloud_http import HttpCloudTransport
 from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
-from .files import atomic_write, read_regular_text
+from .files import atomic_write, dotenv_read, read_regular_text
 from .local import compose, require_own_home, require_running, resolve_guard
 from .models import ResolvedAgent
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
-
-
-def dotenv_read(file: Path, key: str) -> str:
-    value = ""
-    for line in read_regular_text(file).split("\n"):
-        found, separator, raw = line.partition("=")
-        if separator and found == key:
-            value = raw.strip()
-    return value
 
 
 def config_declares_latch(file: Path) -> bool:
@@ -53,7 +45,8 @@ def cron_sync(agent: ResolvedAgent, registry: Registry) -> int:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"AGENT_CRON_SPEC names {agent.cron_spec}, which does not exist"
         )
-    require_running(agent, registry)
+    container_id = require_running(agent, registry)
+    target = require_running_contract_matches(agent, container_id)
     return compose(
         agent,
         [
@@ -62,7 +55,7 @@ def cron_sync(agent: ResolvedAgent, registry: Registry) -> int:
             "--user",
             f"{os.getuid()}:{os.getgid()}",
             "--env",
-            "HOME=/opt/data",
+            f"HOME={target}",
             "hermes",
             "/opt/hermes/.venv/bin/python3",
             "-",
@@ -462,14 +455,24 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
 
 
 def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
-    dotenv = agent.home / ".env"
-    token = dotenv_read(dotenv, "PLOW_AGENT_TOKEN") if dotenv.is_file() else ""
+    # The RUNNING container's contract, not the image's -- and not the two
+    # COMPARED either, the way the exec paths do it: mid-migration the legacy
+    # container is still live, and reading its still-valid dotenv token is
+    # exactly the recovery the operator came here for.
+    container = require_running(agent, registry)
+    target = home_target(container)
+    if target is None:
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"docker could not report {agent.name}'s running container's baked HERMES_HOME",
+        )
+    base, token = read_plow_credentials(agent, target)
     if not token:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            f"PLOW_AGENT_TOKEN is empty in {dotenv} -- run 'agent-mgr activate {agent.name}' first",
+            f"PLOW_AGENT_TOKEN is empty for {agent.name} -- run 'agent-mgr activate {agent.name}' first",
         )
-    base = dotenv_read(dotenv, "PLOW_API_BASE") or "https://api.plow.co"
+    base = base or "https://api.plow.co"
     response = compose(
         agent,
         [
@@ -504,7 +507,6 @@ def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
 
 
 def chats(agent: ResolvedAgent, registry: Registry) -> int:
-    require_running(agent, registry)
     home = dotenv_read(agent.home / ".env", "PLOW_HOME_CHANNEL")
     data = plow_chats(agent, registry).get("data", [])
     if not isinstance(data, list):
@@ -543,7 +545,6 @@ def set_home(agent: ResolvedAgent, registry: Registry, uid: str) -> int:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT, f"usage: agent-mgr set-home {agent.name} <cht_...>"
         )
-    require_running(agent, registry)
     data = plow_chats(agent, registry).get("data", [])
     if not isinstance(data, list):
         raise AgentMgrError(ErrorCode.INVALID_DESCRIPTOR, "GET /v1/chats has no data array")
@@ -559,7 +560,9 @@ def set_home(agent: ResolvedAgent, registry: Registry, uid: str) -> int:
 
 
 def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
-    require_running(agent, registry)
+    container_id = require_running(agent, registry)
+    target = require_running_contract_matches(agent, container_id)
+    skill = f"{target}/skills/productivity/plow-connectors/plow_connector.py"
     uid = f"{os.getuid()}:{os.getgid()}"
     present = compose(
         agent,
@@ -571,7 +574,7 @@ def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
             "hermes",
             "test",
             "-f",
-            "/opt/data/skills/productivity/plow-connectors/plow_connector.py",
+            skill,
         ],
         capture=True,
     )
@@ -594,7 +597,7 @@ def check_connectors(agent: ResolvedAgent, registry: Registry) -> int:
                 uid,
                 "hermes",
                 "python3",
-                "/opt/data/skills/productivity/plow-connectors/plow_connector.py",
+                skill,
                 connector,
                 "status",
             ],

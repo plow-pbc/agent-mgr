@@ -443,7 +443,7 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
 
 
 @pytest.mark.parametrize("sub", [
-    ["config"], ["version"], ["ls"], ["images"], ["build"], ["push"], ["ps"],
+    ["config"], ["version"], ["ls"], ["images"], ["push"], ["ps"],
 ])
 def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, tmp_path, sub):
     """The identification costs a `compose ps`, which needs a live daemon. Gating
@@ -534,9 +534,10 @@ def test_two_homes_aliasing_one_directory_through_a_symlink_collide(run, instanc
 def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     """One of the two doors the build exemption rests on, not the whole of it.
 
-    This closes the fetch agent-mgr itself could issue. resolve-guard closes the
-    other -- Compose fetching on its own under a pull_policy that is not `never`
-    or `build`, which a marker test showed the default and `missing` both do.
+    This closes the substitution agent-mgr itself could issue. resolve-guard
+    closes the other -- Compose fetching or rebuilding on its own under a
+    pull_policy that is not `never`, which a marker test showed the default and
+    `missing` both do.
     Two attempts to derive the guarantee from the image NAME were wrong before
     either door was found: fetchability is not a property of the string."""
     run("register", "rowan", str(instance("rowan")))
@@ -566,8 +567,14 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     assert "the other door" in r.stderr
 
     # `pull` is not the only door: up/run/create all take --pull always, which
-    # is the same substitution by a different route.
+    # is the same substitution by a different route -- and --build, or a --pull
+    # naming the `build` policy, substitutes by REBUILDING, after
+    # require_home_target has read the boot contract off the image being
+    # replaced. Building is a separate step for exactly that reason.
     for args in (("up", "-d", "--pull", "always"), ("up", "-d", "--pull=always"),
+                 ("up", "-d", "--build"), ("up", "-d", "--build=true"),
+                 ("create", "--build"), ("run", "--entrypoint", "true", "--build", "hermes"),
+                 ("up", "-d", "--pull", "build"), ("up", "-d", "--pull=build"),
                  # The flag AFTER the service: only run and exec hand later
                  # words to the container, so only they may stop scanning there.
                  ("up", "hermes", "--pull", "always"),
@@ -593,18 +600,20 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
         # The remedy has to be THIS door's: telling an operator to edit
         # pull_policy cannot clear a flag refusal, because the flag overrides
         # the file -- which is why the message says so.
-        assert "'--pull' takes only 'never' or 'build'" in r.stderr
+        assert "'--pull' takes only 'never'" in r.stderr
+        assert "run 'compose <name> build' first, then 'up'" in r.stderr
         assert "will not clear this one" in r.stderr
         # The scan is whole-argv by design, so it cannot tell a container's own
         # --pull from ours. The message says so, since that operator's remedy
         # is different and otherwise untypeable.
         assert "INSIDE the container" in r.stderr
 
-    for safe in (("up", "-d", "--pull", "never"), ("up", "-d", "--pull=build"),
-                 # boolean flag: re-pulls the FROM image and rebuilds, so the
-                 # output is still what this host built
+    for safe in (("up", "-d", "--pull", "never"),
+                 # the separated build step itself, where --pull is a boolean
+                 # that re-pulls the FROM image, so the output is still what
+                 # this host built -- and no container is created from it here
                  ("build", "--pull")):
-        assert run("compose", "rowan", *safe, env=env).returncode == 0, (
+        assert "could replace a built image" not in run("compose", "rowan", *safe, env=env).stderr, (
             f"{safe} names a policy that does not fetch and was refused")
 
     # Keyed on the SUBCOMMAND and on flags before the service, per this file's

@@ -132,15 +132,16 @@ Then the sequence (each step finishes before the next):
 
 | | who | what |
 |---|---|---|
-| 1 | you | `register` (or `new`), `deploy`, set `AGENT_TZ` in their dotenv, `up` |
+| 1 | you | `register` (or `new`), `deploy`, set `AGENT_TZ` in their dotenv |
 | 2 | you | `agent-mgr activate bob` — prints the code and number, then polls |
 | 3 | **them** | text the code **from the handset that should own the agent** |
-| 4 | you | `agent-mgr sign-in bob` — prints a device-code URL, waits on the browser |
-| 5 | **them** | open the URL in *their* browser, enter the code |
-| 6 | **them** | Plow Latch → Agents → *can't use OAuth? create a static credential* |
-| 7 | you | `set-latch bob`, paste the JSON it showed (it reloads a running agent itself), then `check-latch bob` |
-| 8 | you | `agent-mgr cron-sync bob` — only if the repo names a cron spec |
-| 9 | **them** | reply to the agent's 👋 from that handset — it runs setup (`life-assistant-hermes-agent` README § Bring-up) |
+| 4 | you | `agent-mgr up bob` — start the container. Not sooner: the current boot contract's credential is what `activate` (rows 2-3) just wrote, and `up` is what a not-yet-activated agent would refuse for |
+| 5 | you | `agent-mgr sign-in bob` — prints a device-code URL, waits on the browser |
+| 6 | **them** | open the URL in *their* browser, enter the code |
+| 7 | **them** | Plow Latch → Agents → *can't use OAuth? create a static credential* |
+| 8 | you | `set-latch bob`, paste the JSON it showed (it reloads a running agent itself), then `check-latch bob` |
+| 9 | you | `agent-mgr cron-sync bob` — only if the repo names a cron spec |
+| 10 | **them** | reply to the agent's 👋 from that handset — it runs setup (`life-assistant-hermes-agent` README § Bring-up) |
 
 The Latch pair is copy-once by design — Latch drops it from memory once
 saved. If it was relayed through a chat window to reach you, treat it as
@@ -202,10 +203,15 @@ What an archive is worth:
   the `&&` holds retention back.
 - **Watch for a home that fails every night**: retention never runs, the
   destination grows a full sweep per night, and it looks healthy from the
-  outside. Grep `~/backup-homes.log` for `one or more homes were not
-  archived`.
+  outside. Grep `~/backup-homes.log` for `were not archived`.
 - A killed run leaves a truncated newest archive; `gzip -t <archive>` before
   restoring, and fall back to the previous night's.
+- A **current**-contract agent's **Plow credential** lives *outside* its home,
+  at `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`.
+  After that agent's first boot the file is the only host-side copy of its
+  token, so a run that cannot read one fails the night. A **legacy**-contract
+  agent has no such file — its token stays in the home's own dotenv and rides
+  in the home archive, so an all-legacy fleet gets no credentials archive at all.
 
 ### Restoring a home
 
@@ -239,7 +245,12 @@ Notes: `&&` not `set -e` (this is pasted into your shell); `down` can
 legitimately refuse via the agent's `AGENT_PRE_TRANSITION` hook; `mkdir` not
 `mkdir -p` — `File exists` is the emptiness check, and `tar -xzf` overlays
 rather than replaces; `logs/`, `cache/` and `lazy-packages/` are excluded
-from archives and won't reappear — expected, not truncation.
+from archives and won't reappear — expected, not truncation. And if you lost
+the *host* rather than one home, a **current**-contract agent needs its
+credential back in `$HOME` before step 2 — `tar -C ~ -xzf "$(dirname
+"$a")/plow-credentials.tar.gz" .plow-credentials-errands` — because `up`
+refuses to start without it. A **legacy** agent has no member in that archive
+(and may have no archive): skip this step, its token comes back with the home.
 
 ## Where does my code go?
 
@@ -252,13 +263,25 @@ per-person bullet under § Set up a new agent.
 An agent's repo starts as the two files `new` writes (`agent.env`,
 `config.yaml` — every `agent.env` key is an override, so it may be empty).
 `skills.tsv` appears on first `add-skill`; `compose.override.yml` only if you
-write one (derived image or extra mounts). Two rules for that override:
+write one (derived image or extra mounts). Three rules for that override:
 
 - **Relative paths don't work** — Compose resolves them against `agent-mgr`'s
   directory. Name paths through a variable set in `agent.env`.
-- **A `build:` must carry `pull_policy: never`** (or `build`) — the default
-  *pulls* the tag when absent locally, so a registry image could land over
-  what this host built and run with the agent's credentials. (A digest-pinned
+- **The boot contract outranks you** — agent-mgr layers its contract overlay
+  *after* this file, so what that overlay declares is not yours to replace:
+  `image:` and `HERMES_HOME` under both contracts, plus the legacy
+  `entrypoint`/`command`, and under the current contract the credential bind
+  and an `entrypoint`/`command` *reset* to the image's own. `HERMES_HOME`
+  follows the home mount agent-mgr derived, so setting it here would boot the
+  gateway beside its own state. Name a derived image in `agent.env`'s
+  `AGENT_IMAGE`, never bare here — agent-mgr inspects that one to pick the
+  contract, so the two must be the same image. What the overlay leaves alone —
+  `build:`, `env_file`, extra mounts — still merges through.
+- **A `build:` must carry `pull_policy: never`** — the default *pulls* the tag
+  when absent locally, so a registry image could land over what this host built
+  and run with the agent's credentials, and `build` *rebuilds* it under `up`,
+  after agent-mgr has already read the boot contract off the image it replaces.
+  Build separately: `compose <name> build`, then `up`. (A digest-pinned
   `image:` satisfies the guard only for a service *without* `build:`.) Until
   the line is there,
   `resolve-guard` refuses every Compose-resolving command — everything but
@@ -271,10 +294,11 @@ write one (derived image or extra mounts). Two rules for that override:
   refuses until you do.
 
 ```yaml
+# with AGENT_IMAGE=my-agent:local in agent.env — the tag agent-mgr inspects
 services:
   hermes:
     build: { context: "${AGENT_BUILD_CONTEXT}" }
-    image: my-agent:local
+    image: ${AGENT_IMAGE}
     pull_policy: never
 ```
 
@@ -331,8 +355,8 @@ measured cost of the second gateway is in *Why it exists* in the
 |---|---|
 | `refusing to act: compose resolved ...` | the descriptor or override disagrees with the agent you named — this is the guard working |
 | `HERMES_UID ... must be set` | you ran `docker compose` directly; go through `agent-mgr` |
-| `... builds its image but its pull_policy is ...` | a service that builds must set `pull_policy: never` (or `build`). The default and `missing` both **pull** when the local tag is absent, replacing what this host built |
-| `refusing a fetch that could replace a built image` | `pull` has no accepted form — use `up`, which fetches under the file's `pull_policy` that `resolve-guard` checks. A `--pull` takes only `never` or `build`, except on `build`, where it is a boolean that re-pulls the base image and rebuilds |
+| `... builds its image but its pull_policy is ...` | a service that builds must set `pull_policy: never`. The default and `missing` both **pull** when the local tag is absent, and `build` rebuilds under `up` — each replaces the image the boot contract was read from. Build separately: `compose <name> build`, then `up` |
+| `refusing an argv that could replace a built image` | `pull` has no accepted form — use `up`, which runs under the file's `pull_policy` that `resolve-guard` checks. A `--pull` takes only `never`, and `--build` is refused outright: run `compose <name> build`, then `up`. On `build` itself, `--pull` is a boolean that re-pulls the base image and rebuilds |
 | `refusing 'compose run'...` | `--entrypoint` must be the **first** argument after `run` and carry a non-empty value — see § Running a one-off container |
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |

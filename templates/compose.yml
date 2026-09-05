@@ -22,6 +22,12 @@
 # Relative paths do NOT work in an instance override: Compose resolves them
 # against THIS file's directory, not the override's. Overrides name paths
 # through a variable instead.
+#
+# What differs by BOOT CONTRACT -- whether the image starts its own supervised
+# gateway, and how it takes a credential -- is layered in from
+# compose.legacy.yml or compose.current.yml, chosen by agent-mgr from the
+# image's own baked HERMES_HOME. Nothing here declares which contract this
+# agent is; AGENT_HOME_TARGET is simply where the home mount lands.
 name: ${AGENT_PROJECT:?set by agent-mgr from the instance descriptor}
 
 services:
@@ -43,20 +49,15 @@ services:
     # until the orphaned lease expires. Bound cleanup at 30s, and keep Docker's
     # outer deadline beyond it so s6 remains the owner of escalation.
     stop_grace_period: 35s
-    # Named rather than inherited. `command` below is arguments FOR the image's
-    # entrypoint, not a program -- and the shared cloud image clears ENTRYPOINT
-    # so its host can boot /sbin/init, which leaves `gateway` to be exec'd as a
-    # binary that does not exist. This is upstream's own entrypoint, so it is a
-    # no-op on an image that still declares one.
-    entrypoint: ["/opt/hermes/docker/entrypoint-dispatch.sh"]
-    command: ["gateway", "run"]
     volumes:
       # This agent's own home, and the only mount the template makes.
       # Deliberately never a sibling's: each is another agent's live state, and
       # sharing one would hand two gateways a single auth.json and a single
       # dotenv -- including one PLOW_HOME_CHANNEL, so whichever started last
-      # would own the chat.
-      - ${AGENT_HOME:?set by agent-mgr from the instance descriptor}:/opt/data
+      # would own the chat. The target is the image's OWN baked HERMES_HOME,
+      # derived by agent-mgr rather than declared here -- a wrong guess starts
+      # a gateway against an empty home.
+      - ${AGENT_HOME:?set by agent-mgr from the instance descriptor}:${AGENT_HOME_TARGET:?set by agent-mgr, derived from the image}
     environment:
       # Who owns everything in the agent's home. s6 remaps the in-image hermes
       # user to these at boot and chowns the data directory, so a wrong value
@@ -76,10 +77,10 @@ services:
       # instead of collapsing into one row.
       - AGENT_ID=${AGENT_NAME:?set by agent-mgr from the instance descriptor}
       # No credentials here, deliberately, and this is the whole contract for
-      # them: the gateway reads /opt/data/.env, which is the agent's own home
-      # through the mount above. Passing them here would interpolate from the
-      # shell, so following the documented bring-up would inject empty strings
-      # that shadow the real values.
+      # them: the gateway reads its home's own .env, through the mount above.
+      # Passing them here would interpolate from the shell, so following the
+      # documented bring-up would inject empty strings that shadow the real
+      # values.
     # No ports. The dashboard stays off: publishing it means binding 0.0.0.0
     # inside the container, which Hermes refuses without an auth provider
     # because it holds API keys.

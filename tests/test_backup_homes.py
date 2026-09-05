@@ -324,6 +324,33 @@ def test_one_failing_home_does_not_cost_the_others_their_night(tmp_path, dest):
         "the healthy home lost its night to the broken one"
 
 
+@pytest.mark.parametrize("readable", [True, False], ids=["archived", "unreadable"])
+def test_the_credential_beside_the_homes_is_archived_or_the_night_fails(
+        tmp_path, home, dest, readable):
+    """`~/.plow-credentials-<name>` lives OUTSIDE every home on purpose, so no
+    home's archive reaches it -- and after a current-contract first boot it is
+    the only host-side copy of the token. Warn-and-continue is the bug: a set
+    that looks complete and is missing it is discovered at restore, when the
+    agent will not start. The member name is the restore path `tar -C ~` needs.
+
+    `only_for` ends in `home`, so the shim fails the credential tar (-C $HOME)
+    and lets the home's own (-C $HOME/.hermes-rowan) through -- the credential
+    alone failing must still cost the whole run."""
+    (home / ".plow-credentials-rowan").write_text("PLOW_AGENT_TOKEN=tok_x\n")
+    shim = None if readable else tar_shim(
+        tmp_path / "bin", "tar: Cannot open: Permission denied", only_for="home")
+
+    r = run(home, dest, extra_path=shim)
+
+    assert (r.returncode == 0) is readable, r.stderr
+    archives = list(dest.glob("backup-homes/*/plow-credentials.tar.gz"))
+    if readable:
+        assert [".plow-credentials-rowan"] == tarfile.open(archives[0]).getnames()
+    else:
+        assert not archives, "it kept an archive tar could not finish"
+        assert "credentials" in r.stderr, r.stderr
+
+
 @pytest.mark.parametrize("case", ["a home fails", "the destination is missing"])
 def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path, case):
     """The night worth hearing about is the one that failed, and cron has no
@@ -353,7 +380,7 @@ def test_the_documented_cron_entry_leaves_a_trace_when_the_night_fails(tmp_path,
     log = (root / "backup-homes.log").read_text()
     if case == "a home fails":
         assert "tar failed on" in log, f"the backup half never reached the log: {log!r}"
-        assert "one or more homes were not archived" in log, log
+        assert "one or more homes or credentials were not archived" in log, log
         assert [p.name for p in (root / "agent-backups").glob("backup-homes/*/*.tar.gz")] == \
             ["hermes-omega.tar.gz"], "the healthy home lost its night to the broken one"
     else:

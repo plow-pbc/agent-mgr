@@ -7,6 +7,13 @@ import sys
 from collections.abc import Sequence
 from pathlib import Path
 
+from .boot_contract import (
+    CURRENT_HOME,
+    credentials_host_path,
+    ensure_credentials,
+    home_target,
+    require_home_target,
+)
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
 from .models import ResolvedAgent
@@ -27,11 +34,14 @@ LEAVES_RUNNING = frozenset(
         "exec",
         "run",
         "cp",
-        "build",
         "push",
     }
 )
-NO_IDENTIFICATION = frozenset({"config", "version", "ls", "images", "build", "push", "run", "ps"})
+NO_IDENTIFICATION = frozenset({"config", "version", "ls", "images", "push", "run", "ps"})
+# What a verb does to the current contract's credential promotion, which the
+# image's own cont-init runs at container CREATION and never again.
+CREATES_CONTAINER = frozenset({"up", "create", "run"})
+RESUMES_CONTAINER = frozenset({"start", "restart", "unpause"})
 SCRUB = frozenset(
     {
         "AGENT_NAME",
@@ -47,6 +57,8 @@ SCRUB = frozenset(
         "AGENT_PRE_TRANSITION",
         "AGENT_CRON_SPEC",
         "AGENT_DESCRIPTOR",
+        "AGENT_HOME_TARGET",
+        "AGENT_CREDENTIALS_HOST",
         "COMPOSE_PROJECT_NAME",
         "COMPOSE_FILE",
         "COMPOSE_ENV_FILE",
@@ -56,7 +68,10 @@ SCRUB = frozenset(
 )
 
 
-def environment(agent: ResolvedAgent) -> dict[str, str]:
+def _base_environment(agent: ResolvedAgent) -> dict[str, str]:
+    """The env every docker invocation needs, with no boot-contract opinion
+    at all -- shared by environment() (which layers the resolved contract on
+    top) and build_image() (which deliberately never resolves one)."""
     result = {key: value for key, value in os.environ.items() if key not in SCRUB}
     result.update(agent.environment())
     result["HERMES_UID"] = str(os.getuid())
@@ -64,11 +79,31 @@ def environment(agent: ResolvedAgent) -> dict[str, str]:
     return result
 
 
-def compose_argv(agent: ResolvedAgent, args: Sequence[str]) -> list[str]:
+def environment(agent: ResolvedAgent, target: str) -> dict[str, str]:
+    """`target` is the caller's already-derived AGENT_HOME_TARGET -- sampled
+    once per operation, never re-derived here, so a docker-touching command
+    never inspects the contract twice for one decision."""
+    result = _base_environment(agent)
+    result["AGENT_HOME_TARGET"] = target
+    if target == CURRENT_HOME:
+        # The path only -- always safe to export. Whether the file at that
+        # path is actually current is transition()'s job, right before a
+        # container is created.
+        result["AGENT_CREDENTIALS_HOST"] = str(credentials_host_path(agent))
+    return result
+
+
+def compose_argv(agent: ResolvedAgent, args: Sequence[str], target: str) -> list[str]:
     files = ["-f", str(ROOT / "templates" / "compose.yml")]
     override = agent.repo / "compose.override.yml"
     if override.is_file():
         files.extend(["-f", str(override)])
+    # LAST, so every key the boot contract declares is beyond an override's
+    # reach -- prevention, not a guard enumerating one more boot-critical field
+    # per round. What the overlay leaves alone still merges through: measured,
+    # build, pull_policy, env_file and extra mounts all survive.
+    contract_file = "compose.current.yml" if target == CURRENT_HOME else "compose.legacy.yml"
+    files += ["-f", str(ROOT / "templates" / contract_file)]
     return [
         "docker",
         "compose",
@@ -87,11 +122,11 @@ def fetch_is_safe(args: Sequence[str]) -> bool:
     if args[0] == "build":
         return True
     for index, word in enumerate(args):
-        if word.startswith("--pull=") and word not in {"--pull=never", "--pull=build"}:
+        if word == "--build" or word.startswith("--build="):
             return False
-        if word == "--pull" and (
-            index + 1 == len(args) or args[index + 1] not in {"never", "build"}
-        ):
+        if word.startswith("--pull=") and word != "--pull=never":
+            return False
+        if word == "--pull" and (index + 1 == len(args) or args[index + 1] != "never"):
             return False
     return True
 
@@ -100,10 +135,11 @@ def require_fetch_safe(args: Sequence[str]) -> None:
     if not fetch_is_safe(args):
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            "refusing a fetch that could replace a built image. Here it is the COMMAND LINE: "
-            "'pull' has no accepted form, and '--pull' takes only 'never' or 'build'. "
+            "refusing an argv that could replace a built image. Here it is the COMMAND LINE: "
+            "'pull' has no accepted form, '--pull' takes only 'never', and '--build' takes "
+            "none -- building is its own step, so run 'compose <name> build' first, then 'up'. "
             "Editing pull_policy will not clear this one. resolve-guard enforces the file "
-            "policy, which is the other door. If --pull belongs to a command running "
+            "policy, which is the other door. If --pull or --build belongs to a command running "
             "INSIDE the container, wrap it with sh -c so the flag is not on this argv.",
         )
 
@@ -112,14 +148,68 @@ def compose(
     agent: ResolvedAgent, args: Sequence[str], *, capture: bool = False, stdin: str | None = None
 ) -> subprocess.CompletedProcess[str]:
     require_fetch_safe(args)
+    target = require_home_target(agent)
+    verb = args[0] if args else ""
+    if target == CURRENT_HOME and verb in RESUMES_CONTAINER:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"refusing 'compose {verb}' for a current-contract agent -- it resumes the "
+            "existing container without recreating it, so the boot-time credential "
+            f"promotion never reruns. Use 'agent-mgr up {agent.name}' or 'restart', which "
+            "force-recreate.",
+        )
+    if target == CURRENT_HOME and verb in CREATES_CONTAINER:
+        # Before docker runs, because the read-only bind source must already BE
+        # a file: bind a missing one and Docker leaves a DIRECTORY there that
+        # os.replace() can never replace.
+        ensure_credentials(agent)
+        if verb == "up" and "--force-recreate" not in args:
+            args = ["up", "--force-recreate", *args[1:]]
     return subprocess.run(
-        compose_argv(agent, args),
-        env=environment(agent),
+        compose_argv(agent, args, target),
+        env=environment(agent, target),
         text=True,
         input=stdin,
         capture_output=capture,
         check=False,
     )
+
+
+def build_image(agent: ResolvedAgent, args: Sequence[str] = ()) -> int:
+    """Materialize a build-based agent's own image from its override alone --
+    never the shared template, which needs the boot contract already
+    resolved, which is exactly what a not-yet-built image cannot answer yet.
+    `build` never starts a container and no Dockerfile reads
+    AGENT_HOME_TARGET, so this is the one compose invocation that runs
+    before anything can know it -- and therefore the ONLY build path, for
+    deploy's absent image and for `compose <name> build` alike. Routing the
+    latter through resolve_guard instead had the documented escape demand the
+    contract of the very image it exists to create. `args` are the operator's
+    own trailing build flags (--no-cache, --pull), passed straight through."""
+    override = agent.repo / "compose.override.yml"
+    if not override.is_file():
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"nothing to build for {agent.name} -- {override} does not exist, so this "
+            "agent declares no image of its own. Its image comes from the fleet pin.",
+        )
+    env = _base_environment(agent)
+    return subprocess.run(
+        [
+            "docker",
+            "compose",
+            "-p",
+            agent.project,
+            "-f",
+            str(override),
+            "--env-file",
+            str(agent.descriptor),
+            "build",
+            *args,
+        ],
+        env=env,
+        check=False,
+    ).returncode
 
 
 def require_own_home(agent: ResolvedAgent, registry: Registry) -> None:
@@ -159,6 +249,7 @@ def require_own_home(agent: ResolvedAgent, registry: Registry) -> None:
 
 def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
     require_own_home(agent, registry)
+    target = require_home_target(agent)
     result = compose(agent, ["config", "--format", "json"], capture=True)
     if result.returncode:
         raise AgentMgrError(
@@ -174,7 +265,7 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
         container = service.get("container_name", "-")
         volumes = service.get("volumes", [])
         home = next(
-            (item.get("source", "") for item in volumes if item.get("target") == "/opt/data"), "-"
+            (item.get("source", "") for item in volumes if item.get("target") == target), "-"
         )
         agent_id = service.get("environment", {}).get("AGENT_ID", "-")
         image = service.get("image", "-")
@@ -185,17 +276,16 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to act: could not read a Compose config for {agent.name}",
         ) from exc
-    checks = (
+    # Exactly what an override can still reach: the SHARED base template's keys,
+    # which it merges after -- measured, an override naming AGENT_ID wins, and
+    # usage is then attributed to a sibling invisibly, the wrong agent simply
+    # looking busier. The overlay's own keys are absent: it merges last.
+    checks = [
         (project, agent.project, "project"),
         (container, agent.container, "container"),
         (home, str(agent.home), "home"),
-        # The override merges AFTER the template, so it can replace any value
-        # the template set -- measured: an override naming AGENT_ID wins.
-        # Unchecked, usage would be attributed to a sibling on the same
-        # checkout, and the misattribution is invisible: the wrong agent simply
-        # looks busier.
         (agent_id, agent.name, "agent id"),
-    )
+    ]
     for got, expected, label in checks:
         if got != expected:
             raise AgentMgrError(
@@ -203,12 +293,14 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
                 f"refusing to act: compose resolved {label} '{got}' but {agent.name} expects '{expected}'",
             )
     if build:
-        if pull_policy not in {"never", "build"}:
+        if pull_policy != "never":
             shown = "unset (the default, which pulls)" if pull_policy is None else repr(pull_policy)
             raise AgentMgrError(
                 ErrorCode.INVALID_DESCRIPTOR,
                 f"refusing to act: {agent.name}'s service builds its image but its pull_policy is {shown}, "
-                "and only 'never' or 'build' keep Compose from fetching over the host build",
+                "and only 'never' keeps Compose from replacing the image agent-mgr read this "
+                "agent's boot contract from -- 'build' rebuilds it under `up`, which lands the new "
+                "image under the old contract's overlay. Rebuild with 'compose <name> build'.",
             )
     elif not isinstance(image, str) or "@sha256:" not in image:
         raise AgentMgrError(
@@ -224,16 +316,29 @@ def require_container_ours(agent: ResolvedAgent) -> None:
             ErrorCode.IO_ERROR,
             f"refusing to touch the container under {agent.project} -- docker could not say whether one exists",
         )
+    # Only for the raw docker inspect calls' own subprocess environment below
+    # -- not for the mount check itself. During a legacy-to-current
+    # migration the two can differ, and using the REPLACEMENT image's target
+    # to search an existing container's mounts made a perfectly valid old
+    # mount read as foreign.
+    env = environment(agent, require_home_target(agent))
     for container_id in found.stdout.split():
+        # This container's OWN baked contract, not the replacement image's.
+        target = home_target(container_id)
+        if target is None:
+            raise AgentMgrError(
+                ErrorCode.IO_ERROR,
+                f"refusing to touch the container running as {agent.project} -- docker could not report its baked HERMES_HOME",
+            )
         inspected = subprocess.run(
             [
                 "docker",
                 "inspect",
                 "--format",
-                '{{range .Mounts}}{{if eq .Destination "/opt/data"}}{{.Source}}{{end}}{{end}}',
+                f'{{{{range .Mounts}}}}{{{{if eq .Destination "{target}"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}',
                 container_id,
             ],
-            env=environment(agent),
+            env=env,
             text=True,
             capture_output=True,
             check=False,
@@ -249,7 +354,7 @@ def require_container_ours(agent: ResolvedAgent) -> None:
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
             f"refusing to touch the container running as {agent.project} -- it mounts {mounted or '<nothing>'} "
-            f"at /opt/data, not {agent.name}'s home ({agent.home}). The compose project comes from the agent NAME; "
+            f"at {target}, not {agent.name}'s home ({agent.home}). The compose project comes from the agent NAME; "
             f"this descriptor may need its own name, or 'agent-mgr unregister {agent.name}'. "
             f"Check ownership first: docker inspect {container_id}",
         )
@@ -294,7 +399,7 @@ def require_transition_allowed(agent: ResolvedAgent) -> None:
             ErrorCode.IO_ERROR,
             f"{agent.name} declares a pre-transition guard at {agent.pre_transition_hook}, which is missing or not executable",
         )
-    hook_env = environment(agent)
+    hook_env = environment(agent, require_home_target(agent))
     for item in agent.hook_environment:
         key, value = item.split("=", 1)
         hook_env[key] = value
@@ -307,16 +412,25 @@ def require_transition_allowed(agent: ResolvedAgent) -> None:
         )
 
 
-def require_running(agent: ResolvedAgent, registry: Registry) -> None:
-    resolve_guard(agent, registry)
+def running_container_id(agent: ResolvedAgent) -> str:
     result = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
     if result.returncode:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"could not ask docker whether {agent.name}'s gateway is running"
         )
-    if not result.stdout.strip():
+    ids = result.stdout.split()
+    if not ids:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
             f"{agent.name}'s gateway is not running -- start it first: agent-mgr up {agent.name}",
         )
+    return ids[0]
+
+
+def require_running(agent: ResolvedAgent, registry: Registry) -> str:
+    """The running container's id, so callers that go on to exec into it reuse
+    this one snapshot rather than asking docker again."""
+    resolve_guard(agent, registry)
+    container_id = running_container_id(agent)
     require_container_ours(agent)
+    return container_id

@@ -361,6 +361,36 @@ def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
     return env_file
 
 
+@pytest.mark.parametrize(("container_home_env", "credential_file"), [
+    # Migrated: the current base's own gateway truncates PLOW_AGENT_TOKEN out
+    # of the home dotenv after first boot, so the credential file -- not the
+    # dotenv -- is where this agent's token actually lives.
+    (None, ".plow-credentials-property"),
+    # Mid-migration: a deploy made the current image inspectable and then
+    # failed before recreation, so the LEGACY container is still live and its
+    # dotenv token is still the working one. Picking the source from the
+    # IMAGE's contract looked past it and told the operator to activate an
+    # agent whose token was fine -- and comparing the two instead refused
+    # outright, in the one interval `chats` exists to get you out of.
+    ("/opt/data", ".hermes-property/.env"),
+])
+def test_chats_reads_the_token_the_running_container_actually_uses(
+        run, instance, tmp_path, container_home_env, credential_file):
+    """PLOW_HOME_CHANNEL is unaffected either way: it is not a truncated key."""
+    run("register", "property", str(instance("property")))
+    run("deploy", "property")
+    home = tmp_path / "home" / ".hermes-property"
+    (home / ".env").write_text("HOSTEX_TOKEN=keepme\nPLOW_HOME_CHANNEL=cht_old_dm\n")
+    with (tmp_path / "home" / credential_file).open("a") as handle:
+        handle.write("PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_plow\n")
+    r = run("chats", "property", env=_bin(
+        tmp_path, "property", home_env="/var/lib/hermes",
+        container_home_env=container_home_env,
+        exec_output=_chats_response(("cht_old_dm", None))))
+    assert r.returncode == 0, r.stderr
+    assert "cht_old_dm" in r.stdout
+
+
 def test_chats_marks_the_home_and_keeps_the_token_off_argv(run, instance, tmp_path):
     _with_plow(run, instance, tmp_path)
     log = tmp_path / "docker.log"

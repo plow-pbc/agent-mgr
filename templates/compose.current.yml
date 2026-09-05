@@ -1,0 +1,36 @@
+# Layered in by agent-mgr for the current boot contract
+# (HERMES_HOME=/var/lib/hermes), LAST -- after the instance's own
+# compose.override.yml, so what this file declares no override can retarget.
+#
+# Merging last is authority over what is DECLARED and nothing else, which is
+# why the boot chain is reset here rather than left out: a legacy override's
+# entrypoint/command -- the shape an agent carries across the migration --
+# would otherwise merge straight through and bypass this image's own CMD
+# ["/init"], whose plow-init oneshot refuses to start unless
+# /var/lib/plow/credentials exists as root:root mode 600. agent-mgr has no
+# boot chain of its own to name here, so declaring means `!reset`.
+#
+# image is reasserted because agent-mgr inspects AGENT_IMAGE to derive this
+# contract, the home target and the credential path: an override naming a
+# different image had Compose run one image under another's derivation,
+# silently. A build-based agent names its own tag there -- docs/HOWTO.md.
+# HERMES_HOME is reasserted for the mirror of that reason: agent-mgr mounts
+# the home at AGENT_HOME_TARGET, and an override naming a different one had
+# the gateway boot against an empty directory beside the real mount.
+#
+# AGENT_CREDENTIALS_HOST is a path OUTSIDE every agent's own home
+# (boot_contract.credentials_host_path) -- never under the mount above, which
+# this same container fully controls and could otherwise replace with a
+# symlink to a SIBLING agent's credential file. The bind is read-only in
+# addition to that, not instead of it: a root cont-init step (baked into the
+# image) promotes the read side into /var/lib/plow/credentials, and this
+# container never needs write access to its own source copy.
+services:
+  hermes:
+    image: ${AGENT_IMAGE:?set by agent-mgr from the instance descriptor}
+    entrypoint: !reset null
+    command: !reset null
+    environment:
+      - HERMES_HOME=${AGENT_HOME_TARGET:?set by agent-mgr, derived from the image}
+    volumes:
+      - ${AGENT_CREDENTIALS_HOST:?set by agent-mgr, derived from the image}:/var/lib/plow/credentials.host:ro

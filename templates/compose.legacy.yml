@@ -1,0 +1,17 @@
+# Layered in by agent-mgr for the legacy boot contract (HERMES_HOME=/opt/data),
+# LAST -- after the instance's own compose.override.yml, so the boot chain below
+# is agent-mgr's: this image supervises no gateway of its own, so it must.
+services:
+  hermes:
+    # Reasserted, not inherited, for the reason compose.current.yml gives.
+    image: ${AGENT_IMAGE:?set by agent-mgr from the instance descriptor}
+    # Named rather than inherited. `command` below is arguments FOR the
+    # image's entrypoint, not a program -- and the shared cloud image clears
+    # ENTRYPOINT so its host can boot /sbin/init, which leaves `gateway` to be
+    # exec'd as a binary that does not exist. This is upstream's own
+    # entrypoint, so it is a no-op on an image that still declares one.
+    entrypoint: ["/opt/hermes/docker/entrypoint-dispatch.sh"]
+    command: ["gateway", "run"]
+    # Reasserted too, for the reason compose.current.yml gives.
+    environment:
+      - HERMES_HOME=${AGENT_HOME_TARGET:?set by agent-mgr, derived from the image}
