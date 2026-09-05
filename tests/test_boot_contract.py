@@ -292,3 +292,69 @@ def test_compose_refuses_a_native_resume_for_the_current_contract_only(
         assert "current-contract" in r.stderr
     else:
         assert r.returncode == 0, r.stderr
+
+
+@pytest.mark.parametrize("run_args", [
+    ("down", "rowan"),
+    ("compose", "rowan", "stop"),
+    ("compose", "rowan", "kill"),
+    ("compose", "rowan", "pause"),
+])
+def test_ensure_credentials_does_not_run_for_shutdown_verbs(run, instance, tmp_path, run_args):
+    """down/stop/kill/pause create no container, so writing (or requiring) a
+    credential for them would be pointless at best and a spurious refusal at
+    worst -- no PLOW_API_BASE/PLOW_AGENT_TOKEN exist anywhere here, which
+    would make ensure_credentials refuse loudly if it ran at all."""
+    run("register", "rowan", str(instance("rowan")))
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True)
+    b = fake_docker(tmp_path, home=home, name="rowan", home_env="/var/lib/hermes")
+    r = run(*run_args, env={"PATH": f"{b}:{os.environ['PATH']}"})
+    assert r.returncode == 0, r.stderr
+
+
+def test_a_legacy_container_is_not_foreign_after_a_pin_bump_to_current(run, instance, tmp_path):
+    """During a migration the running container's own baked contract can
+    differ from what the agent NOW resolves to -- the ownership check must
+    key off the CONTAINER's own HERMES_HOME to find its mount, not the
+    replacement image's target, or a perfectly valid old mount reads as
+    foreign and blocks deploy/restart/up, including the recovery the refusal
+    itself would suggest."""
+    repo = instance("rowan")
+    run("register", "rowan", str(repo))
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True)
+    (home / ".env").write_text("PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n")
+    cfg = json.dumps({
+        "name": "hermes-rowan",
+        "services": {
+            "hermes": {
+                "container_name": "hermes-rowan",
+                "environment": {"AGENT_ID": "rowan"},
+                "image": "nousresearch/hermes-agent@sha256:" + "c" * 64,
+                # What the REPLACEMENT (current-contract) config resolves to.
+                "volumes": [{"target": "/var/lib/hermes", "source": str(home)}],
+            }
+        },
+    })
+    _stub_docker(tmp_path, (
+        "#!/usr/bin/env bash\n"
+        "case \"$*\" in\n"
+        # The agent's image now resolves current (a pin bump)...
+        "  *\"Config.Env\"*deadbeef*) echo '[\"HERMES_HOME=/opt/data\"]' ;;\n"
+        "  *\"Config.Env\"*) echo '[\"HERMES_HOME=/var/lib/hermes\"]' ;;\n"
+        # ...but the EXISTING container (deadbeef) was created under the OLD,
+        # legacy contract, and still genuinely mounts the home there -- a
+        # destination filter for anything else must find nothing, the way a
+        # real daemon would.
+        f'  *Mounts*\'"/opt/data"\'*) echo {home} ;;\n'
+        "  *Mounts*) : ;;\n"
+        "  *\"image inspect\"*) exit 0 ;;\n"
+        f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;\n"
+        "  *\"ps -a --quiet\"*) echo deadbeef ;;\n"
+        "  *\"ps --status running --quiet\"*) echo deadbeef ;;\n"
+        "esac\n"
+        "exit 0\n"
+    ))
+    r = run("restart", "rowan")
+    assert r.returncode == 0, r.stderr

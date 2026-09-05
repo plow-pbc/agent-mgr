@@ -11,6 +11,7 @@ from .boot_contract import (
     CURRENT_HOME,
     credentials_host_path,
     ensure_credentials,
+    home_target,
     require_home_target,
 )
 from .descriptor import resolve_agent
@@ -64,10 +65,12 @@ SCRUB = frozenset(
 )
 
 
-def environment(agent: ResolvedAgent) -> dict[str, str]:
+def environment(agent: ResolvedAgent, target: str) -> dict[str, str]:
+    """`target` is the caller's already-derived AGENT_HOME_TARGET -- sampled
+    once per operation, never re-derived here, so a docker-touching command
+    never inspects the contract twice for one decision."""
     result = {key: value for key, value in os.environ.items() if key not in SCRUB}
     result.update(agent.environment())
-    target = require_home_target(agent)
     result["AGENT_HOME_TARGET"] = target
     if target == CURRENT_HOME:
         # The path only -- always safe to export. Whether the file at that
@@ -79,10 +82,9 @@ def environment(agent: ResolvedAgent) -> dict[str, str]:
     return result
 
 
-def compose_argv(agent: ResolvedAgent, args: Sequence[str]) -> list[str]:
+def compose_argv(agent: ResolvedAgent, args: Sequence[str], target: str) -> list[str]:
     files = ["-f", str(ROOT / "templates" / "compose.yml")]
-    current = require_home_target(agent) == CURRENT_HOME
-    contract_file = "compose.current.yml" if current else "compose.legacy.yml"
+    contract_file = "compose.current.yml" if target == CURRENT_HOME else "compose.legacy.yml"
     files += ["-f", str(ROOT / "templates" / contract_file)]
     override = agent.repo / "compose.override.yml"
     if override.is_file():
@@ -130,9 +132,10 @@ def compose(
     agent: ResolvedAgent, args: Sequence[str], *, capture: bool = False, stdin: str | None = None
 ) -> subprocess.CompletedProcess[str]:
     require_fetch_safe(args)
+    target = require_home_target(agent)
     return subprocess.run(
-        compose_argv(agent, args),
-        env=environment(agent),
+        compose_argv(agent, args, target),
+        env=environment(agent, target),
         text=True,
         input=stdin,
         capture_output=capture,
@@ -269,14 +272,26 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
 
 
 def require_container_ours(agent: ResolvedAgent) -> None:
-    target = require_home_target(agent)
     found = compose(agent, ["ps", "-a", "--quiet", "hermes"], capture=True)
     if found.returncode:
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
             f"refusing to touch the container under {agent.project} -- docker could not say whether one exists",
         )
+    # Only for the raw docker inspect calls' own subprocess environment below
+    # -- not for the mount check itself. During a legacy-to-current
+    # migration the two can differ, and using the REPLACEMENT image's target
+    # to search an existing container's mounts made a perfectly valid old
+    # mount read as foreign.
+    env = environment(agent, require_home_target(agent))
     for container_id in found.stdout.split():
+        # This container's OWN baked contract, not the replacement image's.
+        target = home_target(container_id)
+        if target is None:
+            raise AgentMgrError(
+                ErrorCode.IO_ERROR,
+                f"refusing to touch the container running as {agent.project} -- docker could not report its baked HERMES_HOME",
+            )
         inspected = subprocess.run(
             [
                 "docker",
@@ -285,7 +300,7 @@ def require_container_ours(agent: ResolvedAgent) -> None:
                 f'{{{{range .Mounts}}}}{{{{if eq .Destination "{target}"}}}}{{{{.Source}}}}{{{{end}}}}{{{{end}}}}',
                 container_id,
             ],
-            env=environment(agent),
+            env=env,
             text=True,
             capture_output=True,
             check=False,
@@ -335,10 +350,13 @@ def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
     confirm_transition(agent)
     require_container_ours(agent)
     require_transition_allowed(agent)
-    if require_home_target(agent) == CURRENT_HOME:
-        # Right before the container is (re)created: cont-init only runs at
-        # creation, so this is the last moment a refreshed credential can
-        # still reach the container it is about to boot.
+    if args and args[0] == "up" and require_home_target(agent) == CURRENT_HOME:
+        # Right before the container is (re)created and started: cont-init
+        # only runs at that boot, so this is the last moment a refreshed
+        # credential can still reach it. Restricted to `up` -- down, stop,
+        # kill, rm and pause start nothing, so writing (or requiring) a
+        # credential for them would be pointless at best and a spurious
+        # refusal at worst.
         ensure_credentials(agent)
     return compose(agent, args).returncode
 
@@ -351,7 +369,7 @@ def require_transition_allowed(agent: ResolvedAgent) -> None:
             ErrorCode.IO_ERROR,
             f"{agent.name} declares a pre-transition guard at {agent.pre_transition_hook}, which is missing or not executable",
         )
-    hook_env = environment(agent)
+    hook_env = environment(agent, require_home_target(agent))
     for item in agent.hook_environment:
         key, value = item.split("=", 1)
         hook_env[key] = value

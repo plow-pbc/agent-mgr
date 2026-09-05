@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
-from .boot_contract import ensure_image_local, image_present_locally
+from .boot_contract import ensure_image_local, image_present_locally, require_home_target
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write
 from .local import (
@@ -211,7 +211,7 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
     print(f"deployed config.yaml to {agent.home}")
     replay_skills(agent)
     if agent.deploy_hook:
-        hook_env = environment(agent)
+        hook_env = environment(agent, require_home_target(agent))
         for item in agent.hook_environment:
             key, value = item.split("=", 1)
             hook_env[key] = value
