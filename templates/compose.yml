@@ -1,11 +1,11 @@
 # The legacy boot shape's own additions on top of compose.base.yml (image,
 # identity, timing, no ports -- see that file), rendered together for every
-# agent still on today's contract. An agent whose descriptor sets
+# agent still on today's contract. An agent whose home dotenv sets
 # AGENT_BOOT_CONTRACT=plow-init renders compose.plow-init.yml instead --
 # a full sibling overlay, not merged with this one -- because its base image
 # owns its own boot chain and starting this file's command/entrypoint
 # alongside it would start a second gateway. See that file for why. No agent
-# renders from it until its own descriptor says so.
+# renders from it until its own home dotenv says so.
 services:
   hermes:
     # Named rather than inherited. `command` below is arguments FOR the image's

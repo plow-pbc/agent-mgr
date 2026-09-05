@@ -1,6 +1,6 @@
 # The plow-init boot shape's own additions on top of compose.base.yml (image,
 # identity, timing, no ports -- see that file), selected in place of
-# compose.yml when an agent's descriptor sets AGENT_BOOT_CONTRACT=plow-init,
+# compose.yml when an agent's home dotenv sets AGENT_BOOT_CONTRACT=plow-init,
 # for images from plow-hermes-agent 63c8b9c on.
 #
 # Those bases boot s6 with a root cont-init step that promotes the

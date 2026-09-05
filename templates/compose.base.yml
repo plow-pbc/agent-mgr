@@ -1,6 +1,6 @@
 # The Hermes service fields every boot contract shares. Selected together
 # with exactly one overlay -- compose.yml (today's shape) or
-# compose.plow-init.yml (an agent whose descriptor sets
+# compose.plow-init.yml (an agent whose home dotenv sets
 # AGENT_BOOT_CONTRACT=plow-init) -- never alone: this file sets no
 # command/entrypoint/volumes of its own, so Compose has nothing to actually
 # start without one. See compose_argv() for how the two files combine, and
