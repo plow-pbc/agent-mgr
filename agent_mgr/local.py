@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import subprocess
 import sys
 from collections.abc import Sequence
@@ -138,10 +139,17 @@ def require_plow_init_credentials(agent: ResolvedAgent) -> None:
             f"run 'agent-mgr deploy {agent.name}' first",
         )
     keys = frozenset(CREDENTIAL_KEYS)
-    materialized = read_dotenv_values(agent.credentials, keys)
     dotenv = agent.home / ".env"
     current = read_dotenv_values(dotenv, keys) if dotenv.is_file() else {}
-    if materialized != current:
+    # Compared as the file materialize_plow_credentials would produce from
+    # `current`, not re-parsed back out of the credentials file: shlex.quote
+    # can embed a quote character this repo's own naive quote-stripping
+    # parser cannot correctly reverse (it stops at the first one), which
+    # would desync an otherwise byte-identical round trip.
+    matches = set(current) == keys and agent.credentials.read_text() == "".join(
+        f"{key}={shlex.quote(current[key])}\n" for key in CREDENTIAL_KEYS
+    )
+    if not matches:
         # The path alone does not prove the content is this home's: a name
         # keeps its credentials file when repointed at a different home, and
         # nothing else has re-materialized it against the new one yet.

@@ -13,6 +13,7 @@ from conftest import ROOT
 from agent_mgr.deploy import materialize_plow_credentials
 from agent_mgr.descriptor import resolve_agent
 from agent_mgr.errors import AgentMgrError
+from agent_mgr.local import require_plow_init_credentials
 from agent_mgr.registry import Registry
 
 
@@ -65,6 +66,26 @@ def test_materialize_quotes_a_value_carrying_shell_syntax(
     text = agent.credentials.read_text()
     assert "PLOW_AGENT_TOKEN='tok_$(whoami)'" in text
     assert f"PLOW_AGENT_TOKEN={dangerous}\n" not in text
+
+
+def test_materialize_round_trips_a_value_containing_a_quote_character(
+    run, instance, registry, tmp_path, monkeypatch
+):
+    """shlex.quote embeds a literal single quote as '"'"' -- this repo's own
+    dotenv parser stops at the first one it sees, which would otherwise
+    truncate a re-parsed read-back and desync
+    require_plow_init_credentials' materialized-vs-current comparison,
+    refusing to start an agent immediately after a correct deploy."""
+    dangerous = "tok_o'brien"
+    agent = _agent(
+        run, instance, registry, tmp_path, monkeypatch,
+        dotenv="AGENT_BOOT_CONTRACT=plow-init\n"
+               f"PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN={dangerous}\n",
+    )
+
+    materialize_plow_credentials(agent, Registry(registry))
+
+    require_plow_init_credentials(agent)  # must not raise
 
 
 @pytest.mark.parametrize(
