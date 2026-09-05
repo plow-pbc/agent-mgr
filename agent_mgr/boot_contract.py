@@ -21,8 +21,10 @@ def _baked_home_env(target: str) -> str | None:
     or a container id/name, `docker inspect` takes either.
 
     None means "could not be read": docker is not on PATH, the daemon is
-    unreachable, or (for an image) it is not present locally. Never guessed --
-    a wrong guess here is how a gateway starts against an empty home.
+    unreachable, or (for an image) it is not present locally. "" means it WAS
+    read and bakes no HERMES_HOME -- an unbootable contract, not a missing
+    answer. Never guessed -- a wrong guess here is how a gateway starts
+    against an empty home.
     """
     try:
         result = subprocess.run(
@@ -44,7 +46,7 @@ def _baked_home_env(target: str) -> str | None:
     for item in env:
         if isinstance(item, str) and item.startswith("HERMES_HOME="):
             return item.removeprefix("HERMES_HOME=")
-    return None
+    return ""
 
 
 def home_target(image: str) -> str | None:
@@ -53,8 +55,8 @@ def home_target(image: str) -> str | None:
     None means the image cannot be inspected right now (absent locally, or no
     docker at all) -- a diagnostic caller (resolve, ls) should omit the derived
     field rather than guess. A present image that bakes an unrecognised
-    HERMES_HOME is not that case: it fails loudly, because agent-mgr has no
-    idea how to boot it.
+    HERMES_HOME -- or none at all -- is not that case: it fails loudly,
+    because agent-mgr has no idea how to boot it.
     """
     baked = _baked_home_env(image)
     if baked is None:

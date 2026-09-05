@@ -18,17 +18,21 @@ def _stub_docker(tmp_path, script):
     return b
 
 
-@pytest.mark.parametrize("baked", [
-    "/opt/data",
-    "/var/lib/hermes",
+@pytest.mark.parametrize(("env", "baked"), [
+    (["HERMES_HOME=/opt/data"], "/opt/data"),
+    (["HERMES_HOME=/var/lib/hermes"], "/var/lib/hermes"),
     # A home agent-mgr cannot boot is loud, never guessed...
-    "/srv/other",
+    (["HERMES_HOME=/srv/other"], "/srv/other"),
+    # ...including one that bakes no home at all, where docker DID answer:
+    # "not present locally -- run deploy" would send the operator to a deploy
+    # that finds the image already local and refuses all over again.
+    (["PATH=/usr/bin"], ""),
     # ...and never confused with docker having no answer at all -- absent
     # locally, or not on PATH -- where a diagnostic caller omits the field.
-    None,
+    (None, None),
 ])
-def test_home_target_maps_docker_inspection(tmp_path, monkeypatch, baked):
-    body = "exit 1" if baked is None else f"""echo '["HERMES_HOME={baked}"]'"""
+def test_home_target_maps_docker_inspection(tmp_path, monkeypatch, env, baked):
+    body = "exit 1" if env is None else f"echo '{json.dumps(env)}'"
     b = _stub_docker(tmp_path, f"#!/usr/bin/env bash\n{body}\n")
     monkeypatch.setenv("PATH", f"{b}{os.pathsep}{os.environ['PATH']}")
     from agent_mgr import boot_contract
@@ -38,7 +42,7 @@ def test_home_target_maps_docker_inspection(tmp_path, monkeypatch, baked):
         return
     with pytest.raises(AgentMgrError) as exc:
         boot_contract.home_target("some/image:tag")
-    assert "does not recognise" in str(exc.value) and baked in str(exc.value)
+    assert "does not recognise" in str(exc.value) and repr(baked) in str(exc.value)
 
 
 @pytest.mark.parametrize(("inspect_status", "pulled"), [(1, True), (0, False)])
