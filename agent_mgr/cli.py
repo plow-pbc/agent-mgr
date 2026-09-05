@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TextIO
 
 from .backups import backup_homes, prune_backups
-from .boot_contract import CURRENT_HOME, home_target, require_home_target
+from .boot_contract import home_target
 from .cloud_client import CloudClient
 from .cloud_http import HttpCloudTransport
 from .cloud_models import CreateAssistantRequest
@@ -382,17 +382,12 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         _need(args, 1, f"agent-mgr {operation} <name>")
         agent = resolve_agent(args[0], registry, ROOT)
         resolve_guard(agent, registry)
-        recreate = ["up", "-d", "--force-recreate", "hermes"]
         command = {
-            # A current-contract container's credential promotion only ever
-            # reruns at creation, so a plain `up` force-recreates too --
-            # otherwise resuming the old container would never pick up a
-            # refreshed credential.
-            "up": recreate if require_home_target(agent) == CURRENT_HOME else ["up", "-d"],
+            "up": ["up", "-d"],
             "down": ["down"],
             # Compose restart retains the old container definition and misses
             # changes in the shared template.
-            "restart": recreate,
+            "restart": ["up", "-d", "--force-recreate", "hermes"],
             "logs": ["logs", "-f", "--tail", "100"],
         }[operation]
         if operation == "logs":
@@ -452,15 +447,6 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                     "without a replaced entrypoint the image's s6 starts a second gateway",
                 )
         resolve_guard(agent, registry)
-        native_resume = command[0] in {"start", "restart", "unpause"}
-        if native_resume and require_home_target(agent) == CURRENT_HOME:
-            raise AgentMgrError(
-                ErrorCode.INVALID_ARGUMENT,
-                f"refusing 'compose {command[0]}' for a current-contract agent -- it resumes "
-                "the existing container without recreating it, so the boot-time credential "
-                f"promotion never reruns. Use 'agent-mgr up {agent.name}' or 'restart', which "
-                "force-recreate.",
-            )
         if command[0] in LEAVES_RUNNING:
             if command[0] not in NO_IDENTIFICATION:
                 require_container_ours(agent)

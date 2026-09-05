@@ -40,6 +40,10 @@ LEAVES_RUNNING = frozenset(
     }
 )
 NO_IDENTIFICATION = frozenset({"config", "version", "ls", "images", "build", "push", "run", "ps"})
+# What a verb does to the current contract's credential promotion, which the
+# image's own cont-init runs at container CREATION and never again.
+CREATES_CONTAINER = frozenset({"up", "create", "run"})
+RESUMES_CONTAINER = frozenset({"start", "restart", "unpause"})
 SCRUB = frozenset(
     {
         "AGENT_NAME",
@@ -142,6 +146,22 @@ def compose(
 ) -> subprocess.CompletedProcess[str]:
     require_fetch_safe(args)
     target = require_home_target(agent)
+    verb = args[0] if args else ""
+    if target == CURRENT_HOME and verb in RESUMES_CONTAINER:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"refusing 'compose {verb}' for a current-contract agent -- it resumes the "
+            "existing container without recreating it, so the boot-time credential "
+            f"promotion never reruns. Use 'agent-mgr up {agent.name}' or 'restart', which "
+            "force-recreate.",
+        )
+    if target == CURRENT_HOME and verb in CREATES_CONTAINER:
+        # Before docker runs, because the read-only bind source must already BE
+        # a file: bind a missing one and Docker leaves a DIRECTORY there that
+        # os.replace() can never replace.
+        ensure_credentials(agent)
+        if verb == "up" and "--force-recreate" not in args:
+            args = ["up", "--force-recreate", *args[1:]]
     return subprocess.run(
         compose_argv(agent, args, target),
         env=environment(agent, target),
@@ -371,14 +391,6 @@ def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
     confirm_transition(agent)
     require_container_ours(agent)
     require_transition_allowed(agent)
-    if args and args[0] == "up" and require_home_target(agent) == CURRENT_HOME:
-        # Right before the container is (re)created and started: cont-init
-        # only runs at that boot, so this is the last moment a refreshed
-        # credential can still reach it. Restricted to `up` -- down, stop,
-        # kill, rm and pause start nothing, so writing (or requiring) a
-        # credential for them would be pointless at best and a spurious
-        # refusal at worst.
-        ensure_credentials(agent)
     return compose(agent, args).returncode
 
 

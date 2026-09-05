@@ -274,20 +274,26 @@ def test_compose_refuses_a_native_resume_for_the_current_contract_only(
         assert r.returncode == 0, r.stderr
 
 
-@pytest.mark.parametrize("run_args", [
-    ("down", "rowan"),
-    ("compose", "rowan", "stop"),
-    ("compose", "rowan", "kill"),
-    ("compose", "rowan", "pause"),
+@pytest.mark.parametrize(("run_args", "staged"), [
+    # Every verb that makes a container, through both dispatch paths -- the
+    # image's cont-init promotes the credential at creation and never again,
+    # and its read-only bind source must already BE a file or Docker leaves a
+    # directory there that os.replace() can never replace.
+    (("up", "rowan"), True),
+    (("compose", "rowan", "create"), True),
+    (("compose", "rowan", "run", "--entrypoint", "true"), True),
+    # And the verbs that make none, where writing (or requiring) a credential
+    # would be pointless at best and a spurious refusal at worst.
+    (("down", "rowan"), False),
+    (("compose", "rowan", "stop"), False),
+    (("compose", "rowan", "kill"), False),
+    (("compose", "rowan", "pause"), False),
 ])
-def test_ensure_credentials_does_not_run_for_shutdown_verbs(run, instance, tmp_path, run_args):
-    """down/stop/kill/pause create no container, so writing (or requiring) a
-    credential for them would be pointless at best and a spurious refusal at
-    worst -- no PLOW_API_BASE/PLOW_AGENT_TOKEN exist anywhere here, which
-    would make ensure_credentials refuse loudly if it ran at all."""
+def test_only_container_creating_verbs_stage_the_current_credential(
+        run, instance, tmp_path, run_args, staged):
     run("register", "rowan", str(instance("rowan")))
-    home = tmp_path / "home" / ".hermes-rowan"
-    home.mkdir(parents=True)
+    home = _seed_credentials(tmp_path, "rowan")
     b = fake_docker(tmp_path, home=home, name="rowan", home_env="/var/lib/hermes")
     r = run(*run_args, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
+    assert (tmp_path / "home" / ".plow-credentials-rowan").is_file() == staged
