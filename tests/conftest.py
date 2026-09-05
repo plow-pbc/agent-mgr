@@ -237,10 +237,10 @@ def home_dotenv(tmp_path):
 
 
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
-                name="rowan", running=True, exec_output=None, log=None, mount=None,
-                exists=None, all_cids=(), running_cids=None, mounts=None, image=None,
-                build=False, pull_policy=None, target="/opt/data", inspect_target=None,
-                command=None, entrypoint=None, credentials=None, credentials_ro=True):
+                name="rowan", running=True, exec_output=None, log=None,
+                containers=None, image=None, build=False, pull_policy=None,
+                target="/opt/data", command=None, entrypoint=None,
+                credentials=None, credentials_ro=True):
     """A `docker` that answers the three things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -255,20 +255,16 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     different path to simulate an override that replaced it, or `False` to
     omit the mount entirely. Ignored for the legacy target, which has none.
 
-    `inspect_target`: the destination `docker inspect` reports the existing
-    container actually mounted -- defaults to `target`, the one `config`
-    would render fresh. Set it differently to simulate the window between a
-    descriptor flip and the container's own recreation, in either direction.
-    A `mounts` value may be `(destination, source)` instead of a bare source
-    to give one specific container_id its own destination, independent of
-    `inspect_target` -- for a stopped/orphaned container alongside a running
-    one at a different destination.
-
-    `running_cids`: which of `all_cids` count as running -- both `ps
-    --status running` and each container's own `inspect` (`.State.Running`,
-    what require_container_ours actually reads) agree with it. Defaults to
-    the existing running/`exists` behaviour when unset, since most tests do
-    not need to tell a running container from a stopped one.
+    `containers`: {container_id: (destination, source, running)} -- the full
+    observable state of every container `ps -a --quiet hermes` would list,
+    what `docker inspect` reports for each, and which of them `ps --status
+    running` also lists. Defaults to one container correctly mounting `home`
+    at `target`, running per `running` -- the `config`-resolved shape most
+    tests want. Pass `{}` for no container at all, or more than one entry to
+    simulate a one-off `compose run` container alongside the gateway, a
+    stopped container left behind by an interrupted --force-recreate, or a
+    running container whose destination disagrees with what `config` (driven
+    by `target`) would render fresh.
     """
     import json
 
@@ -311,15 +307,16 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     if pull_policy:
         svc["pull_policy"] = pull_policy
     cfg = json.dumps({"name": project, "services": {"hermes": svc}})
-    seen = target if inspect_target is None else inspect_target
+    if containers is None:
+        containers = {"deadbeef": (target, str(home), running)}
+    cids = tuple(containers)
+    running_cids = tuple(cid for cid, (_, _, is_running) in containers.items() if is_running)
 
-    def _running(cid: str) -> str:
-        return "true" if (cid in running_cids if running_cids is not None else running) else "false"
+    def _printf_or_colon(ids: tuple[str, ...]) -> str:
+        return ("printf '%s\\n' " + " ".join(ids)) if ids else ":"
 
     parts = [
         "#!/usr/bin/env bash",
-        f'case "$*" in *inspect*) echo "{seen} {mount}|{_running("deadbeef")}"; exit 0 ;; esac'
-        if mount is not None else "",
         f'printf "%s\\n" "$*" >> {log}' if log else "",
         # And one word per line beside it: the joined form cannot tell an intact
         # argv word from one the caller re-split, which is what the sh -c escape
@@ -340,29 +337,19 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         f'case "$*" in *"exec -T"*) [ -t 0 ] || cat >> {log}.stdin ;; esac' if log else "",
         'case "$*" in',
         f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;",
-        # `ps -a` answers about EXISTENCE, `--status running` about running.
-        # They differ for a stopped container, which is the case the identity
-        # seam was blind to, so a test can now set them independently.
-        f'  *"ps -a --quiet"*) {"printf '%s\\n' " + " ".join(all_cids) if all_cids else ("echo deadbeef" if (running if exists is None else exists) else ":")} ;;',
-        f'  *"ps --status running --quiet"*) '
-        + (
-            ("printf '%s\\n' " + " ".join(running_cids) if running_cids else ":")
-            if running_cids is not None
-            else ("echo deadbeef" if running else ":")
-        )
-        + " ;;",
-        # Destination then source, space-separated -- real docker's own
-        # format template now asks for both, so require_container_ours can
-        # report which of the two a running container actually mounts. A
-        # tuple value gives that one container_id its own destination too,
-        # independent of `seen` -- a stopped container at a different
-        # destination than the running one.
+        # `ps -a` answers about EXISTENCE, `--status running` about running --
+        # they differ for a stopped container, which `containers` lets a test
+        # set independently of any other container's state.
+        f'  *"ps -a --quiet"*) {_printf_or_colon(cids)} ;;',
+        f'  *"ps --status running --quiet"*) {_printf_or_colon(running_cids)} ;;',
+        # Destination, source and running state, all from the SAME per-container
+        # record and the SAME inspect call real docker's own format template
+        # now asks for too -- so require_container_ours reads one atomic
+        # snapshot per container, not a separate `ps` race against this.
         (f'  *inspect*) case "$*" in ' + " ".join(
-            f'*{c}*) echo "{v[0]} {v[1]}|{_running(c)}" ;;' if isinstance(v, tuple)
-            else f'*{c}*) echo "{seen} {v}|{_running(c)}" ;;'
-            for c, v in (mounts or {}).items())
-         + f' *) echo "{seen} {home}|{"true" if running else "false"}" ;; esac ;;') if mounts else
-        f'  *inspect*) echo "{seen} {home}|{_running("deadbeef")}" ;;',
+            f'*{cid}*) echo "{destination} {source}|{"true" if is_running else "false"}" ;;'
+            for cid, (destination, source, is_running) in containers.items())
+         + ' *) : ;; esac ;;') if containers else '  *inspect*) : ;;',
     ]
     if exec_output is not None:
         parts.append(f'  *exec*) echo {exec_output} ;;')

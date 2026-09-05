@@ -356,7 +356,7 @@ def test_a_container_that_mounts_someone_elses_home_is_not_touched(run, instance
     foreign = tmp_path / "someone-else" / ".hermes-rowan"
     foreign.mkdir(parents=True)
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    mount=str(foreign), log=log)
+                    containers={"deadbeef": ("/opt/data", str(foreign), True)}, log=log)
     for cmd in ("restart", "up", "down"):
         r = run(cmd, "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
         assert r.returncode != 0, f"{cmd} touched a container mounting a different home"
@@ -383,7 +383,10 @@ def test_a_container_that_cannot_be_identified_is_refused(run, instance, tmp_pat
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     d = b / "docker"
-    d.write_text(d.read_text().replace('*inspect*) echo', '*inspect*) exit 3 ;; *never*) echo'))
+    text = d.read_text()
+    original = '*inspect*) case'
+    assert original in text, "fake_docker's default inspect stub text changed shape"
+    d.write_text(text.replace(original, '*inspect*) exit 3 ;; *never*) case'))
     r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, "touched a container docker could not identify"
     assert "could not say whose home it mounts" in r.stderr
@@ -399,7 +402,7 @@ def test_no_state_of_the_foreign_mount_produces_a_removal_command(run, instance,
     run("register", "rowan", str(instance("rowan")))
     for mount in (str(tmp_path / "nothing-here"), "/home/other/.hermes-rowan", ""):
         b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                        mount=mount)
+                        containers={"deadbeef": ("/opt/data", mount, True)})
         r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
         assert r.returncode != 0, f"touched a container mounting {mount!r}"
         assert "docker rm -f" not in r.stderr, f"offered removal for mount {mount!r}"
@@ -431,7 +434,8 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
     (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
     log = tmp_path / "argv"
     b = fake_docker(tmp_path, home=home, name="rowan",
-                    mount="/home/someone-else/.hermes-rowan", exec_output="x", log=log)
+                    containers={"deadbeef": ("/opt/data", "/home/someone-else/.hermes-rowan", True)},
+                    exec_output="x", log=log)
     r = run(*args, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, f"{args[0]} reached a container mounting a different home"
     assert "not rowan's home" in r.stderr
@@ -451,7 +455,7 @@ def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, t
     one -- require it."""
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    mount="/home/someone-else/.hermes-rowan")
+                    containers={"deadbeef": ("/opt/data", "/home/someone-else/.hermes-rowan", True)})
     r = run("compose", "rowan", *sub, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, f"{sub} was gated on a container it never touches: {r.stderr}"
 
@@ -463,7 +467,7 @@ def test_a_stopped_siblings_container_is_not_treated_as_absent(run, instance, tm
     through. A stopped container still owns the name."""
     run("register", "rowan", str(instance("rowan")))
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    running=False, exists=True, mount="/home/someone-else/.hermes-rowan")
+                    containers={"deadbeef": ("/opt/data", "/home/someone-else/.hermes-rowan", False)})
     r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, "adopted a stopped sibling's project"
     assert "not rowan's home" in r.stderr
@@ -491,8 +495,10 @@ def test_a_foreign_container_is_caught_even_beside_our_own(run, instance, tmp_pa
     run("register", "rowan", str(instance("rowan")))
     ours = str(tmp_path / "home" / ".hermes-rowan")
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    all_cids=("ourown", "theirs"),
-                    mounts={"ourown": ours, "theirs": "/home/other/.hermes-rowan"})
+                    containers={
+                        "ourown": ("/opt/data", ours, True),
+                        "theirs": ("/opt/data", "/home/other/.hermes-rowan", True),
+                    })
     r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0, "a foreign container was missed because ours came first"
     assert "/home/other/.hermes-rowan" in r.stderr
@@ -556,7 +562,8 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
     # operator would be told to touch a live agent over a typo.
     (tmp_path / "foreign").mkdir()
     foreign = fake_docker(tmp_path / "foreign", home=tmp_path / "home" / ".hermes-rowan",
-                          name="rowan", mount="/home/someone-else/.hermes-rowan")
+                          name="rowan",
+                          containers={"deadbeef": ("/opt/data", "/home/someone-else/.hermes-rowan", True)})
     r = run("compose", "rowan", "pull", env={"PATH": f"{foreign}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert "no accepted form" in r.stderr, (

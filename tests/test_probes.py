@@ -164,14 +164,24 @@ def _connectors_bin(tmp_path, name="rowan", *, target="/opt/data", script_presen
     right = f"{target}/skills/productivity/plow-connectors/plow_connector.py"
     wrong = f"{other}/skills/productivity/plow-connectors/plow_connector.py"
     b = fake_docker(tmp_path, home=tmp_path / "home" / f".hermes-{name}", name=name, target=target)
+    text = (b / "docker").read_text()
+    # The OUTER case's closing esac specifically -- fake_docker's own inspect
+    # handling nests a second, inner `case ... esac` now, so a bare "esac"
+    # is no longer a unique anchor. Only the outer one is followed directly
+    # by "exit 0" on its own line; the inner one is followed by " ;;".
+    original = "esac\nexit 0"
+    assert original in text, "fake_docker's own case/esac shape changed"
     (b / "docker").write_text(
-        (b / "docker").read_text().replace(
-            "esac",
+        text.replace(
+            original,
             f'  *"test -f {right}"*)\n    exit {0 if script_present else 1} ;;\n'
             f'  *"test -f {wrong}"*)\n    exit 1 ;;\n'
             f'  *gmail*) echo \'{gmail}\'; exit {0 if gmail != "FAIL" else 1} ;;\n'
             f'  *slack*) echo \'{slack}\'; exit {0 if slack != "FAIL" else 1} ;;\n'
-            "esac", 1))
+            + original,
+            1,
+        )
+    )
     (b / "docker").chmod(0o755)
     return {"PATH": f"{b}:{os.environ['PATH']}"}
 
