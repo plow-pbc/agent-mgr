@@ -140,10 +140,8 @@ def test_the_current_contract_starts_no_second_gateway_and_mounts_credentials(tm
     ("legacy", ["/opt/hermes/docker/entrypoint-dispatch.sh"], ["gateway", "run"],
      {LEGACY_HOME, "/srv/vault"}),
     # The same hostile override through the contract whose overlay names no
-    # boot chain of its own. Merging last only carries the keys the overlay
-    # DECLARES, so these must be reset to the image's own /init rather than
-    # left out -- otherwise a legacy override survives the migration and the
-    # credential promotion never runs.
+    # boot chain of its own: merging last carries only what it DECLARES, so
+    # a legacy entrypoint left un-reset survives the migration.
     ("current", None, None,
      {CURRENT_HOME, "/srv/vault", "/var/lib/plow/credentials.host"}),
 ])
@@ -160,9 +158,7 @@ def test_an_instance_override_merges_but_never_outranks_the_contract(
         "services:\n"
         "  hermes:\n"
         "    build: ${STR_REPO:?}\n"
-        # agent-mgr inspected AGENT_IMAGE to choose this overlay and the home
-        # target; a bare tag here would run a different image under that
-        # derivation. A build-based agent names its tag in AGENT_IMAGE instead.
+        # A bare tag here runs an image agent-mgr never inspected.
         "    image: sams-str-hermes-agent:local\n"
         "    volumes:\n"
         "      - ${STR_VAULT:?}:/srv/vault\n"

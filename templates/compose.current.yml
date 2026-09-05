@@ -3,20 +3,17 @@
 # compose.override.yml, so what this file declares no override can retarget.
 #
 # Merging last is authority over what is DECLARED and nothing else, which is
-# why the boot chain is reset here rather than simply left out. This image's
-# own CMD ["/init"] boots its supervised hermes-gateway, gated by a plow-init
-# oneshot that refuses to start unless /var/lib/plow/credentials exists as
-# root:root mode 600. A legacy override's entrypoint/command -- the shape an
-# agent carries across a migration -- would otherwise merge straight through
-# and bypass /init, and the credential promotion with it. agent-mgr has no
-# boot chain of its own to name here, so declaring means `!reset`: back to
-# the image's own defaults, which are the only ones that know this image.
+# why the boot chain is reset here rather than left out: a legacy override's
+# entrypoint/command -- the shape an agent carries across the migration --
+# would otherwise merge straight through and bypass this image's own CMD
+# ["/init"], whose plow-init oneshot refuses to start unless
+# /var/lib/plow/credentials exists as root:root mode 600. agent-mgr has no
+# boot chain of its own to name here, so declaring means `!reset`.
 #
-# image is reasserted for the same reason. agent-mgr inspects AGENT_IMAGE to
-# derive this contract, the home target and the credential path, so an
-# override naming a different image would have Compose run one image under
-# another's derived boot chain, silently. An agent that builds its own image
-# names that tag in AGENT_IMAGE -- see docs/HOWTO.md.
+# image is reasserted because agent-mgr inspects AGENT_IMAGE to derive this
+# contract, the home target and the credential path: an override naming a
+# different image had Compose run one image under another's derivation,
+# silently. A build-based agent names its own tag there -- docs/HOWTO.md.
 #
 # AGENT_CREDENTIALS_HOST is a path OUTSIDE every agent's own home
 # (boot_contract.credentials_host_path) -- never under the mount above, which
