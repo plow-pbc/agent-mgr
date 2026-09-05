@@ -10,7 +10,7 @@ import termios
 from pathlib import Path
 
 from .artifacts import Artifact, fetch, stack, validate_revision
-from .boot_contract import read_plow_credentials, require_running_contract_matches
+from .boot_contract import home_target, read_plow_credentials, require_running_contract_matches
 from .cloud_http import HttpCloudTransport
 from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
@@ -455,12 +455,20 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
 
 
 def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
-    # The RUNNING container's contract, not the image's: a deploy that made a
+    # The RUNNING container's contract, not the image's -- and not the two
+    # COMPARED either, the way the exec paths do it: a deploy that made a
     # current image inspectable and then failed before recreation leaves the
-    # legacy container live, and its dotenv token is still the working one.
-    # Not agent.home/.env unconditionally either -- the current contract's own
+    # legacy container live, and reading its still-valid dotenv token is
+    # exactly the recovery the operator needs during that interval. Not
+    # agent.home/.env unconditionally either -- the current contract's own
     # gateway truncates PLOW_AGENT_TOKEN out of it after first boot.
-    target = require_running_contract_matches(agent, require_running(agent, registry))
+    container = require_running(agent, registry)
+    target = home_target(container)
+    if target is None:
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"docker could not report {agent.name}'s running container's baked HERMES_HOME",
+        )
     base, token = read_plow_credentials(agent, target)
     if not token:
         raise AgentMgrError(
