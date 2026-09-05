@@ -149,6 +149,45 @@ def test_deploy_builds_rather_than_pulls_a_not_yet_present_local_tag(run, instan
     assert "pull" not in calls
 
 
+def test_the_documented_build_escape_runs_before_the_contract_it_creates(run, instance, tmp_path):
+    """Every --build/--pull refusal names `compose <name> build` as the step to
+    run first, so it cannot itself demand the boot contract of the image it
+    exists to create. It takes deploy's own absent-image route -- the override
+    alone, never the contract-bearing template stack -- and carries the
+    operator's trailing build flags there."""
+    local_tag = "sams-str-hermes-agent:local"
+    repo = instance("str", descriptor=f"AGENT_IMAGE={local_tag}\n")
+    override = repo / "compose.override.yml"
+    override.write_text(
+        "services:\n  hermes:\n    build: { context: . }\n"
+        f"    image: {local_tag}\n    pull_policy: never\n"
+    )
+    run("register", "str", str(repo))
+    log = tmp_path / "calls.log"
+    # The image is genuinely absent -- no Config.Env to read, which is exactly
+    # the state resolve_guard turned into "run deploy first".
+    _stub_docker(tmp_path, (
+        "#!/usr/bin/env bash\n"
+        f'printf "%s\\n" "$*" >> {log}\n'
+        'case "$*" in\n'
+        '  *"Config.Env"*|*"image inspect"*) exit 1 ;;\n'
+        "esac\n"
+        "exit 0\n"
+    ))
+    r = run("compose", "str", "build", "--no-cache")
+    assert r.returncode == 0, r.stderr
+    calls = log.read_text()
+    assert "build --no-cache" in calls, "the operator's own build flags were dropped"
+    assert "templates/compose.yml" not in calls, "the build went back through the contract stack"
+
+    # And an agent with no override of its own has nothing to build -- loudly,
+    # since the one path now serves an operator typing this directly.
+    override.unlink()
+    r = run("compose", "str", "build")
+    assert r.returncode != 0
+    assert "declares no image of its own" in r.stderr
+
+
 def _resolved_agent(monkeypatch, run, instance, registry, tmp_path, name="rowan"):
     """A real ResolvedAgent, the way test_credentials.py builds one: through
     the CLI for setup, then resolved directly for the collaborator under test."""

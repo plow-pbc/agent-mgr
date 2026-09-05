@@ -443,7 +443,7 @@ def test_every_command_that_reaches_an_existing_container_identifies_it(
 
 
 @pytest.mark.parametrize("sub", [
-    ["config"], ["version"], ["ls"], ["images"], ["build"], ["push"], ["ps"],
+    ["config"], ["version"], ["ls"], ["images"], ["push"], ["ps"],
 ])
 def test_a_subcommand_that_touches_no_container_needs_no_daemon(run, instance, tmp_path, sub):
     """The identification costs a `compose ps`, which needs a live daemon. Gating
@@ -613,7 +613,7 @@ def test_pull_may_not_take_a_service_this_host_builds(run, instance, tmp_path):
                  # that re-pulls the FROM image, so the output is still what
                  # this host built -- and no container is created from it here
                  ("build", "--pull")):
-        assert run("compose", "rowan", *safe, env=env).returncode == 0, (
+        assert "could replace a built image" not in run("compose", "rowan", *safe, env=env).stderr, (
             f"{safe} names a policy that does not fetch and was refused")
 
     # Keyed on the SUBCOMMAND and on flags before the service, per this file's

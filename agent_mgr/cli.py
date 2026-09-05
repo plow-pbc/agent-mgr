@@ -38,6 +38,7 @@ from .errors import AgentMgrError, ErrorCode
 from .local import (
     LEAVES_RUNNING,
     NO_IDENTIFICATION,
+    build_image,
     compose,
     require_container_ours,
     require_fetch_safe,
@@ -446,6 +447,11 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                     "refusing 'compose run' whose first argument is not --entrypoint: "
                     "without a replaced entrypoint the image's s6 starts a second gateway",
                 )
+        if command[0] == "build":
+            # Before resolve_guard, which needs the boot contract of the image
+            # this very command exists to create -- the same route deploy takes
+            # for an absent one.
+            return build_image(agent, command[1:])
         resolve_guard(agent, registry)
         if command[0] in LEAVES_RUNNING:
             if command[0] not in NO_IDENTIFICATION:

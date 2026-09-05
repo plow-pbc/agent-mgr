@@ -34,11 +34,10 @@ LEAVES_RUNNING = frozenset(
         "exec",
         "run",
         "cp",
-        "build",
         "push",
     }
 )
-NO_IDENTIFICATION = frozenset({"config", "version", "ls", "images", "build", "push", "run", "ps"})
+NO_IDENTIFICATION = frozenset({"config", "version", "ls", "images", "push", "run", "ps"})
 # What a verb does to the current contract's credential promotion, which the
 # image's own cont-init runs at container CREATION and never again.
 CREATES_CONTAINER = frozenset({"up", "create", "run"})
@@ -176,17 +175,24 @@ def compose(
     )
 
 
-def build_image(agent: ResolvedAgent) -> int:
+def build_image(agent: ResolvedAgent, args: Sequence[str] = ()) -> int:
     """Materialize a build-based agent's own image from its override alone --
     never the shared template, which needs the boot contract already
     resolved, which is exactly what a not-yet-built image cannot answer yet.
     `build` never starts a container and no Dockerfile reads
     AGENT_HOME_TARGET, so this is the one compose invocation that runs
-    before anything can know it. None to inspect afterward if the agent
-    declares no override at all -- there is nothing to build."""
+    before anything can know it -- and therefore the ONLY build path, for
+    deploy's absent image and for `compose <name> build` alike. Routing the
+    latter through resolve_guard instead had the documented escape demand the
+    contract of the very image it exists to create. `args` are the operator's
+    own trailing build flags (--no-cache, --pull), passed straight through."""
     override = agent.repo / "compose.override.yml"
     if not override.is_file():
-        return 1
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            f"nothing to build for {agent.name} -- {override} does not exist, so this "
+            "agent declares no image of its own. Its image comes from the fleet pin.",
+        )
     env = _base_environment(agent)
     return subprocess.run(
         [
@@ -199,6 +205,7 @@ def build_image(agent: ResolvedAgent) -> int:
             "--env-file",
             str(agent.descriptor),
             "build",
+            *args,
         ],
         env=env,
         check=False,
