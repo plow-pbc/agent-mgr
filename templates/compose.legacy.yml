@@ -14,4 +14,4 @@ services:
     command: ["gateway", "run"]
     # Reasserted too, for the reason compose.current.yml gives.
     environment:
-      - HERMES_HOME=${AGENT_HOME_TARGET}
+      - HERMES_HOME=${AGENT_HOME_TARGET:?set by agent-mgr, derived from the image}

@@ -31,6 +31,6 @@ services:
     entrypoint: !reset null
     command: !reset null
     environment:
-      - HERMES_HOME=${AGENT_HOME_TARGET}
+      - HERMES_HOME=${AGENT_HOME_TARGET:?set by agent-mgr, derived from the image}
     volumes:
       - ${AGENT_CREDENTIALS_HOST:?set by agent-mgr, derived from the image}:/var/lib/plow/credentials.host:ro
