@@ -207,10 +207,9 @@ What an archive is worth:
 - A killed run leaves a truncated newest archive; `gzip -t <archive>` before
   restoring, and fall back to the previous night's.
 - Every agent's **Plow credential** lives *outside* its home, at
-  `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`
-  beside the homes. After a current-contract first boot that file is the only
-  host-side copy of the token, so a run that cannot read it fails the night
-  rather than publishing a set that looks complete.
+  `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`.
+  After a current-contract first boot that file is the only host-side copy of
+  the token, so a run that cannot read one fails the night.
 
 ### Restoring a home
 
@@ -240,19 +239,14 @@ mkdir "$home" \
   && agent-mgr up errands
 ```
 
-Restoring the credential is its own line, into `$HOME` rather than the home --
-needed whenever you lost the host, and harmless when you didn't:
-
-```sh
-tar -C ~ -xzf ~/agent-backups/backup-homes/20260826T040112Z-4171/plow-credentials.tar.gz \
-  .plow-credentials-errands
-```
-
 Notes: `&&` not `set -e` (this is pasted into your shell); `down` can
 legitimately refuse via the agent's `AGENT_PRE_TRANSITION` hook; `mkdir` not
 `mkdir -p` — `File exists` is the emptiness check, and `tar -xzf` overlays
 rather than replaces; `logs/`, `cache/` and `lazy-packages/` are excluded
-from archives and won't reappear — expected, not truncation.
+from archives and won't reappear — expected, not truncation. And if you lost
+the *host* rather than one home, restore the credential into `$HOME` before
+step 2 — `tar -C ~ -xzf "$(dirname "$a")/plow-credentials.tar.gz"
+.plow-credentials-errands` — because `up` refuses to start without it.
 
 ## Where does my code go?
 

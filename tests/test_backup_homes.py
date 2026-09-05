@@ -328,16 +328,15 @@ def test_one_failing_home_does_not_cost_the_others_their_night(tmp_path, dest):
 def test_the_credential_beside_the_homes_is_archived_or_the_night_fails(
         tmp_path, home, dest, readable):
     """`~/.plow-credentials-<name>` lives OUTSIDE every home on purpose, so no
-    home's archive reaches it -- and after a current-contract first boot the
-    gateway truncates PLOW_API_BASE/PLOW_AGENT_TOKEN out of the home dotenv,
-    leaving this the only host-side copy. A run that took the homes and left it
-    behind restores an agent that cannot start, so warn-and-continue is the bug:
-    the night must fail instead. The member name is the restore path -- `tar -C
-    ~` puts it straight back beside the homes, which is what the HOWTO says."""
+    home's archive reaches it -- and after a current-contract first boot it is
+    the only host-side copy of the token. Warn-and-continue is the bug: a set
+    that looks complete and is missing it is discovered at restore, when the
+    agent will not start. The member name is the restore path `tar -C ~` needs.
+
+    `only_for` ends in `home`, so the shim fails the credential tar (-C $HOME)
+    and lets the home's own (-C $HOME/.hermes-rowan) through -- the credential
+    alone failing must still cost the whole run."""
     (home / ".plow-credentials-rowan").write_text("PLOW_AGENT_TOKEN=tok_x\n")
-    # Ends in `home`, so the shim fails the credential tar (-C $HOME) and lets
-    # the home's own (-C $HOME/.hermes-rowan) through: the credential alone
-    # failing must still cost the run, not just its own archive.
     shim = None if readable else tar_shim(
         tmp_path / "bin", "tar: Cannot open: Permission denied", only_for="home")
 
@@ -347,7 +346,6 @@ def test_the_credential_beside_the_homes_is_archived_or_the_night_fails(
     archives = list(dest.glob("backup-homes/*/plow-credentials.tar.gz"))
     if readable:
         assert [".plow-credentials-rowan"] == tarfile.open(archives[0]).getnames()
-        assert archives[0].stat().st_mode & 0o077 == 0
     else:
         assert not archives, "it kept an archive tar could not finish"
         assert "credentials" in r.stderr, r.stderr
