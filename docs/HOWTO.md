@@ -206,10 +206,12 @@ What an archive is worth:
   outside. Grep `~/backup-homes.log` for `were not archived`.
 - A killed run leaves a truncated newest archive; `gzip -t <archive>` before
   restoring, and fall back to the previous night's.
-- Every agent's **Plow credential** lives *outside* its home, at
-  `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`.
-  After a current-contract first boot that file is the only host-side copy of
-  the token, so a run that cannot read one fails the night.
+- A **current**-contract agent's **Plow credential** lives *outside* its home,
+  at `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`.
+  After that agent's first boot the file is the only host-side copy of its
+  token, so a run that cannot read one fails the night. A **legacy**-contract
+  agent has no such file — its token stays in the home's own dotenv and rides
+  in the home archive, so an all-legacy fleet gets no credentials archive at all.
 
 ### Restoring a home
 
@@ -244,9 +246,11 @@ legitimately refuse via the agent's `AGENT_PRE_TRANSITION` hook; `mkdir` not
 `mkdir -p` — `File exists` is the emptiness check, and `tar -xzf` overlays
 rather than replaces; `logs/`, `cache/` and `lazy-packages/` are excluded
 from archives and won't reappear — expected, not truncation. And if you lost
-the *host* rather than one home, restore the credential into `$HOME` before
-step 2 — `tar -C ~ -xzf "$(dirname "$a")/plow-credentials.tar.gz"
-.plow-credentials-errands` — because `up` refuses to start without it.
+the *host* rather than one home, a **current**-contract agent needs its
+credential back in `$HOME` before step 2 — `tar -C ~ -xzf "$(dirname
+"$a")/plow-credentials.tar.gz" .plow-credentials-errands` — because `up`
+refuses to start without it. A **legacy** agent has no member in that archive
+(and may have no archive): skip this step, its token comes back with the home.
 
 ## Where does my code go?
 
