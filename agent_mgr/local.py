@@ -296,18 +296,24 @@ def resolve_guard(agent: ResolvedAgent, registry: Registry) -> None:
             )
 
 
-def require_container_ours(agent: ResolvedAgent) -> str:
-    """Returns the home-mount destination the RUNNING container was actually
-    created under (one of HOME_MOUNT_TARGETS), or "" if none is running --
-    for callers that must not trust agent.home_mount_target alone while a
-    descriptor flip and the container's own recreation disagree."""
+def require_container_ours(agent: ResolvedAgent) -> frozenset[tuple[str, bool]]:
+    """Returns (destination, running) for every container this agent's
+    project owns -- one entry per container `ps -a` lists whose mount source
+    resolves to this agent's home, at either HOME_MOUNT_TARGETS destination.
+
+    A stopped container is included, not just a running one: start/restart
+    can resume it without recreating, so a stopped plow-init leftover -- from
+    a rollback, or an interrupted --force-recreate -- matters just as much as
+    a running one. And more than one entry is possible: `-a` also lists a
+    one-off `compose run` container alongside the gateway, which can sit on
+    a different destination than the service container does."""
     found = compose(agent, ["ps", "-a", "--quiet", "hermes"], capture=True)
     if found.returncode:
         raise AgentMgrError(
             ErrorCode.IO_ERROR,
             f"refusing to touch the container under {agent.project} -- docker could not say whether one exists",
         )
-    observed = ""
+    observed: set[tuple[str, bool]] = set()
     for container_id in found.stdout.split():
         inspected = subprocess.run(
             [
@@ -338,11 +344,7 @@ def require_container_ours(agent: ResolvedAgent) -> str:
         mount_part, _, running_part = inspected.stdout.strip().rpartition("|")
         destination, _, mounted = mount_part.partition(" ")
         if mounted and Path(mounted).resolve() == agent.home.resolve():
-            # -a includes stopped/orphaned containers (a one-off `run`, or one
-            # left behind by an interrupted --force-recreate) -- only the
-            # RUNNING one's destination is what "observed" means to callers.
-            if running_part == "true":
-                observed = destination
+            observed.add((destination, running_part == "true"))
             continue
         raise AgentMgrError(
             ErrorCode.INVALID_DESCRIPTOR,
@@ -351,7 +353,7 @@ def require_container_ours(agent: ResolvedAgent) -> str:
             f"this descriptor may need its own name, or 'agent-mgr unregister {agent.name}'. "
             f"Check ownership first: docker inspect {container_id}",
         )
-    return observed
+    return frozenset(observed)
 
 
 def confirm_transition(agent: ResolvedAgent) -> None:
@@ -390,12 +392,18 @@ def transition(agent: ResolvedAgent, args: Sequence[str]) -> int:
     if (
         args
         and args[0] in {"start", "restart", "unpause"}
-        and (agent.plow_init or observed == HOME_MOUNT_TARGETS[1])
+        and (
+            agent.plow_init
+            or any(destination == HOME_MOUNT_TARGETS[1] for destination, _ in observed)
+        )
     ):
-        # observed, not just agent.plow_init: after a rollback the descriptor
-        # can already read legacy while the still-running container is the
-        # plow-init one a rotation could have moved past -- see
-        # require_container_ours, whose return value is what closes that gap.
+        # ANY owned container, not just a running one and not just what the
+        # descriptor currently resolves to: a stopped plow-init leftover --
+        # from a rollback, or an interrupted --force-recreate -- is exactly
+        # what start/restart would resume without recreating, so it can
+        # still be bound to a credential a rotation has since replaced on
+        # disk. See require_container_ours, whose return value is what
+        # closes that gap.
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
             f"refusing 'compose {args[0]}' for {agent.name}: neither recreates the "
@@ -441,15 +449,22 @@ def require_running(
             f"{agent.name}'s gateway is not running -- start it first: agent-mgr up {agent.name}",
         )
     observed = require_container_ours(agent)
-    if path_sensitive and observed and observed != agent.home_mount_target:
-        # A descriptor flip and the container's own recreation can disagree
-        # in the window before the next up --force-recreate: a caller that
-        # builds a path from agent.home_mount_target (cron-sync's exec HOME,
-        # check-connectors' skill path) would target a location the running
-        # container never mounted, in either direction.
-        raise AgentMgrError(
-            ErrorCode.INVALID_ARGUMENT,
-            f"refusing to act: the running container mounts {observed}, not {agent.name}'s "
-            f"currently resolved {agent.home_mount_target} -- recreate it first: "
-            f"agent-mgr up {agent.name}",
-        )
+    if path_sensitive:
+        running_destinations = {destination for destination, running in observed if running}
+        if running_destinations != {agent.home_mount_target}:
+            # A descriptor flip and the container's own recreation can
+            # disagree in the window before the next up --force-recreate: a
+            # caller that builds a path from agent.home_mount_target
+            # (cron-sync's exec HOME, check-connectors' skill path) would
+            # target a location the running container never mounted, in
+            # either direction. What is actually running must be EXACTLY the
+            # resolved target -- no more, no less -- or a one-off container
+            # running beside the gateway at a different destination would
+            # also go unnoticed.
+            raise AgentMgrError(
+                ErrorCode.INVALID_ARGUMENT,
+                f"refusing to act: the running container(s) mount "
+                f"{', '.join(sorted(running_destinations)) or '<nothing>'}, not {agent.name}'s "
+                f"currently resolved {agent.home_mount_target} -- recreate it first: "
+                f"agent-mgr up {agent.name}",
+            )

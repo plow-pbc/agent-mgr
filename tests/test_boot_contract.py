@@ -159,39 +159,65 @@ def test_the_credential_gate_covers_every_start_verb_and_only_those(
 
 
 @pytest.mark.parametrize(
-    "cli_args, target, inspect_target, refused",
+    "cli_args, target, containers, refused",
     [
-        (("compose", "rowan", "start"), "/var/lib/hermes", "/var/lib/hermes", True),
-        (("compose", "rowan", "restart"), "/var/lib/hermes", "/var/lib/hermes", True),
-        (("compose", "rowan", "unpause"), "/var/lib/hermes", "/var/lib/hermes", True),
-        (("up", "rowan"), "/var/lib/hermes", "/var/lib/hermes", False),
-        # Rollback: the descriptor now resolves legacy (no AGENT_BOOT_CONTRACT
-        # in the home dotenv), but the running container is still the
-        # plow-init one -- refused on the OBSERVED mount alone, since the
-        # refusal above keys on agent.plow_init, which this window disagrees
-        # with by construction.
-        (("compose", "rowan", "restart"), "/opt/data", "/var/lib/hermes", True),
+        (("compose", "rowan", "start"), "/var/lib/hermes",
+         {"deadbeef": ("/var/lib/hermes", None, True)}, True),
+        (("compose", "rowan", "restart"), "/var/lib/hermes",
+         {"deadbeef": ("/var/lib/hermes", None, True)}, True),
+        (("compose", "rowan", "unpause"), "/var/lib/hermes",
+         {"deadbeef": ("/var/lib/hermes", None, True)}, True),
+        (("up", "rowan"), "/var/lib/hermes",
+         {"deadbeef": ("/var/lib/hermes", None, True)}, False),
+        # Rollback, running: the descriptor now resolves legacy (no
+        # AGENT_BOOT_CONTRACT in the home dotenv), but the running container
+        # is still the plow-init one -- refused on the OBSERVED mount alone,
+        # since the refusal above keys on agent.plow_init, which this window
+        # disagrees with by construction.
+        (("compose", "rowan", "restart"), "/opt/data",
+         {"deadbeef": ("/var/lib/hermes", None, True)}, True),
+        # Rollback, stopped: same window, but the container never got
+        # restarted -- it just sits there stopped. start/restart would
+        # resume it, not recreate it, so a stopped container matters exactly
+        # as much as a running one here.
+        (("compose", "rowan", "restart"), "/opt/data",
+         {"deadbeef": ("/var/lib/hermes", None, False)}, True),
+        # A legitimate one-off `compose run` container beside the gateway:
+        # the gateway itself agrees with the (legacy) descriptor, but the
+        # one-off is a stopped plow-init leftover -- iteration order must
+        # not decide whether that is seen.
+        (("compose", "rowan", "restart"), "/opt/data",
+         {"gateway": ("/opt/data", None, True), "oneoff": ("/var/lib/hermes", None, False)},
+         True),
     ],
     ids=["start-refused", "restart-refused", "unpause-refused", "up-force-recreates",
-         "rollback-restart-still-refused"],
+         "rollback-running-still-refused", "rollback-stopped-still-refused",
+         "oneoff-container-on-plow-init-still-refused"],
 )
 def test_plow_init_transition_policy(
-    run, instance, tmp_path, home_dotenv, cli_args, target, inspect_target, refused
+    run, instance, tmp_path, home_dotenv, cli_args, target, containers, refused
 ):
     """transition() refuses every native verb that can resume an existing
     plow-init container without recreating it -- start, restart, unpause --
     since none of them re-resolves the bind mount, so none can be trusted to
     see a credential rotation already on disk, even with a currently-valid
     file. up is the one verb that is always safe, because this forces it to
-    --force-recreate regardless of whether a rotation just happened."""
+    --force-recreate regardless of whether a rotation just happened. The
+    refusal must see EVERY owned container, running or not, or a stopped
+    leftover -- or a one-off run container docker happens to list last --
+    would go unnoticed."""
     run("register", "rowan", str(instance("rowan")), check=True)
     boot_contract = "AGENT_BOOT_CONTRACT=plow-init\n" if target == "/var/lib/hermes" else ""
     credential_text = "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_secret\n"
     home = home_dotenv("rowan", boot_contract + credential_text)
     (home.parent / ".plow-credentials-rowan").write_text(credential_text)
     log = tmp_path / "docker.log"
+    resolved_containers = {
+        cid: (destination, str(home) if source is None else source, running)
+        for cid, (destination, source, running) in containers.items()
+    }
     b = fake_docker(tmp_path, home=home, name="rowan", target=target,
-                    inspect_target=inspect_target, log=log)
+                    containers=resolved_containers, log=log)
     r = run(*cli_args, env={"PATH": f"{b}:{os.environ['PATH']}"})
     if refused:
         assert r.returncode != 0

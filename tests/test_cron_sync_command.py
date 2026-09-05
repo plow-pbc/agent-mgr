@@ -67,7 +67,7 @@ def test_pipes_converger_and_spec_into_the_container(
 
 
 @pytest.mark.parametrize(
-    "home_env, target, inspect_target",
+    "home_env, target, running_destination",
     [
         ("AGENT_BOOT_CONTRACT=plow-init\n", "/var/lib/hermes", "/opt/data"),
         ("", "/opt/data", "/var/lib/hermes"),
@@ -75,7 +75,7 @@ def test_pipes_converger_and_spec_into_the_container(
     ids=["flip-in-transit", "rollback-in-transit"],
 )
 def test_cron_sync_refuses_while_the_running_container_disagrees_with_the_descriptor(
-    run, instance, tmp_path, home_dotenv, home_env, target, inspect_target
+    run, instance, tmp_path, home_dotenv, home_env, target, running_destination
 ):
     """cron-sync builds its exec HOME from agent.home_mount_target -- the
     CURRENTLY resolved target -- so a container still running under the
@@ -88,8 +88,9 @@ def test_cron_sync_refuses_while_the_running_container_disagrees_with_the_descri
     (repo / "crons.json").write_text(
         '[{"name": "j", "schedule": "0 6 * * *", "prompt": "p", "deliver": "local"}]')
     run("register", "str", str(repo))
-    home_dotenv("str", home_env)
+    home = home_dotenv("str", home_env)
     r = run("cron-sync", "str",
-            env=_bin(tmp_path, "str", target=target, inspect_target=inspect_target))
+            env=_bin(tmp_path, "str", target=target,
+                     containers={"deadbeef": (running_destination, str(home), True)}))
     assert r.returncode != 0
     assert "recreate it first" in r.stderr

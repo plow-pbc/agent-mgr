@@ -434,7 +434,7 @@ def test_the_mismatch_names_the_path_docker_reported(run, instance, tmp_path):
     it against `docker inspect` found no such mount."""
     foreign = "/home/other/x/../.hermes-rowan"
     b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    all_cids=("theirs",), mounts={"theirs": foreign})
+                    containers={"theirs": ("/opt/data", foreign, True)})
     run("register", "rowan", str(instance("rowan")))
     r = run("restart", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
@@ -452,7 +452,7 @@ def test_a_resolver_failing_on_the_mounted_home_names_it(run, instance, tmp_path
     load_agent, and failing every realpath stops in require_own_home instead."""
     foreign = "/home/other/.hermes-rowan"
     d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-                    all_cids=("theirs",), mounts={"theirs": foreign})
+                    containers={"theirs": ("/opt/data", foreign, True)})
     b = tmp_path / "stub-bin"
     b.mkdir()
     (b / "python3").write_text(
@@ -502,35 +502,9 @@ def test_the_container_guard_survives_a_descriptor_flip(
     home = home_dotenv("rowan", home_env)
     source = str(home) if own_source else str(tmp_path / "home" / ".hermes-someone-else")
     b = fake_docker(tmp_path, home=home, name="rowan", target=config_target,
-                    inspect_target=running_destination, mounts={"deadbeef": source})
+                    containers={"deadbeef": (running_destination, source, True)})
     r = run("logs", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert (r.returncode == 0) is recognized, r.stderr
-
-
-def test_observed_reflects_the_running_container_not_an_orphaned_stopped_one(
-    run, instance, tmp_path, home_dotenv
-):
-    """`-a` includes stopped/orphaned containers too -- a one-off `run`, or
-    one left behind by an interrupted --force-recreate, the exact failure
-    mode this window is about. The running container is listed FIRST and the
-    stopped one LAST in all_cids -- a fix that just took whichever container
-    the loop happened to visit last, instead of checking each one's own
-    running state, would report the stopped one's destination here and this
-    test would fail."""
-    home = home_dotenv("rowan", "")
-    run("register", "rowan", str(instance("rowan")), check=True)
-    b = fake_docker(
-        tmp_path, home=home, name="rowan", target="/opt/data",
-        all_cids=("running-plow-init", "stopped-legacy"),
-        running_cids=("running-plow-init",),
-        mounts={
-            "running-plow-init": ("/var/lib/hermes", str(home)),
-            "stopped-legacy": ("/opt/data", str(home)),
-        },
-    )
-    r = run("compose", "rowan", "restart", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "run 'agent-mgr up rowan' instead" in r.stderr
 
 
 @pytest.mark.parametrize("kw", [{"command": ["gateway", "run"]}, {"entrypoint": ["gateway"]}],
