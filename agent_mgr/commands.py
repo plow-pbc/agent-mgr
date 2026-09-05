@@ -209,10 +209,13 @@ def scope_chat_credential(agent: ResolvedAgent, registry: Registry) -> int:
     except AlreadyNarrowed:
         # An activation whose reply was lost after Plow committed the PUT, or
         # an operator repeating this command. Narrowing cannot widen, so
-        # nothing is written and nothing restarts; a different role is a fresh
-        # activation. Only here, not in activate(): a fresh bootstrap
-        # credential answering 403 is an anomaly its own handler reports.
-        print(f"{agent.name}'s credential is already narrowed -- nothing to change")
+        # nothing is written; a different role is a fresh activation. The
+        # reload still runs: in the lost-reply case activate() never reloaded,
+        # so the gateway is on the pre-activation token until this does. Only
+        # here, not in activate(): a fresh bootstrap credential answering 403
+        # is an anomaly its own handler reports.
+        print(f"{agent.name}'s credential is already narrowed -- nothing to write")
+        reload_if_running(agent, registry, "the credential activation already narrowed")
         return 0
     reload_if_running(agent, registry, "the scoped chat credential just written")
     return result

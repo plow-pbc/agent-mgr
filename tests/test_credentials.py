@@ -574,7 +574,8 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
     if already_narrowed:
         assert puts == []
         assert "already narrowed" in r.stdout
-        assert "up" not in docker_log.read_text().split(), "nothing written, so no restart"
+        # Reloaded anyway: the recovery case is an activate() that never got to.
+        assert "up" in docker_log.read_text().split()
     else:
         assert puts[0][2]["chat_uids"] == ["line:ln_elm"]
 

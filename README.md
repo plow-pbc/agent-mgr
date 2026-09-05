@@ -96,7 +96,9 @@ agent-mgr deploy errands              # home, config, plugin, pinned skills, dep
 # 3. Per-person config (after deploy, before up)
 agent-mgr resolve errands             # prints AGENT_HOME — put AGENT_TZ=... in the .env there
 
-# 4. Activate, start, sign in
+# 4. Activate, start, sign in. If the agent will drive a Mac, Plow Latch must
+#    already be registered on it: activation fixes the credential's role by
+#    whether the account has one, and narrowing cannot widen later.
 agent-mgr activate errands            # text the code from the owner's phone; one-time spend
 agent-mgr up errands
 agent-mgr cron-sync errands           # only if its agent.env names a cron spec
