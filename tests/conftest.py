@@ -383,11 +383,12 @@ class CredentialAPI:
                     (self.command, self.path, body, self.headers.get("Authorization"))
                 )
                 if self.path == "/v1/relay/info":
-                    payload: object = {
-                        "uid": "usr_1",
-                        "mcp_url": "https://relay/mcp",
-                        "devices": owner.devices,
-                    }
+                    # As plow serves it: RelayInfo with
+                    # response_model_exclude_defaults, so an account with no
+                    # Mac gets no `devices` key at all, not an empty list.
+                    payload: dict[str, object] = {"uid": "usr_1", "mcp_url": "https://relay/mcp"}
+                    if owner.devices:
+                        payload["devices"] = owner.devices
                 elif self.command == "GET":
                     payload = {"participants": [{"type": "agent", "line": {"uid": "ln_elm"}}]}
                 else:
