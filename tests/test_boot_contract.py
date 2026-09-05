@@ -18,6 +18,21 @@ def _stub_docker(tmp_path, script):
     return b
 
 
+LOCAL_TAG = "sams-str-hermes-agent:local"
+
+
+def _build_based_agent(run, instance):
+    """A registered agent whose image is its OWN build rather than a registry
+    pin -- the only shape either build path exists for."""
+    repo = instance("str", descriptor=f"AGENT_IMAGE={LOCAL_TAG}\n")
+    (repo / "compose.override.yml").write_text(
+        "services:\n  hermes:\n    build: { context: . }\n"
+        f"    image: {LOCAL_TAG}\n    pull_policy: never\n"
+    )
+    run("register", "str", str(repo))
+    return repo
+
+
 @pytest.mark.parametrize(("env", "baked"), [
     (["HERMES_HOME=/opt/data"], "/opt/data"),
     (["HERMES_HOME=/var/lib/hermes"], "/var/lib/hermes"),
@@ -98,13 +113,7 @@ def test_deploy_builds_rather_than_pulls_a_not_yet_present_local_tag(run, instan
     """A build-based agent's own tag is not a registry reference at all --
     deploy must build it (from its own override alone), never attempt to
     pull it, and the built image is what gets inspected afterward."""
-    local_tag = "sams-str-hermes-agent:local"
-    repo = instance("str", descriptor=f"AGENT_IMAGE={local_tag}\n")
-    (repo / "compose.override.yml").write_text(
-        "services:\n  hermes:\n    build: { context: . }\n"
-        f"    image: {local_tag}\n    pull_policy: never\n"
-    )
-    run("register", "str", str(repo))
+    repo = _build_based_agent(run, instance)
     home = tmp_path / "home" / ".hermes-str"
     built_marker = tmp_path / "built"
     log = tmp_path / "calls.log"
@@ -115,7 +124,7 @@ def test_deploy_builds_rather_than_pulls_a_not_yet_present_local_tag(run, instan
                 "container_name": "hermes-str",
                 "environment": {"AGENT_ID": "str"},
                 "build": {"context": "."},
-                "image": local_tag,
+                "image": LOCAL_TAG,
                 "pull_policy": "never",
                 "volumes": [{"target": "/opt/data", "source": str(home)}],
             }
@@ -155,14 +164,7 @@ def test_the_documented_build_escape_runs_before_the_contract_it_creates(run, in
     exists to create. It takes deploy's own absent-image route -- the override
     alone, never the contract-bearing template stack -- and carries the
     operator's trailing build flags there."""
-    local_tag = "sams-str-hermes-agent:local"
-    repo = instance("str", descriptor=f"AGENT_IMAGE={local_tag}\n")
-    override = repo / "compose.override.yml"
-    override.write_text(
-        "services:\n  hermes:\n    build: { context: . }\n"
-        f"    image: {local_tag}\n    pull_policy: never\n"
-    )
-    run("register", "str", str(repo))
+    override = _build_based_agent(run, instance) / "compose.override.yml"
     log = tmp_path / "calls.log"
     # The image is genuinely absent -- no Config.Env to read, which is exactly
     # the state resolve_guard turned into "run deploy first".
