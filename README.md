@@ -114,9 +114,12 @@ agent-mgr check-latch errands         # "latch reachable ... (HTTP 200)"
 
 Tearing a test agent down: capture the home first — `agent-mgr resolve
 <name>` prints `AGENT_HOME`, and after `unregister` nothing will resolve
-it — then `down`, `unregister`, and delete that directory yourself.
-Neither command touches it, and the nightly backup globs `~/.hermes*`, so
-a dead test home would be archived forever.
+it — then `down`, `unregister`, and delete that directory **and
+`~/.plow-credentials-<name>`** yourself. Neither command touches either, and
+the nightly backup globs both, so a dead test home would be archived forever.
+That credential file is the one thing that outlives the home: leave it and
+the next agent registered under the same name starts on the dead one's
+authorization instead of refusing until `activate`.
 
 Every command accepts `--json`. Reads return typed domain objects; operational
 commands return a versioned envelope with exit status and captured output.
