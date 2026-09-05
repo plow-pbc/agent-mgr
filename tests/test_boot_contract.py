@@ -170,7 +170,7 @@ def test_the_documented_build_escape_runs_before_the_contract_it_creates(run, in
     # the state resolve_guard turned into "run deploy first".
     _stub_docker(tmp_path, (
         "#!/usr/bin/env bash\n"
-        f'printf "%s\\n" "$*" >> {log}\n'
+        f'printf "%s AGENT_HOME_TARGET=%s\\n" "$*" "${{AGENT_HOME_TARGET:-}}" >> {log}\n'
         'case "$*" in\n'
         '  *"Config.Env"*|*"image inspect"*) exit 1 ;;\n'
         "esac\n"
@@ -181,6 +181,12 @@ def test_the_documented_build_escape_runs_before_the_contract_it_creates(run, in
     calls = log.read_text()
     assert "build --no-cache" in calls, "the operator's own build flags were dropped"
     assert "templates/compose.yml" not in calls, "the build went back through the contract stack"
+    # Compose interpolates the override before it knows the verb, so a
+    # `${AGENT_HOME_TARGET:?}` volume line refuses a build unless the variable
+    # is set -- and a build can set nothing true, only something a mount could
+    # never satisfy.
+    build_line = next(line for line in calls.splitlines() if "build --no-cache" in line)
+    assert "AGENT_HOME_TARGET=/agent-mgr-build-has-no-contract" in build_line
 
     # And an agent with no override of its own has nothing to build -- loudly,
     # since the one path now serves an operator typing this directly.

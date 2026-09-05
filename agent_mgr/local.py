@@ -194,6 +194,14 @@ def build_image(agent: ResolvedAgent, args: Sequence[str] = ()) -> int:
             "agent declares no image of its own. Its image comes from the fleet pin.",
         )
     env = _base_environment(agent)
+    # Compose interpolates the override's every value before it knows which
+    # verb it is running, so a volume line written as
+    # `${AGENT_HOME_TARGET:?}` -- the shape agent repos use so an up on an
+    # agent-mgr that predates the export fails loudly -- refuses a build the
+    # same way, even though a build reads no volume. A placeholder that no
+    # mount could satisfy keeps the interpolation honest without pretending
+    # to know the contract this build is about to create.
+    env["AGENT_HOME_TARGET"] = "/agent-mgr-build-has-no-contract"
     return subprocess.run(
         [
             "docker",
