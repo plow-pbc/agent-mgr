@@ -233,7 +233,7 @@ def instance(tmp_path):
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
                 exists=None, all_cids=(), mounts=None, image=None, build=False,
-                pull_policy=None, home_env="/opt/data"):
+                pull_policy=None, home_env="/opt/data", container_home_env=None):
     """A `docker` that answers the four things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -244,6 +244,11 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     default, matching the fleet's real fixtures. It drives BOTH the mount
     target compose would resolve and the boot-contract derivation's own
     `docker inspect`, so the two stay consistent the way the real image is.
+
+    `container_home_env` is the EXISTING container's own baked HERMES_HOME,
+    for the mid-migration case where it differs from the replacement image's:
+    it also moves the mount the container genuinely carries, so a check that
+    searched at the image's target instead finds nothing.
 
     `log` records argv when given, so a test can assert on what actually ran
     rather than on what the source says.
@@ -275,8 +280,15 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     cfg = json.dumps({"name": project, "services": {"hermes": svc}})
     parts = [
         "#!/usr/bin/env bash",
-        # Unconditional and first: the boot-contract derivation's own
-        # `docker inspect --format {{json .Config.Env}}` call, for an image
+        # A container that predates a contract change, answering for its own
+        # baked home and mounting there -- before the image answers below,
+        # which are broader and would otherwise swallow it.
+        (f'case "$*" in *"Config.Env"*deadbeef*) echo \'["HERMES_HOME={container_home_env}"]\'; '
+         'exit 0 ;; esac\n'
+         f'case "$*" in *Mounts*) case "$*" in *\'"{container_home_env}"\'*) echo {home} ;; esac; '
+         'exit 0 ;; esac') if container_home_env else "",
+        # The image's own, unconditional: the boot-contract derivation's
+        # own `docker inspect --format {{json .Config.Env}}` call, for an image
         # ref OR a running container id alike. Must win over the mount-echo
         # shortcuts below, which answer a DIFFERENT inspect format
         # (container Mounts) and would otherwise swallow this one too.

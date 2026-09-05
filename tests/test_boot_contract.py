@@ -250,30 +250,35 @@ def _seed_credentials(tmp_path, name):
     return home
 
 
-def test_up_force_recreates_for_the_current_contract_only(run, instance, tmp_path):
-    run("register", "rowan", str(instance("rowan")))
-    home = _seed_credentials(tmp_path, "rowan")
-    log = tmp_path / "current.log"
-    b = fake_docker(tmp_path, home=home, name="rowan", home_env="/var/lib/hermes",
-                    running=False, log=log)
-    r = run("up", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
+@pytest.mark.parametrize(("name", "home_env", "container_home_env"), [
+    ("current", "/var/lib/hermes", None),
+    ("legacy", "/opt/data", None),
+    # The migration itself: a RUNNING container still baked (and mounted)
+    # legacy while its replacement image is already current. Ownership keys
+    # off the CONTAINER's own home, so this must not read as foreign -- and
+    # the current image still forces the recreate cont-init needs.
+    ("migrating", "/var/lib/hermes", "/opt/data"),
+])
+def test_up_force_recreates_for_the_current_contract_only(
+        run, instance, tmp_path, name, home_env, container_home_env):
+    run("register", name, str(instance(name)))
+    home = _seed_credentials(tmp_path, name)
+    log = tmp_path / f"{name}.log"
+    b = fake_docker(tmp_path, home=home, name=name, home_env=home_env,
+                    container_home_env=container_home_env,
+                    running=container_home_env is not None, log=log)
+    r = run("up", name, env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
-    assert "--force-recreate" in log.read_text()
+    current = home_env == "/var/lib/hermes"
+    assert ("--force-recreate" in log.read_text()) == current
     # Outside home -- the run() fixture points HOME at tmp_path/"home" for
     # the subprocess, which is what credentials_host_path() resolves against.
-    credentials_host = tmp_path / "home" / ".plow-credentials-rowan"
+    credentials_host = tmp_path / "home" / f".plow-credentials-{name}"
     assert not str(credentials_host).startswith(str(home))
-    assert credentials_host.read_text() == (
-        "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n"
+    written = credentials_host.read_text() if credentials_host.is_file() else ""
+    assert written == (
+        "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n" if current else ""
     )
-
-    run("register", "legacy", str(instance("legacy")))
-    home2 = tmp_path / "home" / ".hermes-legacy"
-    log2 = tmp_path / "legacy.log"
-    b2 = fake_docker(tmp_path, home=home2, name="legacy", running=False, log=log2)
-    r2 = run("up", "legacy", env={"PATH": f"{b2}:{os.environ['PATH']}"})
-    assert r2.returncode == 0, r2.stderr
-    assert "--force-recreate" not in log2.read_text()
 
 
 @pytest.mark.parametrize("verb", ["start", "restart", "unpause"])
