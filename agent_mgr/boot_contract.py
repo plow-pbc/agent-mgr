@@ -159,9 +159,10 @@ def ensure_credentials(agent: ResolvedAgent) -> Path:
     )
 
 
-def read_plow_credentials(agent: ResolvedAgent) -> tuple[str, str]:
+def read_plow_credentials(agent: ResolvedAgent, target: str) -> tuple[str, str]:
     """(PLOW_API_BASE, PLOW_AGENT_TOKEN), from whichever source is canonical
-    for this agent's boot contract right now.
+    under `target` -- the boot contract of the container the caller is about to
+    talk to, never the image's, which can already have moved ahead of it.
 
     The current contract's own gateway truncates both keys out of the home
     dotenv after first boot -- credentials_host_path() is the durable copy
@@ -169,8 +170,7 @@ def read_plow_credentials(agent: ResolvedAgent) -> tuple[str, str]:
     no such file; its dotenv stays canonical. Read-only: callers that need to
     WRITE go through ensure_credentials() instead.
     """
-    current = require_home_target(agent) == CURRENT_HOME
-    source = credentials_host_path(agent) if current else agent.home / ".env"
+    source = credentials_host_path(agent) if target == CURRENT_HOME else agent.home / ".env"
     if not source.is_file():
         return "", ""
     return dotenv_read(source, "PLOW_API_BASE"), dotenv_read(source, "PLOW_AGENT_TOKEN")

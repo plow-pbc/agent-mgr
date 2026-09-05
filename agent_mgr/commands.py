@@ -455,10 +455,13 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
 
 
 def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
-    # Not agent.home/.env unconditionally: the current contract's own
-    # gateway truncates PLOW_AGENT_TOKEN out of it after first boot, and
-    # read_plow_credentials() knows where the durable copy actually lives.
-    base, token = read_plow_credentials(agent)
+    # The RUNNING container's contract, not the image's: a deploy that made a
+    # current image inspectable and then failed before recreation leaves the
+    # legacy container live, and its dotenv token is still the working one.
+    # Not agent.home/.env unconditionally either -- the current contract's own
+    # gateway truncates PLOW_AGENT_TOKEN out of it after first boot.
+    target = require_running_contract_matches(agent, require_running(agent, registry))
+    base, token = read_plow_credentials(agent, target)
     if not token:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
@@ -499,7 +502,6 @@ def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
 
 
 def chats(agent: ResolvedAgent, registry: Registry) -> int:
-    require_running(agent, registry)
     home = dotenv_read(agent.home / ".env", "PLOW_HOME_CHANNEL")
     data = plow_chats(agent, registry).get("data", [])
     if not isinstance(data, list):
@@ -538,7 +540,6 @@ def set_home(agent: ResolvedAgent, registry: Registry, uid: str) -> int:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT, f"usage: agent-mgr set-home {agent.name} <cht_...>"
         )
-    require_running(agent, registry)
     data = plow_chats(agent, registry).get("data", [])
     if not isinstance(data, list):
         raise AgentMgrError(ErrorCode.INVALID_DESCRIPTOR, "GET /v1/chats has no data array")
