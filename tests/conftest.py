@@ -373,6 +373,10 @@ class CredentialAPI:
         # What /v1/relay/info lists: a Mac by default, so the narrowed
         # credential keeps relay:call; a test empties it for the no-Mac role.
         self.devices: list[dict[str, str]] = [{"device_uid": "dev_mac"}]
+        # 403 is what a credential without relay:device gets -- one already
+        # narrowed. A test sets it to exercise the re-run path.
+        self.relay_info_status = 200
+        self.chat_status = 200
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -382,6 +386,17 @@ class CredentialAPI:
                 owner.requests.append(
                     (self.command, self.path, body, self.headers.get("Authorization"))
                 )
+                refused = (
+                    owner.relay_info_status if self.path == "/v1/relay/info"
+                    else owner.chat_status if self.path.startswith("/v1/chats/")
+                    else 200
+                )
+                if refused != 200:
+                    self.send_response(refused)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"detail":"Scope relay:device is not in your permissions"}')
+                    return
                 if self.path == "/v1/relay/info":
                     # As plow serves it: RelayInfo with
                     # response_model_exclude_defaults, so an account with no

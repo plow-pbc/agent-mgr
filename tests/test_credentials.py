@@ -528,9 +528,19 @@ printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE
     }
 
 
+@pytest.mark.parametrize(
+    ("relay_info_status", "chat_status"), [(200, 200), (403, 200), (200, 403)]
+)
 def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
-    run, instance, tmp_path, credential_api
+    run, instance, tmp_path, credential_api, relay_info_status, chat_status
 ):
+    """Re-run on a credential Plow already narrowed -- the reply to a committed
+    PUT lost, or an operator repeating the command -- it stops at the 403 from
+    /v1/relay/info rather than failing the recovery it was named as. A 403
+    from anything else in the flow is still the failure it always was."""
+    credential_api.relay_info_status = relay_info_status
+    credential_api.chat_status = chat_status
+    already_narrowed = relay_info_status == 403
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     home = tmp_path / "home" / ".hermes-rowan"
@@ -539,7 +549,7 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
         "PLOW_CHAT_TOKEN=plow_bootstrap\n"
         f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
     )
-    docker_bin, _ = _fake_docker(tmp_path)
+    docker_bin, docker_log = _fake_docker(tmp_path)
     b = tmp_path / "credential-api-bin"
     b.mkdir()
     (b / "docker").symlink_to(docker_bin / "docker")
@@ -552,11 +562,21 @@ def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
         },
     )
 
+    if chat_status != 200:
+        assert r.returncode != 0
+        assert "already narrowed" not in r.stdout
+        return
     assert r.returncode == 0, r.stderr
     dotenv = (home / ".env").read_text()
     assert "PLOW_HOME_CHANNEL=cht_home" in dotenv
     assert "PLOW_AGENT_TOKEN=plow_bootstrap" in dotenv
-    assert credential_api.requests[2][2]["chat_uids"] == ["line:ln_elm"]
+    puts = [request for request in credential_api.requests if request[0] == "PUT"]
+    if already_narrowed:
+        assert puts == []
+        assert "already narrowed" in r.stdout
+        assert "up" not in docker_log.read_text().split(), "nothing written, so no restart"
+    else:
+        assert puts[0][2]["chat_uids"] == ["line:ln_elm"]
 
 
 def test_scope_chat_credential_finishes_an_interrupted_activation_publication(
