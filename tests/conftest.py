@@ -465,13 +465,11 @@ PLUGIN_TARBALL = {
         "def register(ctx):\n    pass\n",
 }
 
-# The fleet skills every agent gets, at the paths the public mirror keeps in
-# plow-pbc/hermes-plow-chat. Deploy fetches them unconditionally, so the
-# default `gh` serves them the way it serves the plugin -- otherwise every
-# plain `run("deploy", ...)` in the suite would fail on a fetch it never asked
-# about. One tarball carries both trees: the real fetch is a whole-repo
-# snapshot fetch-tree extracts a src subtree from, and the plugin and the
-# skills are pinned at the same revision of that one repo.
+# The seed skills at the paths the public mirror keeps in
+# plow-pbc/hermes-plow-chat. The image bundles them now, so deploy no longer
+# fetches them; the default `gh` still serves this snapshot for anything that
+# names that repo. One tarball carries both trees: the real fetch is a
+# whole-repo snapshot fetch-tree extracts a src subtree from.
 FLEET_SEED = "seed-skills"
 FLEET_SKILL_SRC = f"{FLEET_SEED}/productivity/google-workspace"
 FLEET_SKILL_TARBALL = {
@@ -543,7 +541,7 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
 
     skill_tgz = tmp_path / "skill.tgz"
     write_tarball(skill_tgz, members)
-    # Both, because a skill test deploys before it adds, and deploy installs
-    # the plugin and the fleet skills through this same installer.
+    # Both, because a skill test deploys before it adds, and the default `gh`
+    # answers for hermes-plow-chat while the skill tarball answers for the rest.
     install_gh_dispatching(b, repo_tgz=_write_repo_tgz(tmp_path), skill_tgz=skill_tgz)
     return b

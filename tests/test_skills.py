@@ -246,29 +246,10 @@ def test_two_skills_from_one_monorepo_keep_both_pins(run, instance, tmp_path):
     assert any("\tfirst\t" in r for r in rows) and any("\tsecond\t" in r for r in rows)
 
 
-@pytest.mark.parametrize(
-    ("dest", "name"),
-    [
-        ("productivity/google-workspace", "google-workspace"),
-        ("growth/plow-invite", "plow-invite"),
-    ],
-)
-def test_deploy_installs_every_fleet_skill(run, instance, tmp_path, dest, name):
-    """Every agent gets every pinned fleet skill: google-workspace replaces the
-    image-bundled copy whose local-OAuth path no instance has; plow-invite is
-    the delight-triggered referral capability (plow-pbc/agent-mgr#72)."""
-    run("register", "rowan", str(instance("rowan")))
-    r = run("deploy", "rowan")
-    assert r.returncode == 0, r.stderr
-    installed = tmp_path / "home" / ".hermes-rowan" / "skills" / dest / "SKILL.md"
-    assert installed.exists()
-    assert f"name: {name}" in installed.read_text()
-
-
-def test_deploy_skips_the_fleet_skill_when_the_instance_pins_it(run, instance, tmp_path):
-    """Installing the fleet copy first would leave it deployed over a working
-    instance copy whenever the later replay's fetch fails mid-deploy, so
-    deploy does not install the fleet copy at all for an instance-owned dest."""
+def test_deploy_keeps_a_seed_destination_the_instance_pins(run, instance, tmp_path):
+    """An instance whose skills.tsv pins a seed-skill destination owns that
+    copy: the replay refreshes it, and the retirement of what older deploys
+    staged there must not race it away as a stale fleet copy."""
     repo = instance("property")
     (repo / "skills.tsv").write_text(
         f"plow-pbc/property-hunt\t{'a' * 40}\tproductivity/google-workspace\t\n"
@@ -278,28 +259,10 @@ def test_deploy_skips_the_fleet_skill_when_the_instance_pins_it(run, instance, t
             env=_fake_bin(tmp_path, skill_name="google-workspace",
                           files=(("INSTANCE.md", "instance copy"),)))
     assert r.returncode == 0, r.stderr
-    assert "skipped" in r.stdout
+    assert "retired" not in r.stdout
     installed = (tmp_path / "home" / ".hermes-property" / "skills"
                  / "productivity" / "google-workspace")
     assert (installed / "INSTANCE.md").exists()
-
-
-def test_install_skill_skips_an_instance_pinned_dest_and_installs_the_rest(run, instance, tmp_path):
-    """deploy deliberately installs an instance's own skills.tsv copy last; a
-    standalone fleet install over it would contradict the reviewed pin until
-    the next deploy silently flipped it back. With more than one fleet skill,
-    the owned dest is skipped per skill while the others still install."""
-    repo = instance("rowan")
-    (repo / "skills.tsv").write_text(
-        f"plow-pbc/x\t{'a' * 40}\tproductivity/google-workspace\t\n"
-    )
-    run("register", "rowan", str(repo))
-    run("deploy", "rowan", env=_fake_bin(tmp_path, skill_name="google-workspace", agent="rowan"))
-    r = run("install-skill", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "skipped" in r.stdout and "google-workspace" in r.stdout
-    installed = tmp_path / "home" / ".hermes-rowan" / "skills" / "growth" / "plow-invite" / "SKILL.md"
-    assert installed.exists()
 
 
 def test_a_dotted_destination_does_not_accept_a_different_skill(run, instance, tmp_path):

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 from pathlib import Path
 
-from .artifacts import Artifact, fetch, stack, validate_revision
+from .artifacts import Artifact, fetch
 from .boot_contract import ensure_image_local, image_present_locally, require_home_target
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write
@@ -58,27 +59,6 @@ def publish_activation_env(agent: ResolvedAgent, remembered_home: str = "") -> N
         )
 
 
-def install_plugin(
-    agent: ResolvedAgent,
-    landed: str = "Legacy dotenv names may have been migrated; this agent's config and skills are untouched.",
-) -> None:
-    migrate_plugin_env(agent)
-    artifact = stack()["plow_chat_plugin"]
-    override = os.environ.get("AGENT_MGR_PLUGIN_REF")
-    if override:
-        validate_revision(override, "the plugin ref", ErrorCode.INVALID_ARGUMENT)
-        artifact = Artifact(artifact.repository, override, artifact.source, artifact.destination)
-    try:
-        fetch(agent, "plugins", "plugin.yaml", artifact)
-    except AgentMgrError as error:
-        raise AgentMgrError(
-            error.code,
-            f"could not install the Plow Chat plugin from {artifact.repository} at "
-            f"{artifact.revision[:7]} -- is 'gh' installed and authenticated "
-            f"(gh auth status)? {landed}",
-        ) from error
-
-
 def own_skill_destinations(agent: ResolvedAgent) -> set[str]:
     manifest = agent.repo / "skills.tsv"
     if not manifest.is_file():
@@ -90,44 +70,49 @@ def own_skill_destinations(agent: ResolvedAgent) -> set[str]:
     }
 
 
-def install_fleet_skills(
-    agent: ResolvedAgent,
-    landed: str = "This agent's config and plugin are untouched.",
-) -> None:
+# What deploys before the image owned them staged into every home. A home
+# plugin declaring `name: plow-chat-platform` wins over the image's
+# /opt/hermes/plugins/plow_chat, and a home skill directory is "yours was kept"
+# to the runtime's bundled-skill reconcile -- so each of these shadows the
+# copy the pinned base bundles, and a fix merged upstream never runs (#156).
+STAGED_BY_OLDER_DEPLOYS = (
+    "plugins/plow-chat-platform",
+    "skills/productivity/google-workspace",
+    "skills/growth/plow-invite",
+)
+
+
+def retire_staged_copies(agent: ResolvedAgent) -> None:
+    """Remove each staged tree the agent's own skills.tsv does not pin, and
+    drop its line from the runtime's bundled-skills manifest: the reconcile
+    reads a manifest entry with no directory as deleted-by-the-user and never
+    re-seeds it (verified on course-qa -- the skill vanished from
+    `hermes skills list` until the line went too). Never through a symlink:
+    the home is the gateway's to write, and rmtree resolving outside it is
+    the same hole fetch-tree's parent check closes."""
     owned = own_skill_destinations(agent)
-    artifacts = stack()
-    done: list[str] = []
-    for key in ("google_workspace_skill", "plow_invite_skill"):
-        artifact = artifacts[key]
-        dest = artifact.destination.removeprefix("skills/")
-        if dest in owned:
-            print(
-                f"fleet {dest.rsplit('/', 1)[-1]} skill: skipped -- {agent.name}'s own skills.tsv pins {dest}"
-            )
+    manifest = agent.home / "skills" / ".bundled_manifest"
+    for relative in STAGED_BY_OLDER_DEPLOYS:
+        if relative.removeprefix("skills/") in owned:
             continue
-        override = os.environ.get("AGENT_MGR_SKILL_REF")
-        if override:
-            validate_revision(override, "the fleet-skill ref", ErrorCode.INVALID_ARGUMENT)
-            artifact = Artifact(
-                artifact.repository, override, artifact.source, artifact.destination
-            )
-        try:
-            fetch(agent, "skills", "SKILL.md", artifact, destination=dest)
-        except AgentMgrError as error:
-            # Say what landed, like install_plugin and the deploy hook do. This
-            # was the one step in deploy that did not, and it is the step most
-            # likely to fail on a fresh machine -- where the bare fetch error
-            # ("could not install <repo> at <sha>") is also indistinguishable
-            # from an unauthenticated `gh`, which refuses even a public repo.
-            raise AgentMgrError(
-                error.code,
-                f"could not install the fleet {dest.rsplit('/', 1)[-1]} skill from "
-                f"{artifact.repository} at {artifact.revision[:7]} -- is 'gh' installed "
-                f"and authenticated (gh auth status)? "
-                + (f"Fleet skills already installed: {', '.join(done)}. " if done else "")
-                + landed,
-            ) from error
-        done.append(dest)
+        for tree in (agent.home / relative, agent.home / f"{relative}.previous"):
+            if not tree.is_dir():
+                continue
+            if tree.is_symlink() or not tree.resolve().is_relative_to(agent.home.resolve()):
+                raise AgentMgrError(
+                    ErrorCode.IO_ERROR,
+                    f"{tree} resolves outside {agent.home} -- refusing to remove through a symlink",
+                )
+            shutil.rmtree(tree)
+            print(f"retired {tree.relative_to(agent.home)} -- the image bundles it now")
+        if relative.startswith("skills/") and manifest.is_file():
+            name = relative.rsplit("/", 1)[-1]
+            kept = [
+                line
+                for line in manifest.read_text().splitlines()
+                if not line.startswith(f"{name}:")
+            ]
+            atomic_write(manifest, ("\n".join(kept) + "\n").encode(), stage_in=manifest.parent)
 
 
 def replay_skills(agent: ResolvedAgent) -> None:
@@ -203,10 +188,8 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
         if not skeleton.is_file():
             skeleton = ROOT / "templates" / "env.example"
         _publish_home_file(skeleton, agent.home, ".env")
-    install_plugin(agent, "The dotenv skeleton IS written; config.yaml and skills are NOT.")
-    install_fleet_skills(
-        agent, "The dotenv skeleton and the plugin ARE installed; config.yaml was not updated."
-    )
+    migrate_plugin_env(agent)
+    retire_staged_copies(agent)
     _publish_home_file(agent.config, agent.home, "config.yaml")
     print(f"deployed config.yaml to {agent.home}")
     replay_skills(agent)

@@ -176,13 +176,6 @@ def test_deploy_will_not_write_into_a_siblings_home(run, instance, tmp_path):
     assert "not property's own home" in r.stderr
 
 
-def test_install_plugin_will_not_write_into_a_siblings_home(run, instance, tmp_path):
-    _sibling_home(instance, run, "property", tmp_path)
-    r = run("install-plugin", "property")
-    assert r.returncode != 0
-    assert "refusing to write" in r.stderr
-
-
 def test_add_skill_will_not_write_into_a_siblings_home(run, instance, tmp_path):
     _sibling_home(instance, run, "property", tmp_path)
     r = run("add-skill", "property", "plow-pbc/x", "--ref", "a" * 40, "--dest", "s")
@@ -406,14 +399,13 @@ def test_deploy_refuses_a_bad_image_before_it_writes_anything(run, instance, tmp
     assert r.returncode != 0
     assert "neither a digest nor built here" in r.stderr
     # The whole home, not just config.yaml -- which is the FOURTH thing deploy
-    # writes, after the mkdir, the .env skeleton and the plugin install. A test
-    # named "before it writes anything" has to mean it.
+    # writes, after the mkdir, the .env skeleton and the retirement of staged
+    # copies. A test named "before it writes anything" has to mean it.
     assert not (tmp_path / "home" / ".hermes-rowan").exists(), (
         "the deploy created the home before refusing")
 
 
 @pytest.mark.parametrize("args", [
-    ("install-plugin", "rowan"),
     ("add-skill", "rowan", "plow-pbc/x", "--ref", "a" * 40),
 ])
 def test_every_write_command_preflights_the_image(run, instance, tmp_path, args):

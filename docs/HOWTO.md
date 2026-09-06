@@ -25,8 +25,8 @@ then check it works:
 agent-mgr ls
 ```
 
-You need **`gh`, authenticated** (`gh auth status`) — `deploy` installs the
-Plow Chat plugin and fleet skills through `gh api`.
+You need **`gh`, authenticated** (`gh auth status`) — `deploy` installs an
+agent's `skills.tsv` pins and `activate` fetches its script through `gh api`.
 
 ## Set up a new agent
 
@@ -322,16 +322,10 @@ agent on the next upstream push.
 ## Bumping pins
 
 The shared pins live in `runtime/stack.json`. `agent-mgr deploy <name>`
-applies them as part of the whole deploy — the normal path. When only one
-thing changed:
-
-- `agent-mgr install-plugin <name>` — after bumping
-  `artifacts.plow_chat_plugin.revision`; skips an expensive deploy hook.
-- `agent-mgr install-skill <name>` — the fleet skills
-  (`google_workspace_skill`, `plow_invite_skill`); also the first fix for an
-  agent reporting `NOT_AUTHENTICATED` from the image-bundled
-  `google-workspace` copy. A destination the agent's own `skills.tsv` pins is
-  authoritative and skipped — bump that row and re-run `deploy` instead.
+applies them as part of the whole deploy — the normal path. The plugin and
+the seed skills (`google-workspace`, `plow-invite`) come from the image
+itself, so bumping `images.hermes_local` and re-running `deploy` is how they
+move; a destination the agent's own `skills.tsv` pins stays authoritative.
 
 **Four SHA pins exist in one repo and one of them may never move** — before
 bumping any, read *What this builds on* in the [README](../README.md), which
