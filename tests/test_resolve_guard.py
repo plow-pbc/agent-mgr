@@ -398,9 +398,9 @@ def test_deploy_refuses_a_bad_image_before_it_writes_anything(run, instance, tmp
     r = run("deploy", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode != 0
     assert "neither a digest nor built here" in r.stderr
-    # The whole home, not just config.yaml -- which is the FOURTH thing deploy
-    # writes, after the mkdir, the .env skeleton and the retirement of staged
-    # copies. A test named "before it writes anything" has to mean it.
+    # The whole home, not just config.yaml -- which is the THIRD thing deploy
+    # writes, after the mkdir and the .env skeleton. A test named "before it
+    # writes anything" has to mean it.
     assert not (tmp_path / "home" / ".hermes-rowan").exists(), (
         "the deploy created the home before refusing")
 

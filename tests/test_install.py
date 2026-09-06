@@ -283,85 +283,6 @@ def test_an_agent_with_no_hook_deploys_fine(run, instance, tmp_path):
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
 
 
-@pytest.mark.parametrize(
-    ("home_env", "retired"),
-    [("/var/lib/hermes", True), ("/opt/data", False)],
-    ids=["a-current-base-bundles-them", "a-legacy-base-still-reads-them"],
-)
-def test_deploy_retires_what_older_deploys_staged_so_the_image_copy_runs(
-        run, instance, tmp_path, home_env, retired):
-    """A home plugin named plow-chat-platform wins over the image's bundled
-    one, and a home skill directory is "yours was kept" to the runtime's
-    reconcile -- so every copy an older deploy staged shadows the copy the
-    pinned base bundles, and a fix merged upstream never runs (#156). Seeded
-    the way the live homes were: plugin, both fleet skills, a fetch-tree
-    rollback twin, and the runtime's manifest naming both skills. The manifest
-    line has to go too: the reconcile reads an entry with no directory as
-    deleted-by-the-user and never re-seeds it.
-
-    Only for an image that bundles what it retires: a legacy base's plugin
-    predates the fleet pin, so its home copies are still the ones that work,
-    and a deploy onto it must leave them alone."""
-    from conftest import fake_docker
-
-    run("register", "rowan", str(instance("rowan")))
-    home = tmp_path / "home" / ".hermes-rowan"
-    env = {"PATH": f"{fake_docker(tmp_path, home=home, name='rowan', home_env=home_env)}:{os.environ['PATH']}"}
-    # A current-contract reload materialises the durable credential first.
-    (tmp_path / "home" / ".plow-credentials-rowan").write_text(
-        "PLOW_API_BASE=https://api.example\nPLOW_AGENT_TOKEN=tok_x\n"
-    )
-    staged = [
-        home / "plugins" / "plow-chat-platform",
-        home / "plugins" / "plow-chat-platform.previous",
-        home / "skills" / "productivity" / "google-workspace",
-        home / "skills" / "growth" / "plow-invite",
-    ]
-    for tree in staged:
-        tree.mkdir(parents=True)
-        (tree / "marker").write_text("staged by an older deploy\n")
-    bystander = home / "skills" / "productivity" / "notion"
-    bystander.mkdir()
-    (bystander / "SKILL.md").write_text("name: notion\n")
-    manifest = home / "skills" / ".bundled_manifest"
-    before = "notion:aaaa\ngoogle-workspace:bbbb\nplow-invite:cccc\n"
-    manifest.write_text(before)
-
-    r = run("deploy", "rowan", env=env)
-    assert r.returncode == 0, r.stderr
-    if retired:
-        assert not any(tree.exists() for tree in staged), "a staged copy survived to shadow the image"
-        assert manifest.read_text() == "notion:aaaa\n"
-    else:
-        assert all(tree.is_dir() for tree in staged), "a legacy base lost the copies it runs"
-        assert manifest.read_text() == before
-    assert (bystander / "SKILL.md").is_file(), "the operator's own skill was touched"
-
-
-def test_the_retirement_will_not_read_or_write_a_manifest_through_a_symlink(
-        run, instance, tmp_path):
-    """A compromised gateway can point skills/.bundled_manifest at any file
-    the operator can read. Following it would copy that file's lines back
-    into the mounted home as a regular file -- a secret, readable by the
-    gateway on its next boot. Refuse, and touch nothing."""
-    from conftest import fake_docker
-
-    run("register", "rowan", str(instance("rowan")))
-    home = tmp_path / "home" / ".hermes-rowan"
-    (home / "skills" / "growth" / "plow-invite").mkdir(parents=True)
-    secret = tmp_path / "home" / "operator-secret"
-    secret.write_text("SECRET=hunter2\n")
-    (home / "skills" / ".bundled_manifest").symlink_to(secret)
-    env = {"PATH": f"{fake_docker(tmp_path, home=home, name='rowan', home_env='/var/lib/hermes')}:{os.environ['PATH']}"}
-
-    r = run("deploy", "rowan", env=env)
-    assert r.returncode != 0, "the retirement followed a symlinked manifest"
-    assert "outside" in r.stderr, r.stderr
-    assert (home / "skills" / ".bundled_manifest").is_symlink(), "the symlink was replaced"
-    assert secret.read_text() == "SECRET=hunter2\n"
-    assert (home / "skills" / "growth" / "plow-invite").is_dir(), "retired before refusing"
-
-
 def _transition_env(tmp_path, log=None):
     from conftest import fake_docker
 
@@ -931,53 +852,32 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
             )
 
 
-@pytest.mark.parametrize(
-    ("parent", "colliding", "pinned"),
-    [
-        ("skills", "my-skill", True),
-        ("skills", "growth/plow-invite", False),
-        ("plugins", "plow-chat-platform", False),
-    ],
-    ids=["the-replay-publishes", "the-skill-retirement-removes", "the-plugin-retirement-removes"],
-)
-def test_a_planted_parent_symlink_cannot_redirect_the_install(
-        run, instance, tmp_path, parent, colliding, pinned):
-    """Neither seam that writes under the home may rm -rf or rename outside it.
+def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp_path):
+    """The publication seam must not rm -rf or rename outside the agent's home.
 
-    `plugins/` and `skills/` live in the home, which compose bind-mounts at
-    the image's HERMES_HOME, so a compromised gateway can replace one with a
-    symlink. The install then resolves through it and deletes host-side, as
-    the operator -- and `--dest` being rejected by component does not cover a
-    planted PARENT. Two seams walk that parent: the skills.tsv replay's
-    fetch-tree, and the retirement of what older deploys staged, which runs
-    first and refuses on its own.
+    `skills/` lives in the home, which compose bind-mounts at the image's
+    HERMES_HOME, so a compromised gateway can replace it with a symlink. The
+    install then resolves through it and deletes host-side, as the operator --
+    and `--dest` being rejected by component does not cover a planted PARENT.
     """
-    from conftest import fake_docker, fake_skill_gh
-
-    repo = instance("rowan")
-    if pinned:
-        (repo / "skills.tsv").write_text(f"plow-pbc/x\t{'a' * 40}\tmy-skill\t\n")
-    run("register", "rowan", str(repo))
-    home = tmp_path / "home" / ".hermes-rowan"
+    home, env = _pinned_skill_agent(run, instance, tmp_path)
     home.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "home" / "not-the-agents"
-    # At the name the seam touches, and asserted on CONTENT, not existence.
+    # At the name the installer touches, and asserted on CONTENT, not existence.
     # Both matter. A bystander file survives with or without the guard, since
     # nothing here is named for it. But so does a colliding path checked only for
     # existence: unguarded, `mv` renames this directory to .previous, the EXIT
     # trap `rm -rf`s it, and the freshly installed tree recreates the same path
     # with its own SKILL.md -- so the file "still exists" while the operator's
     # data is gone. The sentinel is what makes the assertion able to fail.
-    sentinel = outside / colliding / "SKILL.md"
+    sentinel = outside / "my-skill" / "SKILL.md"
     sentinel.parent.mkdir(parents=True)
     sentinel.write_text("name: my-skill\n# SENTINEL: the operator's own file\n")
-    (home / parent).symlink_to("../not-the-agents")
+    (home / "skills").symlink_to("../not-the-agents")
 
-    b = fake_skill_gh(tmp_path, skill_name="my-skill")
-    d = fake_docker(tmp_path, home=home, name="rowan", home_env="/var/lib/hermes")
-    r = run("deploy", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
-    assert r.returncode != 0, "a seam followed a planted parent symlink"
+    r = run("deploy", "rowan", env=env)
+    assert r.returncode != 0, "the install followed a planted parent symlink"
     assert "outside" in r.stderr, f"refused, but not for this reason: {r.stderr}"
     assert "SENTINEL" in sentinel.read_text(), (
-        "a seam renamed, replaced or removed a host directory outside the home"
+        "the install renamed or replaced a host directory outside the home"
     )
