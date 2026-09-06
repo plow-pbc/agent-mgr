@@ -106,21 +106,25 @@ def retire_staged_copies(agent: ResolvedAgent) -> None:
         # The manifest first, before anything is removed: a symlinked one is a
         # refusal, and a refusal must leave every tree in place.
         manifest = _read_manifest(agent, home_fd)
-        retired: list[str] = []
         for relative in STAGED_BY_OLDER_DEPLOYS:
             if relative.removeprefix("skills/") in owned:
                 continue
-            for tree in (relative, f"{relative}.previous"):
-                if _rmtree_within(agent, home_fd, tree):
-                    print(f"retired {tree} -- the image bundles it now")
-                    retired.append(relative.rsplit("/", 1)[-1])
-        if manifest is not None and retired:
-            kept = "".join(
-                f"{line}\n"
-                for line in manifest.splitlines()
-                if line.split(":", 1)[0] not in retired
-            )
-            _write_manifest(agent, home_fd, kept)
+            removed = [
+                tree
+                for tree in (relative, f"{relative}.previous")
+                if _rmtree_within(agent, home_fd, tree)
+            ]
+            for tree in removed:
+                print(f"retired {tree} -- the image bundles it now")
+            # The skill's manifest line goes with its tree, in the same step:
+            # a later refusal must not leave a tree gone and its line present,
+            # which the reconcile reads as deleted-by-the-user.
+            if removed and manifest is not None and relative.startswith("skills/"):
+                name = relative.rsplit("/", 1)[-1]
+                manifest = "".join(
+                    f"{line}\n" for line in manifest.splitlines() if line.split(":", 1)[0] != name
+                )
+                _write_manifest(agent, home_fd, manifest)
     finally:
         os.close(home_fd)
 
