@@ -82,10 +82,10 @@ def test_ensure_image_local_pulls_iff_absent(tmp_path, monkeypatch, inspect_stat
 def test_a_build_based_agents_own_image_determines_its_contract_even_when_current(
         run, instance, tmp_path):
     """An already-built local tag is inspected DIRECTLY -- never substituted
-    for the fleet's pinned base, which would silently pick the legacy target
-    for an image that has already moved to the current contract. This is not
-    hypothetical: an operator's own build-based agent can already be current
-    while the fleet-wide pin is still legacy."""
+    for the fleet's pinned base, which would silently pick the wrong target
+    for an image that bakes the other contract. This is not hypothetical:
+    the fleet-wide pin is current, while an operator's own build-based agent
+    can still be on a legacy base it built months ago."""
     stock = json.loads((ROOT / "runtime" / "stack.json").read_text())["images"]["hermes_local"][
         "reference"
     ]
@@ -95,18 +95,18 @@ def test_a_build_based_agents_own_image_determines_its_contract_even_when_curren
     _stub_docker(tmp_path, (
         "#!/usr/bin/env bash\n"
         "case \"$*\" in\n"
-        # The fleet's own pinned base is still legacy. Substituting IT for
-        # the already-built local tag below would be exactly the bug under
-        # test -- resolve would report legacy for an agent that is current.
-        f'  *"Config.Env"*"{stock}"*) echo \'["HERMES_HOME=/opt/data"]\' ;;\n'
-        f'  *"Config.Env"*"{local_tag}"*) echo \'["HERMES_HOME=/var/lib/hermes"]\' ;;\n'
+        # The fleet's own pinned base is current. Substituting IT for the
+        # already-built local tag below would be exactly the bug under
+        # test -- resolve would report current for an agent that is legacy.
+        f'  *"Config.Env"*"{stock}"*) echo \'["HERMES_HOME=/var/lib/hermes"]\' ;;\n'
+        f'  *"Config.Env"*"{local_tag}"*) echo \'["HERMES_HOME=/opt/data"]\' ;;\n'
         "  *\"image inspect\"*) exit 0 ;;\n"
         "esac\n"
         "exit 0\n"
     ))
     r = run("resolve", "str")
     assert r.returncode == 0, r.stderr
-    assert "AGENT_HOME_TARGET=/var/lib/hermes" in r.stdout
+    assert "AGENT_HOME_TARGET=/opt/data" in r.stdout
 
 
 def test_deploy_builds_rather_than_pulls_a_not_yet_present_local_tag(run, instance, tmp_path):
