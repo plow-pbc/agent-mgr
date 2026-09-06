@@ -107,12 +107,12 @@ def retire_staged_copies(agent: ResolvedAgent) -> None:
             print(f"retired {tree.relative_to(agent.home)} -- the image bundles it now")
         if relative.startswith("skills/") and manifest.is_file():
             name = relative.rsplit("/", 1)[-1]
-            kept = [
-                line
+            kept = "".join(
+                f"{line}\n"
                 for line in manifest.read_text().splitlines()
                 if not line.startswith(f"{name}:")
-            ]
-            atomic_write(manifest, ("\n".join(kept) + "\n").encode(), stage_in=manifest.parent)
+            )
+            atomic_write(manifest, kept.encode(), stage_in=manifest.parent)
 
 
 def replay_skills(agent: ResolvedAgent) -> None:
@@ -203,7 +203,7 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
         ).returncode:
             raise AgentMgrError(
                 ErrorCode.IO_ERROR,
-                f"{agent.name}'s deploy hook failed. The config, plugin and pinned skills "
+                f"{agent.name}'s deploy hook failed. The config and pinned skills "
                 "ARE installed; the hook's own work is NOT. Fix the cause and re-run "
                 f"'agent-mgr deploy {agent.name}' before restarting.",
             )

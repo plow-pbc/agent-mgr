@@ -892,11 +892,16 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
 
 
 @pytest.mark.parametrize(
-    "colliding",
-    ["my-skill", "growth/plow-invite"],
-    ids=["the-replay-publishes", "the-retirement-removes"],
+    ("parent", "colliding"),
+    [
+        ("skills", "my-skill"),
+        ("skills", "growth/plow-invite"),
+        ("plugins", "plow-chat-platform"),
+    ],
+    ids=["the-replay-publishes", "the-skill-retirement-removes", "the-plugin-retirement-removes"],
 )
-def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp_path, colliding):
+def test_a_planted_parent_symlink_cannot_redirect_the_install(
+        run, instance, tmp_path, parent, colliding):
     """Neither seam that writes under the home may rm -rf or rename outside it.
 
     `plugins/` and `skills/` live in the home, which compose bind-mounts at
@@ -925,7 +930,7 @@ def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp
     sentinel = outside / colliding / "SKILL.md"
     sentinel.parent.mkdir(parents=True)
     sentinel.write_text("name: my-skill\n# SENTINEL: the operator's own file\n")
-    (home / "skills").symlink_to("../not-the-agents")
+    (home / parent).symlink_to("../not-the-agents")
 
     b = fake_skill_gh(tmp_path, skill_name="my-skill")
     d = fake_docker(tmp_path, home=home, name="rowan")
