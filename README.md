@@ -388,8 +388,9 @@ stake: a bare `>>` onto a file not ending in one welds the key to the last
 line, turning `PLOW_AGENT_TOKEN=…` into `PLOW_AGENT_TOKEN=…AGENT_INDEX=1`.
 
 `agent-mgr` does not read this key and does not pass it to Compose. The agent's
-home is already mounted at `/opt/data`, so the reporter reads the switch from
-that file itself. That is deliberate: `compose.override.yml` merges after the
+home is already mounted at the image's own baked `HERMES_HOME` (`/var/lib/hermes`
+for a current base, `/opt/data` for a legacy one), so the reporter reads the
+switch from that file itself. That is deliberate: `compose.override.yml` merges after the
 shared template and can replace anything that file sets — measured, an override
 naming `AGENT_INDEX` wins — and that override is shared by every instance
 registered against the checkout. A switch there opts in siblings who never
