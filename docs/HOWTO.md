@@ -5,10 +5,10 @@
 One host, many agents. Each agent is a Docker container running Hermes,
 connected to **Plow Chat** (its phone line) and, optionally, **Plow Latch** (a
 Mac it can drive). `agent-mgr` owns everything the agents share — the image,
-the Compose template, and the pinned plugin/skill versions in
-`runtime/stack.json` (a JSON lock: every ref is a 40-char SHA). Each agent's
-own repo owns only what makes it itself: `agent.env`, `config.yaml`, its
-skills and hooks.
+which bundles the plugin and the seed skills, and the Compose template — with
+the exact image digest and the activation script's 40-char SHA recorded in
+`runtime/stack.json`. Each agent's own repo owns only what makes it itself:
+`agent.env`, `config.yaml`, its skills and hooks.
 
 A registry at `~/.config/agent-mgr/agents` maps each agent **name** to its
 **repo**, so every command works from any directory. Several names may point

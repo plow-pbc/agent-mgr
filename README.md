@@ -264,7 +264,7 @@ near-miss: keep it for this agent's own recipes and tests, never to restate
 `up`, `deploy` or `activate`.
 
 **Pin upstream, never vendor it.** Every artifact from another repo arrives at
-an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image
+an exact ref: a git artifact (an instance skill, the activation script) by 40-char SHA, a container image
 by `sha256:` digest — never a tag or a branch. (One exception: an image this host
 **builds**, which may carry any tag — the rentals agent's
 `sams-str-hermes-agent:local`, say. A `build:` service must declare
