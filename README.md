@@ -413,18 +413,13 @@ branch re-resolves on the next pull, which silently changes a large unreviewed
 surface under a running agent that holds live credentials — and for the image,
 one that carries the chat plugin holding the chat token.
 
-**The two SHA pins name one repo at two points in its history, and must not be
-collapsed into one.** `Strip the SEED ceremony` deleted `ref/scripts/`, so the
-plugin pin moves forward past that commit while `create_plow_chat_curl.sh`
-exists only before it. A single shared ref would send the plugin's post-strip
-SHA at the activate URL and 404 — on `activate`, the one command that is a
-one-time irreversible spend. `tests/test_install.py` pins the pairing.
-
-**The one `hermes-plow-chat` pin left, `artifacts.plow_chat_activation`, may
-not be bumped.** The plugin and the seed skills used to be pinned beside it
-from the same repo's later history; they come from the image now, so nothing
-remains that could be collapsed onto the activation pin by a sed over
-`runtime/`. `artifacts.plow_chat_activation` is frozen at a pre-strip commit and must not be
+**The one `hermes-plow-chat` pin, `artifacts.plow_chat_activation`, may not
+be bumped.** `Strip the SEED ceremony` deleted `ref/scripts/`, and
+`create_plow_chat_curl.sh` exists only before it; a later SHA 404s on
+`activate`, the one command that is a one-time irreversible spend.
+`tests/test_install.py` pins the SHA. The plugin and the seed skills used to
+be pinned beside it from the same repo's later history; they come from the
+image now. `artifacts.plow_chat_activation` is frozen at a pre-strip commit and must not be
 bumped forward at all — not to `HEAD`, not to any later SHA. That is the
 realistic slip rather than the collapse above: someone reaching for "latest in
 `hermes-plow-chat`" lands on `HEAD`, where the path this ref names no longer

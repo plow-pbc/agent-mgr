@@ -255,9 +255,12 @@ def test_deploy_keeps_a_seed_destination_the_instance_pins(run, instance, tmp_pa
         f"plow-pbc/property-hunt\t{'a' * 40}\tproductivity/google-workspace\t\n"
     )
     run("register", "property", str(repo))
-    r = run("deploy", "property",
-            env=_fake_bin(tmp_path, skill_name="google-workspace",
-                          files=(("INSTANCE.md", "instance copy"),)))
+    b = fake_skill_gh(tmp_path, skill_name="google-workspace",
+                      files=(("INSTANCE.md", "instance copy"),))
+    # A current-contract image, so the retirement actually runs and has to skip.
+    fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-property", name="property",
+                running=False, home_env="/var/lib/hermes")
+    r = run("deploy", "property", env={"PATH": f"{b}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
     assert "retired" not in r.stdout
     installed = (tmp_path / "home" / ".hermes-property" / "skills"

@@ -194,10 +194,10 @@ def run(registry, tmp_path):
         e["AGENT_MGR_REGISTRY"] = str(registry)
         e["HOME"] = str(tmp_path / "home")
         (tmp_path / "home").mkdir(exist_ok=True)
-        # deploy installs the plugin through the same fetch-tree the skills
-        # use, and activate curls the activation script from an earlier SHA of
-        # that same repo -- so both a hermetic `gh` and a hermetic `curl` are on
-        # PATH for every invocation unless a test overrides PATH deliberately.
+        # deploy fetches an agent's skills.tsv pins through fetch-tree, and
+        # activate curls the activation script -- so both a hermetic `gh` and a
+        # hermetic `curl` are on PATH for every invocation unless a test
+        # overrides PATH deliberately.
         b = fake_curl(tmp_path)
         install_fake_gh(tmp_path, b)
         e["PATH"] = f"{b}:{e['PATH']}"
@@ -456,72 +456,16 @@ def write_tarball(path, members):
     path.write_bytes(buf.getvalue())
 
 
-# The plugin every agent gets. Two files, and the manifest's `name:` line is what
-# fetch-tree checks -- so this is a real fixture of the real contract, not a stub.
-PLUGIN_TARBALL = {
-    "plow-pbc-repo-abc1234/plow-chat-platform/plugin.yaml":
-        "name: plow-chat-platform\nkind: platform\n",
-    "plow-pbc-repo-abc1234/plow-chat-platform/__init__.py":
-        "def register(ctx):\n    pass\n",
-}
-
-# The seed skills at the paths the public mirror keeps in
-# plow-pbc/hermes-plow-chat. The image bundles them now, so deploy no longer
-# fetches them; the default `gh` still serves this snapshot for anything that
-# names that repo. One tarball carries both trees: the real fetch is a
-# whole-repo snapshot fetch-tree extracts a src subtree from.
-FLEET_SEED = "seed-skills"
-FLEET_SKILL_SRC = f"{FLEET_SEED}/productivity/google-workspace"
-FLEET_SKILL_TARBALL = {
-    f"plow-pbc-repo-abc1234/{FLEET_SKILL_SRC}/SKILL.md":
-        "---\nname: google-workspace\n---\n# google-workspace\n",
-    f"plow-pbc-repo-abc1234/{FLEET_SEED}/growth/plow-invite/SKILL.md":
-        "---\nname: plow-invite\n---\n# plow-invite\n",
-    f"plow-pbc-repo-abc1234/{FLEET_SEED}/growth/plow-invite/scripts/mint_invite.py":
-        "#!/usr/bin/env python3\n",
-}
-
-
-REPO_TARBALL = {**PLUGIN_TARBALL, **FLEET_SKILL_TARBALL}
-
-
-def install_gh_dispatching(b, *, repo_tgz, skill_tgz=None):
-    """A `gh` that answers by repo, because one invocation can need either.
-
-    A skill test deploys first -- which installs the plugin and the fleet
-    skills from the one hermes-plow-chat snapshot -- and then adds a skill from
-    another repo, so a `gh` that served one tarball to all would fail whichever
-    came second on fetch-tree's manifest name check. Dispatching on the argv is
-    what the real `gh api repos/<repo>/tarball/<ref>` does anyway.
-    """
-    other = f'cat {skill_tgz}' if skill_tgz else 'echo "no fake for: $*" >&2; exit 1'
-    (b / "gh").write_text(
-        "#!/usr/bin/env bash\n"
-        "case \"$*\" in\n"
-        f"  *hermes-plow-chat*) cat {repo_tgz} ;;\n"
-        f"  *) {other} ;;\n"
-        "esac\n"
-    )
-    (b / "gh").chmod(0o755)
-
-
-def _write_repo_tgz(tmp_path):
-    tgz = tmp_path / "hermes-plow-chat.tgz"
-    write_tarball(tgz, REPO_TARBALL)
-    return tgz
-
-
 def install_fake_gh(tmp_path, b):
-    """The default: a `gh` that serves what every deploy fetches and nothing else.
-
-    Never overwrites one already there. This runs inside `run()`, so it fires on
-    every invocation -- including the ones a skill test set up with a richer,
-    skill-serving `gh` in this same bin directory. Clobbering that one made the
-    skill install silently fetch the plugin tarball instead.
+    """The default: a `gh` that serves nothing. Deploy fetches only what an
+    agent's own skills.tsv pins, so a test that needs a tarball installs a
+    serving `gh` (fake_skill_gh) first -- and this never overwrites one
+    already there, since it runs inside `run()` on every invocation.
     """
     if (b / "gh").exists():
         return b
-    install_gh_dispatching(b, repo_tgz=_write_repo_tgz(tmp_path))
+    (b / "gh").write_text('#!/usr/bin/env bash\necho "no fake for: $*" >&2; exit 1\n')
+    (b / "gh").chmod(0o755)
     return b
 
 
@@ -541,7 +485,6 @@ def fake_skill_gh(tmp_path, *, skill_name="property-hunt", files=(), src=None):
 
     skill_tgz = tmp_path / "skill.tgz"
     write_tarball(skill_tgz, members)
-    # Both, because a skill test deploys before it adds, and the default `gh`
-    # answers for hermes-plow-chat while the skill tarball answers for the rest.
-    install_gh_dispatching(b, repo_tgz=_write_repo_tgz(tmp_path), skill_tgz=skill_tgz)
+    (b / "gh").write_text(f"#!/usr/bin/env bash\ncat {skill_tgz}\n")
+    (b / "gh").chmod(0o755)
     return b

@@ -6,9 +6,14 @@ import subprocess
 from pathlib import Path
 
 from .artifacts import Artifact, fetch
-from .boot_contract import ensure_image_local, image_present_locally, require_home_target
+from .boot_contract import (
+    CURRENT_HOME,
+    ensure_image_local,
+    image_present_locally,
+    require_home_target,
+)
 from .errors import AgentMgrError, ErrorCode
-from .files import atomic_write
+from .files import atomic_write, read_regular_text
 from .local import (
     build_image,
     compose,
@@ -90,18 +95,25 @@ def retire_staged_copies(agent: ResolvedAgent) -> None:
     `hermes skills list` until the line went too). Never through a symlink:
     the home is the gateway's to write, and rmtree resolving outside it is
     the same hole fetch-tree's parent check closes."""
-    owned = own_skill_destinations(agent)
+    home = agent.home.resolve()
     manifest = agent.home / "skills" / ".bundled_manifest"
+    for path in (agent.home / "plugins", agent.home / "skills", manifest):
+        if path.is_symlink() or (path.exists() and not path.resolve().is_relative_to(home)):
+            raise AgentMgrError(
+                ErrorCode.IO_ERROR,
+                f"{path} resolves outside {agent.home} -- refusing to retire through a symlink",
+            )
+    owned = own_skill_destinations(agent)
     for relative in STAGED_BY_OLDER_DEPLOYS:
         if relative.removeprefix("skills/") in owned:
             continue
         for tree in (agent.home / relative, agent.home / f"{relative}.previous"):
             if not tree.is_dir():
                 continue
-            if tree.is_symlink() or not tree.resolve().is_relative_to(agent.home.resolve()):
+            if tree.is_symlink() or not tree.resolve().is_relative_to(home):
                 raise AgentMgrError(
                     ErrorCode.IO_ERROR,
-                    f"{tree} resolves outside {agent.home} -- refusing to remove through a symlink",
+                    f"{tree} resolves outside {agent.home} -- refusing to retire through a symlink",
                 )
             shutil.rmtree(tree)
             print(f"retired {tree.relative_to(agent.home)} -- the image bundles it now")
@@ -109,7 +121,7 @@ def retire_staged_copies(agent: ResolvedAgent) -> None:
             name = relative.rsplit("/", 1)[-1]
             kept = "".join(
                 f"{line}\n"
-                for line in manifest.read_text().splitlines()
+                for line in read_regular_text(manifest).splitlines()
                 if not line.startswith(f"{name}:")
             )
             atomic_write(manifest, kept.encode(), stage_in=manifest.parent)
@@ -189,12 +201,12 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
             skeleton = ROOT / "templates" / "env.example"
         _publish_home_file(skeleton, agent.home, ".env")
     migrate_plugin_env(agent)
-    retire_staged_copies(agent)
     _publish_home_file(agent.config, agent.home, "config.yaml")
     print(f"deployed config.yaml to {agent.home}")
     replay_skills(agent)
+    target = require_home_target(agent)
     if agent.deploy_hook:
-        hook_env = environment(agent, require_home_target(agent))
+        hook_env = environment(agent, target)
         for item in agent.hook_environment:
             key, value = item.split("=", 1)
             hook_env[key] = value
@@ -207,4 +219,9 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
                 "ARE installed; the hook's own work is NOT. Fix the cause and re-run "
                 f"'agent-mgr deploy {agent.name}' before restarting.",
             )
+    # Last, and only for an image that bundles what it retires: a legacy base
+    # still reads the home copies, and a failed hook above must not leave a
+    # running gateway with its plugin gone and no restart behind it.
+    if target == CURRENT_HOME:
+        retire_staged_copies(agent)
     reload_if_running(agent, registry, "what the deploy installed")

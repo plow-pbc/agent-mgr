@@ -327,9 +327,9 @@ the seed skills (`google-workspace`, `plow-invite`) come from the image
 itself, so bumping `images.hermes_local` and re-running `deploy` is how they
 move; a destination the agent's own `skills.tsv` pins stays authoritative.
 
-**Four SHA pins exist in one repo and one of them may never move** — before
-bumping any, read *What this builds on* in the [README](../README.md), which
-owns that rule.
+**The activation pin may never move** — before touching
+`artifacts.plow_chat_activation`, read *What this builds on* in the
+[README](../README.md), which owns that rule.
 
 ## Running a one-off container
 
