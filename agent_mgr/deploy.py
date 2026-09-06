@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
+import stat
 import subprocess
 from pathlib import Path
 
@@ -13,12 +15,13 @@ from .boot_contract import (
     require_home_target,
 )
 from .errors import AgentMgrError, ErrorCode
-from .files import atomic_write, read_regular_text
+from .files import atomic_write
 from .local import (
     build_image,
     compose,
     confirm_transition,
     environment,
+    require_container_ours,
     require_transition_allowed,
     resolve_guard,
     transition,
@@ -85,6 +88,7 @@ STAGED_BY_OLDER_DEPLOYS = (
     "skills/productivity/google-workspace",
     "skills/growth/plow-invite",
 )
+MANIFEST = ".bundled_manifest"
 
 
 def retire_staged_copies(agent: ResolvedAgent) -> None:
@@ -92,39 +96,125 @@ def retire_staged_copies(agent: ResolvedAgent) -> None:
     drop its line from the runtime's bundled-skills manifest: the reconcile
     reads a manifest entry with no directory as deleted-by-the-user and never
     re-seeds it (verified on course-qa -- the skill vanished from
-    `hermes skills list` until the line went too). Never through a symlink:
-    the home is the gateway's to write, and rmtree resolving outside it is
-    the same hole fetch-tree's parent check closes."""
-    home = agent.home.resolve()
-    manifest = agent.home / "skills" / ".bundled_manifest"
-    for path in (agent.home / "plugins", agent.home / "skills", manifest):
-        if path.is_symlink() or (path.exists() and not path.resolve().is_relative_to(home)):
-            raise AgentMgrError(
-                ErrorCode.IO_ERROR,
-                f"{path} resolves outside {agent.home} -- refusing to retire through a symlink",
-            )
+    `hermes skills list` until the line went too). Every path is reached one
+    O_NOFOLLOW component at a time from the home's own descriptor: the home
+    is the gateway's to write, and a parent swapped for a symlink between a
+    check and the rmtree is the same hole fetch-tree's parent check closes."""
     owned = own_skill_destinations(agent)
-    for relative in STAGED_BY_OLDER_DEPLOYS:
-        if relative.removeprefix("skills/") in owned:
-            continue
-        for tree in (agent.home / relative, agent.home / f"{relative}.previous"):
-            if not tree.is_dir():
+    home_fd = os.open(agent.home, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        # The manifest first, before anything is removed: a symlinked one is a
+        # refusal, and a refusal must leave every tree in place.
+        manifest = _read_manifest(agent, home_fd)
+        retired: list[str] = []
+        for relative in STAGED_BY_OLDER_DEPLOYS:
+            if relative.removeprefix("skills/") in owned:
                 continue
-            if tree.is_symlink() or not tree.resolve().is_relative_to(home):
-                raise AgentMgrError(
-                    ErrorCode.IO_ERROR,
-                    f"{tree} resolves outside {agent.home} -- refusing to retire through a symlink",
-                )
-            shutil.rmtree(tree)
-            print(f"retired {tree.relative_to(agent.home)} -- the image bundles it now")
-        if relative.startswith("skills/") and manifest.is_file():
-            name = relative.rsplit("/", 1)[-1]
+            for tree in (relative, f"{relative}.previous"):
+                if _rmtree_within(agent, home_fd, tree):
+                    print(f"retired {tree} -- the image bundles it now")
+                    retired.append(relative.rsplit("/", 1)[-1])
+        if manifest is not None and retired:
             kept = "".join(
                 f"{line}\n"
-                for line in read_regular_text(manifest).splitlines()
-                if not line.startswith(f"{name}:")
+                for line in manifest.splitlines()
+                if line.split(":", 1)[0] not in retired
             )
-            atomic_write(manifest, kept.encode(), stage_in=manifest.parent)
+            _write_manifest(agent, home_fd, kept)
+    finally:
+        os.close(home_fd)
+
+
+def _refusal(agent: ResolvedAgent, relative: str) -> AgentMgrError:
+    return AgentMgrError(
+        ErrorCode.IO_ERROR,
+        f"{agent.home / relative} resolves outside {agent.home} -- refusing to retire through a symlink",
+    )
+
+
+def _open_dir_within(agent: ResolvedAgent, home_fd: int, relative: str) -> int | None:
+    """A descriptor on `relative` reached one O_NOFOLLOW component at a time
+    from the home's own descriptor, so a gateway swapping a parent for a
+    symlink between check and use lands on ELOOP, not on the host. None when
+    the path is absent."""
+    fd = home_fd
+    opened: list[int] = []
+    try:
+        for part in relative.split("/"):
+            try:
+                fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            except FileNotFoundError:
+                return None
+            except OSError as exc:
+                raise _refusal(agent, relative) from exc
+            opened.append(fd)
+        return opened.pop()
+    finally:
+        for stale in opened:
+            os.close(stale)
+
+
+def _rmtree_within(agent: ResolvedAgent, home_fd: int, relative: str) -> bool:
+    parent, _, leaf = relative.rpartition("/")
+    parent_fd = _open_dir_within(agent, home_fd, parent) if parent else home_fd
+    if parent_fd is None:
+        return False
+    try:
+        try:
+            os.stat(leaf, dir_fd=parent_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            return False
+        try:
+            shutil.rmtree(leaf, dir_fd=parent_fd)
+        except NotADirectoryError:
+            return False
+        except OSError as exc:  # rmtree refuses a symlink leaf; the fd walk refuses a parent
+            raise _refusal(agent, relative) from exc
+        return True
+    finally:
+        if parent_fd != home_fd:
+            os.close(parent_fd)
+
+
+def _read_manifest(agent: ResolvedAgent, home_fd: int) -> str | None:
+    skills_fd = _open_dir_within(agent, home_fd, "skills")
+    if skills_fd is None:
+        return None
+    try:
+        try:
+            fd = os.open(MANIFEST, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=skills_fd)
+        except FileNotFoundError:
+            return None
+        except OSError as exc:
+            raise _refusal(agent, f"skills/{MANIFEST}") from exc
+        with os.fdopen(fd, encoding="utf-8", errors="surrogateescape") as handle:
+            if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+                raise _refusal(agent, f"skills/{MANIFEST}")
+            return handle.read()
+    finally:
+        os.close(skills_fd)
+
+
+def _write_manifest(agent: ResolvedAgent, home_fd: int, content: str) -> None:
+    skills_fd = _open_dir_within(agent, home_fd, "skills")
+    if skills_fd is None:
+        return
+    staged = f".{MANIFEST}.{os.getpid()}"
+    try:
+        fd = os.open(
+            staged, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=skills_fd
+        )
+        with os.fdopen(fd, "wb") as handle:
+            handle.write(content.encode())
+            handle.flush()
+            os.fsync(fd)
+        os.replace(staged, MANIFEST, src_dir_fd=skills_fd, dst_dir_fd=skills_fd)
+    except OSError as exc:
+        raise _refusal(agent, f"skills/{MANIFEST}") from exc
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(staged, dir_fd=skills_fd)
+        os.close(skills_fd)
 
 
 def replay_skills(agent: ResolvedAgent) -> None:
@@ -139,19 +229,32 @@ def replay_skills(agent: ResolvedAgent) -> None:
         fetch(agent, "skills", "SKILL.md", artifact, destination=destination, source=source)
 
 
-def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> None:
+def gateway_running(agent: ResolvedAgent, registry: Registry) -> bool:
+    """The reload's fallible half -- the guard and the docker question -- so a
+    caller can settle both before a write it must not leave half-applied."""
     resolve_guard(agent, registry)
     running = compose(agent, ["ps", "--status", "running", "--quiet", "hermes"], capture=True)
     if running.returncode:
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"could not ask docker whether {agent.name}'s gateway is running"
         )
-    if not running.stdout.strip():
+    if running.stdout.strip():
+        require_container_ours(agent)
+        return True
+    return False
+
+
+def recreate_gateway(agent: ResolvedAgent, running: bool, reason: str) -> None:
+    if not running:
         print(f"{agent.name} is not running -- {reason}; it will be read on next start")
         return
     print(f"restarting {agent.name}'s gateway -- {reason}")
     if transition(agent, ["up", "-d", "--force-recreate", "hermes"]):
         raise AgentMgrError(ErrorCode.IO_ERROR, f"could not restart {agent.name}")
+
+
+def reload_if_running(agent: ResolvedAgent, registry: Registry, reason: str) -> None:
+    recreate_gateway(agent, gateway_running(agent, registry), reason)
 
 
 def _ensure_image_ready(agent: ResolvedAgent) -> None:
@@ -219,9 +322,11 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
                 "ARE installed; the hook's own work is NOT. Fix the cause and re-run "
                 f"'agent-mgr deploy {agent.name}' before restarting.",
             )
-    # Last, and only for an image that bundles what it retires: a legacy base
-    # still reads the home copies, and a failed hook above must not leave a
-    # running gateway with its plugin gone and no restart behind it.
+    # Last, after every preflight that can still refuse, and only for an image
+    # that bundles what it retires: a legacy base still reads the home copies,
+    # and a failed hook or a refusing guard must not leave a running gateway
+    # with its plugin gone and no restart behind it.
+    running = gateway_running(agent, registry)
     if target == CURRENT_HOME:
         retire_staged_copies(agent)
-    reload_if_running(agent, registry, "what the deploy installed")
+    recreate_gateway(agent, running, "what the deploy installed")

@@ -437,10 +437,11 @@ it. So the posture is:
 
 **Converge on the artifacts.** The plugin, the base image and the integration
 reference are the *same facts* on both sides, and a fix to one should reach
-the other. The plugin already is one fact: plow's blessed image can consume
-the same `runtime/stack.json` coordinate at build time. The base is one
-too: this fleet runs `plow-pbc/plow-hermes-agent`'s published base, the
-image `life-assistant-hermes-agent` builds its cloud variant on. From
+the other. The plugin is one fact by construction: it is bundled in the base
+at the revision `plow-pbc/plow-hermes-agent`'s build pins, so this repo's
+only coordinate is the image digest and moving the plugin is a base bump.
+The base is one too: this fleet runs that published base, the image
+`life-assistant-hermes-agent` builds its cloud variant on. From
 `63c8b9c` the base moved its home to `/var/lib/hermes` and put `plow-init` —
 which needs a `/var/lib/plow/credentials` file — in front of the gateway,
 and since `39d664a` the fleet-wide pin in `runtime/stack.json` is that
