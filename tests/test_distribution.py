@@ -45,14 +45,6 @@ def test_release_zipapp_contains_every_resource_needed_for_deploy(tmp_path):
     )
     assert deployed.returncode == 0, deployed.stderr
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").is_file()
-    assert (
-        tmp_path
-        / "home"
-        / ".hermes-rowan"
-        / "plugins"
-        / "plow-chat-platform"
-        / "plugin.yaml"
-    ).is_file()
     resolved = subprocess.run(
         [str(artifact), "--json", "resolve", "rowan"],
         env=environment,

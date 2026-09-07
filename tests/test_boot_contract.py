@@ -132,7 +132,7 @@ def test_deploy_builds_rather_than_pulls_a_not_yet_present_local_tag(run, instan
     })
     # Placed in tmp_path/"bin" -- the SAME directory run()'s own fake curl/gh
     # live in -- so this replaces only docker, never dropping the fakes
-    # install-plugin needs.
+    # deploy needs.
     _stub_docker(tmp_path, (
         "#!/usr/bin/env bash\n"
         f'printf "%s\\n" "$*" >> {log}\n'

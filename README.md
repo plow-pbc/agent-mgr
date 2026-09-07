@@ -17,9 +17,9 @@ belongs there; this repo only follows, by bumping its pin if it holds one.
   This repo pins its digest and mounts a home; where it has to name one of
   those paths (the compose template), that copy follows the base, never leads.
 - The seed skills' contents are
-  [`hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat)'s.
-  `runtime/stack.json` selects which of them the fleet installs, by key and
-  SHA, so adding or dropping a fleet skill is a change in both repos.
+  [`hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat)'s, and
+  reach the fleet bundled in the base image, so adding or dropping one is a
+  change there and a base bump here.
 - The API, the relay and the cloud registry are
   [`plow-pbc/plow`](https://github.com/plow-pbc/plow)'s; the Mac side and the
   gog grammar are [`plow-pbc/latch`](https://github.com/plow-pbc/latch)'s. This
@@ -73,11 +73,10 @@ the checksum before running it.
 
 It runs on the Linux host the fleet lives on and on macOS with Python 3.11+.
 `python3`, `docker` and
-an authenticated `gh` have to be on `PATH` — `deploy` installs the Plow Chat
-plugin and the pinned fleet skills (`google-workspace`, `plow-invite`) through
-`gh api` for **every** agent, not only one shipping a `skills.tsv` (one whose
-own `skills.tsv` pins a fleet destination keeps its instance copy for that
-destination instead).
+an authenticated `gh` have to be on `PATH` — `deploy` installs an agent's
+`skills.tsv` pins through `gh api`, and `activate` fetches its script the same
+way. The Plow Chat plugin and the seed skills (`google-workspace`,
+`plow-invite`) come from the image itself.
 
 Then the whole setup, end to end (the [HOWTO](docs/HOWTO.md) explains each
 step; `docker`, `python3` and an authenticated `gh` are the install block's
@@ -90,7 +89,7 @@ git clone git@github.com:plow-pbc/life-assistant-hermes-agent.git ~/services/lif
 agent-mgr register errands ~/services/life-assistant-hermes-agent
 
 # 2. Deploy
-agent-mgr deploy errands              # home, config, plugin, pinned skills, deploy hook
+agent-mgr deploy errands              # home, config, pinned skills, deploy hook
 
 # 3. Per-person config (after deploy, before up)
 agent-mgr resolve errands             # prints AGENT_HOME — put AGENT_TZ=... in the .env there
@@ -190,14 +189,12 @@ The test for where something belongs: **would a second agent want this?**
 - `agent-mgr up` — yes, every agent needs it → **common**
 - `agent.env` — no, it *is* this agent's identity → **its repo**
 - a recipe that publishes a property map — no, one agent runs it → **its repo**
-- the Plow Chat plugin — yes, every agent → **common**, pinned by SHA
-- a fleet skill — yes, every agent → **common**, one pin per tree in
-  `runtime/stack.json` (the `google_workspace_skill`
-  redirect and the `plow-invite` referral, both mirrored into
-  `hermes-plow-chat`'s `seed-skills/` from plow-pbc/plow's hosted-agent seed;
-  `deploy` installs and `install-skill` re-installs each —
-  except an agent whose own `skills.tsv` pins that destination, where the
-  instance pin is authoritative and both skip it)
+- the Plow Chat plugin — yes, every agent → **common**, bundled in the
+  image at `images.hermes_local`
+- a fleet skill (`google-workspace`, `plow-invite`) — yes, every agent →
+  **common**, bundled in the same image and seeded into the home by the
+  runtime's own reconcile — except an agent whose own `skills.tsv` pins that
+  destination, where the instance pin is authoritative
 - a skill two agents share — pinned by SHA from upstream, installed by `add-skill`
 
 One question, two buckets, and the answer for a shared artifact is the same
@@ -267,7 +264,7 @@ near-miss: keep it for this agent's own recipes and tests, never to restate
 `up`, `deploy` or `activate`.
 
 **Pin upstream, never vendor it.** Every artifact from another repo arrives at
-an exact ref: a git artifact (plugin, skill) by 40-char SHA, a container image
+an exact ref: a git artifact (an instance skill, the activation script) by 40-char SHA, a container image
 by `sha256:` digest — never a tag or a branch. (One exception: an image this host
 **builds**, which may carry any tag — the rentals agent's
 `sams-str-hermes-agent:local`, say. A `build:` service must declare
@@ -407,32 +404,22 @@ looks busier.
 | dependency | what it is | pinned as |
 |---|---|---|
 | [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `39d664a`, a current-contract base (`/var/lib/hermes`, `plow-init`); `089a6b1` was the last base under the `/opt/data` contract, still bootable for an agent that pins it (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
-| [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat) | the `plow-chat-platform` plugin — the phone line | a **40-char SHA**, at `artifacts.plow_chat_plugin` in `runtime/stack.json` |
-| the same repo, earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **second 40-char SHA**, at `artifacts.plow_chat_activation` |
-| the same repo, at `seed-skills/` | the fleet `google-workspace` skill — the Latch redirect that replaces the image-bundled local-OAuth copy in every agent whose own `skills.tsv` does not pin that destination | a **40-char SHA**, at `artifacts.google_workspace_skill` |
-| the same repo, at `seed-skills/` | the fleet `plow-invite` skill — the delight-triggered referral, mirrored from the hosted-agent image's seed (which carries the matching twin pointer) | a **40-char SHA**, at `artifacts.plow_invite_skill` |
+| [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat), earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **40-char SHA**, at `artifacts.plow_chat_activation` in `runtime/stack.json` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
 
-All five pins are exact on purpose — a `sha256:` digest for the image, and a
-40-char SHA for each of the four things taken from `hermes-plow-chat`. A tag or a
+Both pins are exact on purpose — a `sha256:` digest for the image, and a
+40-char SHA for the activation script taken from `hermes-plow-chat`. A tag or a
 branch re-resolves on the next pull, which silently changes a large unreviewed
-surface under a running agent that holds live credentials — and for the plugin,
-one that holds the chat token.
+surface under a running agent that holds live credentials — and for the image,
+one that carries the chat plugin holding the chat token.
 
-**The two SHA pins name one repo at two points in its history, and must not be
-collapsed into one.** `Strip the SEED ceremony` deleted `ref/scripts/`, so the
-plugin pin moves forward past that commit while `create_plow_chat_curl.sh`
-exists only before it. A single shared ref would send the plugin's post-strip
-SHA at the activate URL and 404 — on `activate`, the one command that is a
-one-time irreversible spend. `tests/test_install.py` pins the pairing.
-
-**Of the four `hermes-plow-chat` pins, `artifacts.plow_chat_plugin` and the
-two fleet skills may be bumped; `artifacts.plow_chat_activation` may not.** The
-fleet skills used to be exempt from this paragraph because they named a
-different repo — they no longer do, so read it as applying to them too: they
-move freely, but they move within the same history as the frozen activation
-pin, and must never be collapsed onto it.
-`artifacts.plow_chat_activation` is frozen at a pre-strip commit and must not be
+**The one `hermes-plow-chat` pin, `artifacts.plow_chat_activation`, may not
+be bumped.** `Strip the SEED ceremony` deleted `ref/scripts/`, and
+`create_plow_chat_curl.sh` exists only before it; a later SHA 404s on
+`activate`, the one command that is a one-time irreversible spend.
+`tests/test_install.py` pins the SHA. The plugin and the seed skills used to
+be pinned beside it from the same repo's later history; they come from the
+image now. `artifacts.plow_chat_activation` is frozen at a pre-strip commit and must not be
 bumped forward at all — not to `HEAD`, not to any later SHA. That is the
 realistic slip rather than the collapse above: someone reaching for "latest in
 `hermes-plow-chat`" lands on `HEAD`, where the path this ref names no longer
@@ -450,10 +437,11 @@ it. So the posture is:
 
 **Converge on the artifacts.** The plugin, the base image and the integration
 reference are the *same facts* on both sides, and a fix to one should reach
-the other. The plugin already is one fact: plow's blessed image can consume
-the same `runtime/stack.json` coordinate at build time. The base is one
-too: this fleet runs `plow-pbc/plow-hermes-agent`'s published base, the
-image `life-assistant-hermes-agent` builds its cloud variant on. From
+the other. The plugin is one fact by construction: it is bundled in the base
+at the revision `plow-pbc/plow-hermes-agent`'s build pins, so this repo's
+only coordinate is the image digest and moving the plugin is a base bump.
+The base is one too: this fleet runs that published base, the image
+`life-assistant-hermes-agent` builds its cloud variant on. From
 `63c8b9c` the base moved its home to `/var/lib/hermes` and put `plow-init` —
 which needs a `/var/lib/plow/credentials` file — in front of the gateway,
 and since `39d664a` the fleet-wide pin in `runtime/stack.json` is that

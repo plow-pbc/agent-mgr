@@ -5,10 +5,10 @@
 One host, many agents. Each agent is a Docker container running Hermes,
 connected to **Plow Chat** (its phone line) and, optionally, **Plow Latch** (a
 Mac it can drive). `agent-mgr` owns everything the agents share — the image,
-the Compose template, and the pinned plugin/skill versions in
-`runtime/stack.json` (a JSON lock: every ref is a 40-char SHA). Each agent's
-own repo owns only what makes it itself: `agent.env`, `config.yaml`, its
-skills and hooks.
+which bundles the plugin and the seed skills, and the Compose template — with
+the exact image digest and the activation script's 40-char SHA recorded in
+`runtime/stack.json`. Each agent's own repo owns only what makes it itself:
+`agent.env`, `config.yaml`, its skills and hooks.
 
 A registry at `~/.config/agent-mgr/agents` maps each agent **name** to its
 **repo**, so every command works from any directory. Several names may point
@@ -25,8 +25,8 @@ then check it works:
 agent-mgr ls
 ```
 
-You need **`gh`, authenticated** (`gh auth status`) — `deploy` installs the
-Plow Chat plugin and fleet skills through `gh api`.
+You need **`gh`, authenticated** (`gh auth status`) — `deploy` installs an
+agent's `skills.tsv` pins and `activate` fetches its script through `gh api`.
 
 ## Set up a new agent
 
@@ -324,20 +324,14 @@ agent on the next upstream push.
 ## Bumping pins
 
 The shared pins live in `runtime/stack.json`. `agent-mgr deploy <name>`
-applies them as part of the whole deploy — the normal path. When only one
-thing changed:
+applies them as part of the whole deploy — the normal path. The plugin and
+the seed skills (`google-workspace`, `plow-invite`) come from the image
+itself, so bumping `images.hermes_local` and re-running `deploy` is how they
+move; a destination the agent's own `skills.tsv` pins stays authoritative.
 
-- `agent-mgr install-plugin <name>` — after bumping
-  `artifacts.plow_chat_plugin.revision`; skips an expensive deploy hook.
-- `agent-mgr install-skill <name>` — the fleet skills
-  (`google_workspace_skill`, `plow_invite_skill`); also the first fix for an
-  agent reporting `NOT_AUTHENTICATED` from the image-bundled
-  `google-workspace` copy. A destination the agent's own `skills.tsv` pins is
-  authoritative and skipped — bump that row and re-run `deploy` instead.
-
-**Four SHA pins exist in one repo and one of them may never move** — before
-bumping any, read *What this builds on* in the [README](../README.md), which
-owns that rule.
+**The activation pin may never move** — before touching
+`artifacts.plow_chat_activation`, read *What this builds on* in the
+[README](../README.md), which owns that rule.
 
 ## Running a one-off container
 

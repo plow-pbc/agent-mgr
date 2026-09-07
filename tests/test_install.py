@@ -1,7 +1,6 @@
 import os
 import pytest
 
-from conftest import install_fake_gh
 import stat
 from pathlib import Path
 
@@ -64,16 +63,16 @@ def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance,
     assert "wrote" not in r.stdout
 
 
-def test_install_plugin_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
-    """The public install path migrates, not just the manual rollout order: a
-    legacy-only agent reloading onto the unified plugin must come back with the
+def test_a_redeploy_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
+    """The public path migrates, not just the manual rollout order: a
+    legacy-only agent redeployed onto the unified plugin must come back with the
     names it reads, or it silently loses its phone line."""
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     env = tmp_path / "home" / ".hermes-rowan" / ".env"
     env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\n")
 
-    r = run("install-plugin", "rowan")
+    r = run("deploy", "rowan")
     assert r.returncode == 0, r.stderr
     lines = env.read_text().splitlines()
     assert "PLOW_AGENT_TOKEN=tok_plow" in lines
@@ -165,23 +164,6 @@ def test_the_image_pin_is_a_digest_not_a_tag():
     ]
     digest = ref.rpartition("@")[2]
     assert digest.startswith("sha256:") and len(digest) == 71
-
-
-@pytest.mark.parametrize(
-    ("command", "env_key"),
-    [
-        ("install-plugin", "AGENT_MGR_PLUGIN_REF"),
-        ("install-skill", "AGENT_MGR_SKILL_REF"),
-    ],
-)
-def test_install_refuses_a_ref_that_is_not_a_sha(run, instance, command, env_key):
-    """A branch would silently re-point every agent on the next upstream push --
-    the same rule for the plugin pin and the fleet skill pin."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    r = run(command, "rowan", env={env_key: "main"})
-    assert r.returncode != 0
-    assert "40-char SHA" in r.stderr
 
 
 def test_the_shipped_config_template_wires_both_platforms():
@@ -299,35 +281,6 @@ def test_an_agent_with_no_hook_deploys_fine(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     assert run("deploy", "rowan").returncode == 0
     assert (tmp_path / "home" / ".hermes-rowan" / "config.yaml").exists()
-
-
-def test_deploy_installs_the_plugin_so_one_command_is_the_deploy(run, instance, tmp_path):
-    """It used to be a second command the caller had to remember in order."""
-    run("register", "rowan", str(instance("rowan")))
-    plugin = tmp_path / "home" / ".hermes-rowan" / "plugins" / "plow-chat-platform"
-    # Seed the layout a real pre-migration agent has, so the cleanup below is
-    # something this test can fail on. Verified against the live homes on the
-    # host: all three carry ref/hermes-plugin/plow_chat INSIDE
-    # plugins/plow-chat-platform/, which is why a whole-directory swap clears
-    # it. Asserting its absence against a home this test created fresh proved
-    # nothing at all.
-    legacy = plugin / "ref" / "hermes-plugin" / "plow_chat"
-    legacy.mkdir(parents=True)
-    (legacy / "adapter.py").write_text("# the old SEED layout\n")
-
-    r = run("deploy", "rowan")
-    assert r.returncode == 0, r.stderr
-    # The files, not the fetch. This used to assert that a faked `curl` ran,
-    # which stopped meaning anything the moment the plugin started arriving
-    # through fetch-tree -- and would have kept passing on a fetch that
-    # installed nothing. What deploy owes the caller is a plugin in the home.
-    assert (plugin / "plugin.yaml").is_file(), "deploy did not install the plugin manifest"
-    assert (plugin / "__init__.py").is_file(), "deploy did not install the adapter"
-    assert "name: plow-chat-platform" in (plugin / "plugin.yaml").read_text()
-    # Replace, not overlay: the swap is what retires the old SEED layout from
-    # an agent's home. Overlaying would leave a second, stale copy of the
-    # adapter in the directory the gateway enumerates.
-    assert not (plugin / "ref").exists(), "the ref/ tree survived the install"
 
 
 def _transition_env(tmp_path, log=None):
@@ -515,8 +468,6 @@ def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instanc
 @pytest.mark.parametrize(
     "args",
     [
-        ("install-plugin", "rowan"),
-        ("install-skill", "rowan"),
         ("sign-in", "rowan"),
         ("add-skill", "rowan", "plow-pbc/property-hunt", "--ref", "a" * 40),
     ],
@@ -525,7 +476,7 @@ def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
     run, instance, tmp_path, args
 ):
     """The negative half of `activate` being "the one command a refusal does not
-    fail". These three are in the same position -- the write has landed by the
+    fail". These are in the same position -- the write has landed by the
     reload -- so activate's `|| echo ...SUCCEEDED...` is the obvious next
     copy-paste, and it would make the word "one" false with a green suite."""
     import os
@@ -537,11 +488,10 @@ def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
     home.mkdir(parents=True, exist_ok=True)
     # What each subcommand needs BEFORE its reload, so the refusal is what stops
     # it rather than a missing precondition: sign-in reads the installed config,
-    # add-skill fetches a tarball. A RUNNING gateway for all three -- the reload
+    # add-skill fetches a tarball. A RUNNING gateway for both -- the reload
     # exits before the guard when there is none.
     (home / "config.yaml").write_text("model:\n  provider: openai-codex\n")
-    # install-plugin migrates the dotenv before the ref install; a real home
-    # always has one (deploy writes the skeleton first).
+    # A real home always has a dotenv (deploy writes the skeleton first).
     (home / ".env").write_text("")
     b = fake_skill_gh(tmp_path)
     fake_docker(tmp_path, home=home, name="rowan")
@@ -647,21 +597,29 @@ def test_the_subcommand_is_classified_not_the_flattened_argv(run, instance, tmp_
     assert r.returncode == 0, r.stderr
 
 
-def test_deploy_replays_every_pinned_skill(run, instance, tmp_path):
-    """It is advertised as the whole deploy. A rebuild that omitted them left an
-    agent whose skills.tsv said one thing and whose home held another."""
+def _pinned_skill_agent(run, instance, tmp_path):
+    """rowan with one skills.tsv pin, a `gh` serving that skill's tarball so
+    the REAL fetch-tree runs, and conftest's docker -- which answers `config`,
+    where the bare stub made resolve-guard refuse at the reload after the
+    skill had installed. Returns the home and the PATH env to deploy with."""
     from conftest import fake_docker, fake_skill_gh
 
     repo = instance("rowan")
     (repo / "skills.tsv").write_text(f"plow-pbc/x\t{'a' * 40}\tmy-skill\t\n")
-    b = fake_skill_gh(tmp_path, skill_name="my-skill")
-    # conftest's docker, which answers `config` -- the bare stub made
-    # resolve-guard refuse at the reload, after the skill had installed.
-    d = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
     run("register", "rowan", str(repo))
-    r = run("deploy", "rowan", env={"PATH": f"{b}:{d}:{os.environ['PATH']}"})
+    home = tmp_path / "home" / ".hermes-rowan"
+    gh = fake_skill_gh(tmp_path, skill_name="my-skill")
+    docker = fake_docker(tmp_path, home=home, name="rowan")
+    return home, {"PATH": f"{gh}:{docker}:{os.environ['PATH']}"}
+
+
+def test_deploy_replays_every_pinned_skill(run, instance, tmp_path):
+    """It is advertised as the whole deploy. A rebuild that omitted them left an
+    agent whose skills.tsv said one thing and whose home held another."""
+    home, env = _pinned_skill_agent(run, instance, tmp_path)
+    r = run("deploy", "rowan", env=env)
     assert r.returncode == 0, r.stderr
-    assert (tmp_path / "home" / ".hermes-rowan" / "skills" / "my-skill" / "SKILL.md").exists()
+    assert (home / "skills" / "my-skill" / "SKILL.md").exists()
 
 
 def test_deploy_replaces_a_container_planted_config_symlink(run, instance, tmp_path):
@@ -723,33 +681,19 @@ def _block(text, start, end):
     return "\n".join(lines[i:j])
 
 
-def test_each_pin_is_read_only_where_its_command_fetches():
-    """The split exists to stop one ref serving two eras; this is that invariant.
-
-    Both come from hermes-plow-chat, at two points in its history: `Strip the
-    SEED ceremony` deleted ref/scripts/, so the plugin pin moves forward past it
-    while create_plow_chat_curl.sh exists only before it. A ref read by the
-    wrong command sends a post-strip SHA at a ref/scripts/ URL that does not
-    exist at that commit -- and 404s on activate, the irreversible one.
-
-    Per use-site, not over a concatenation of both files. The first version of
-    this test asserted four substrings existed *somewhere* across common.sh and
-    agent-mgr, which stayed green even if the two commands SWAPPED which pin
-    they read -- precisely the failure it was written for.
+def test_the_image_is_the_only_owner_of_the_plugin_and_seed_skills():
+    """What an older deploy staged into every home is what the pinned base
+    bundles, and a home copy shadows the image's (#156). The activation script
+    is the one thing still fetched from hermes-plow-chat, at a pre-strip SHA.
     """
     import json
 
     artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
-    plugin = artifacts["plow_chat_plugin"]
-    activation = artifacts["plow_chat_activation"]
-
-    assert plugin["repository"] == activation["repository"] == "plow-pbc/hermes-plow-chat"
-    assert plugin["revision"] != activation["revision"]
-    assert plugin["source"] == "plow-chat-platform"
-    assert activation["source"] == "ref/scripts/create_plow_chat_curl.sh"
+    assert set(artifacts) == {"plow_chat_activation"}
+    assert artifacts["plow_chat_activation"]["source"] == "ref/scripts/create_plow_chat_curl.sh"
 
 
-def test_the_activate_pin_is_frozen_and_distinct():
+def test_the_activate_pin_is_frozen():
     """The activate ref may not be bumped at all, and this is what enforces it.
 
     Proving the ref is an ANCESTOR of the strip commit would need that repo's
@@ -758,15 +702,10 @@ def test_the_activate_pin_is_frozen_and_distinct():
     failure message below, where whoever tripped it is already looking, rather
     than in a doc they would have to be sent to. The README's builds-on section
     is the same rule for someone reading before they bump.
-
-    The inequality stays for the other direction: an edit writing one SHA into
-    both files (a sed over runtime/, a copy-paste) installs the pre-strip layout
-    as a plugin, and satisfies the equality above on its own.
     """
     import json
 
     artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
-    plugin = artifacts["plow_chat_plugin"]["revision"]
     activate = artifacts["plow_chat_activation"]["revision"]
     assert activate == "98ddb2e7f0ce563a7ed6c9af43802d15b5ff62d3", (
         "the activate pin moved. It is frozen behind `Strip the SEED ceremony`, "
@@ -774,131 +713,17 @@ def test_the_activate_pin_is_frozen_and_distinct():
         "activate. If this is deliberate, the new SHA must still predate that "
         "commit, and the README's builds-on section says why."
     )
-    assert plugin != activate
-
-
-def test_each_caller_says_what_landed_in_its_own_terms(run, instance, tmp_path):
-    """deploy and install-plugin leave the agent in opposite states on a failed fetch.
-
-    One hard-coded sentence told the install-plugin operator their config and
-    skills were gone, when install-plugin gates on an existing home and leaves
-    both untouched -- and the obvious response to that message is to re-run
-    deploy over a healthy agent. Nothing pinned the split, so a revert to one
-    sentence would have been silent.
-    """
-    import os
-
-    b = tmp_path / "failing-bin"
-    b.mkdir()
-    (b / "gh").write_text("#!/usr/bin/env bash\nexit 1\n")
-    (b / "gh").chmod(0o755)
-    failing = {"PATH": f"{b}:{os.environ['PATH']}"}
-
-    run("register", "rowan", str(instance("rowan")))
-    r = run("deploy", "rowan", env=failing)
-    assert r.returncode != 0
-    assert "gh auth status" in r.stderr, "the gh diagnosis must survive"
-    assert "config.yaml and skills are NOT" in r.stderr
-
-    # A home deploy already made, so install-plugin gets past its own gate.
-    run("deploy", "rowan")
-    r = run("install-plugin", "rowan", env=failing)
-    assert r.returncode != 0
-    assert "gh auth status" in r.stderr
-    assert "untouched" in r.stderr
-    assert "are NOT" not in r.stderr, "install-plugin must not claim the config is gone"
-
-
-@pytest.mark.parametrize("predeployed", [False, True])
-def test_a_failed_fleet_skill_fetch_says_what_landed(run, instance, tmp_path, predeployed):
-    """The fleet-skill step was the one step in deploy that did not say.
-
-    deploy installs the plugin, then the fleet skills, then publishes
-    config.yaml -- config last on purpose, so a half-installed home refuses to
-    come up rather than running against the image-bundled google-workspace copy
-    it exists to replace. That ordering is fine; what was missing was the
-    operator being told which half they are in. A bare `could not install <repo>
-    at <sha>` is also indistinguishable from an unauthenticated `gh`, which
-    refuses even a public repo -- the likeliest failure on a fresh machine.
-
-    Run from both homes, because the wording is only true of one of them. The
-    fetch raises before `_publish_home_file`, so a re-deploy -- the documented
-    re-run path -- keeps the config it had; from an empty home "config.yaml is
-    NOT installed" happens to be true, which is why the fresh case alone cannot
-    catch a message that sends the operator looking for a home nothing damaged.
-    """
-    from conftest import PLUGIN_TARBALL, write_tarball
-
-    run("register", "rowan", str(instance("rowan")))
-    home = tmp_path / "home" / ".hermes-rowan"
-    before = None
-    if predeployed:
-        run("deploy", "rowan")  # a healthy, fully deployed home
-        before = (home / "config.yaml").read_text()
-
-    b = tmp_path / "fleet-failing-bin"
-    b.mkdir()
-    plugin_tgz = tmp_path / "plugin.tgz"
-    write_tarball(plugin_tgz, PLUGIN_TARBALL)
-    # A snapshot carrying the plugin but no fleet skills: fails deploy at
-    # exactly the step under test, with the plugin genuinely on disk.
-    (b / "gh").write_text(
-        "#!/usr/bin/env bash\n"
-        "case \"$*\" in\n"
-        f"  *hermes-plow-chat*) cat {plugin_tgz} ;;\n"
-        "  *) exit 1 ;;\n"
-        "esac\n"
-    )
-    (b / "gh").chmod(0o755)
-
-    r = run("deploy", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "fleet google-workspace skill" in r.stderr, "name the skill that failed"
-    assert "gh auth status" in r.stderr, "the likeliest cause must be named"
-    assert "the plugin ARE installed" in r.stderr
-    assert "config.yaml was not updated" in r.stderr
-    assert "config.yaml is NOT" not in r.stderr, "re-deploy keeps its config; do not claim it is gone"
-
-    # The message must match the home it describes, not just read well.
-    assert (home / "plugins" / "plow-chat-platform").is_dir(), "the plugin did land"
-    if before is None:
-        assert not (home / "config.yaml").exists(), "config.yaml did not"
-    else:
-        assert (home / "config.yaml").read_text() == before, "the re-deploy kept its config"
-
-
-def test_the_fleet_failure_does_not_borrow_install_plugins_wording(run, instance, tmp_path):
-    """install-skill leaves config and plugin alone, so it must not claim otherwise.
-
-    Same split install_plugin already keeps between deploy and install-plugin:
-    one sentence for both callers told whichever operator was not deploying that
-    their config was gone, and the obvious response is to re-run deploy over a
-    healthy agent.
-    """
-    b = tmp_path / "skill-failing-bin"
-    b.mkdir()
-    (b / "gh").write_text("#!/usr/bin/env bash\nexit 1\n")
-    (b / "gh").chmod(0o755)
-
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")  # a healthy home first, so install-skill clears its gate
-    r = run("install-skill", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "gh auth status" in r.stderr
-    assert "untouched" in r.stderr
-    assert "is NOT" not in r.stderr, "install-skill must not claim the config is gone"
-    assert "was not updated" not in r.stderr, "nor borrow deploy's wording"
 
 
 def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
     run, instance, tmp_path
 ):
-    """A killed run leaves a valid second plugin tree where the gateway looks.
+    """A killed run leaves a valid second skill tree where the gateway looks.
 
     The trap does not fire on SIGKILL, an OOM kill or a power loss, so the
     staging and backup directories can outlive their run. `.previous` is the
-    sharp one: it is a COMPLETE tree carrying `name: plow-chat-platform`, beside
-    the real one, in the directory the gateway enumerates.
+    sharp one: it is a COMPLETE tree carrying `name: my-skill`, beside the
+    real one, in the directory the gateway enumerates.
 
     Both names used to be pid-suffixed, which meant a run only ever cleaned up
     after its own pid-twin -- every other orphan stayed forever. And the
@@ -906,31 +731,31 @@ def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
     first install that branch is skipped and the orphan survives untouched.
     Seeded here with NO current install, which is the case that got missed.
     """
-    run("register", "rowan", str(instance("rowan")))
-    plugins = tmp_path / "home" / ".hermes-rowan" / "plugins"
-    orphan = plugins / "plow-chat-platform.previous"
+    home, env = _pinned_skill_agent(run, instance, tmp_path)
+    skills = home / "skills"
+    orphan = skills / "my-skill.previous"
     orphan.mkdir(parents=True)
-    (orphan / "plugin.yaml").write_text("name: plow-chat-platform\n")
-    (plugins / "plow-chat-platform.incoming").mkdir()
+    (orphan / "SKILL.md").write_text("name: my-skill\n")
+    (skills / "my-skill.incoming").mkdir()
 
-    r = run("deploy", "rowan")
+    r = run("deploy", "rowan", env=env)
     assert r.returncode == 0, r.stderr
-    assert sorted(p.name for p in plugins.iterdir()) == ["plow-chat-platform"], (
+    assert sorted(p.name for p in skills.iterdir()) == ["my-skill"], (
         "an orphaned tree survived the install"
     )
 
 
 def test_a_rollback_copy_is_promoted_before_the_next_publication(run, instance, tmp_path):
     """A killed prior publication is recovered before the next atomic swap."""
-    run("register", "rowan", str(instance("rowan")))
-    plugins = tmp_path / "home" / ".hermes-rowan" / "plugins"
-    rollback = plugins / "plow-chat-platform.previous"
+    home, env = _pinned_skill_agent(run, instance, tmp_path)
+    skills = home / "skills"
+    rollback = skills / "my-skill.previous"
     rollback.mkdir(parents=True)
-    (rollback / "plugin.yaml").write_text("name: plow-chat-platform\n")
+    (rollback / "SKILL.md").write_text("name: my-skill\n")
 
-    r = run("deploy", "rowan")
+    r = run("deploy", "rowan", env=env)
     assert r.returncode == 0, r.stderr
-    assert (plugins / "plow-chat-platform" / "plugin.yaml").is_file(), (
+    assert (skills / "my-skill" / "SKILL.md").is_file(), (
         "the recovered tree was lost during publication"
     )
     assert not rollback.exists()
@@ -1030,13 +855,12 @@ def test_the_possibly_empty_array_is_always_expansion_guarded():
 def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp_path):
     """The publication seam must not rm -rf or rename outside the agent's home.
 
-    `plugins/` and `skills/` live in the home, which compose bind-mounts at
-    /opt/data, so a compromised gateway can replace one with a symlink. The
+    `skills/` lives in the home, which compose bind-mounts at the image's
+    HERMES_HOME, so a compromised gateway can replace it with a symlink. The
     install then resolves through it and deletes host-side, as the operator --
     and `--dest` being rejected by component does not cover a planted PARENT.
     """
-    run("register", "rowan", str(instance("rowan")))
-    home = tmp_path / "home" / ".hermes-rowan"
+    home, env = _pinned_skill_agent(run, instance, tmp_path)
     home.mkdir(parents=True, exist_ok=True)
     outside = tmp_path / "home" / "not-the-agents"
     # At the name the installer touches, and asserted on CONTENT, not existence.
@@ -1044,17 +868,16 @@ def test_a_planted_parent_symlink_cannot_redirect_the_install(run, instance, tmp
     # nothing here is named for it. But so does a colliding path checked only for
     # existence: unguarded, `mv` renames this directory to .previous, the EXIT
     # trap `rm -rf`s it, and the freshly installed tree recreates the same path
-    # with its own plugin.yaml -- so the file "still exists" while the operator's
+    # with its own SKILL.md -- so the file "still exists" while the operator's
     # data is gone. The sentinel is what makes the assertion able to fail.
-    (outside / "plow-chat-platform").mkdir(parents=True)
-    (outside / "plow-chat-platform" / "plugin.yaml").write_text(
-        "name: plow-chat-platform\n# SENTINEL: the operator's own file\n"
-    )
-    (home / "plugins").symlink_to("../not-the-agents")
+    sentinel = outside / "my-skill" / "SKILL.md"
+    sentinel.parent.mkdir(parents=True)
+    sentinel.write_text("name: my-skill\n# SENTINEL: the operator's own file\n")
+    (home / "skills").symlink_to("../not-the-agents")
 
-    r = run("deploy", "rowan")
+    r = run("deploy", "rowan", env=env)
     assert r.returncode != 0, "the install followed a planted parent symlink"
     assert "outside" in r.stderr, f"refused, but not for this reason: {r.stderr}"
-    assert "SENTINEL" in (outside / "plow-chat-platform" / "plugin.yaml").read_text(), (
+    assert "SENTINEL" in sentinel.read_text(), (
         "the install renamed or replaced a host directory outside the home"
     )
