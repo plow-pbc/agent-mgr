@@ -111,8 +111,10 @@ their Mac.
 
 **An agent that drives no Mac deletes the `latch:` block from its
 `config.yaml`.** The config is the declaration `check-latch` reads: block
-present with blank `DOMO_*` is reported as broken; block gone is a clean
-"no latch configured".
+present with no `DOMO_*` pair in either the home dotenv or the container's
+environment is reported as broken; block gone is a clean "no latch
+configured". An instance whose `compose.override.yml` supplies the pair
+through `env_file` keeps a blank dotenv and is not broken.
 
 ## Onboarding someone who is not you
 

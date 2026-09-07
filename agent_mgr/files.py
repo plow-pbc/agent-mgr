@@ -11,10 +11,12 @@ from .errors import AgentMgrError, ErrorCode
 def dotenv_read(file: Path, key: str) -> str:
     """The last value bound to `key` in a KEY=VALUE dotenv, or "" if absent.
 
-    Shared by every command that reads an agent's own .env for one credential
-    field -- deploy's dotenv skeleton, check-latch, activate's narrowing, and
-    the current boot contract's credential-file derivation all read the exact
-    same file the same way.
+    Shared by the commands that read an agent's own .env for one credential
+    field -- deploy's dotenv skeleton, activate's narrowing, and the current
+    boot contract's credential-file derivation. NOT the whole answer for any
+    caller whose value may also arrive through Compose: the dotenv is one env
+    source among several, and check-latch resolves it against the container's
+    own environment for exactly that reason (#165).
     """
     value = ""
     for line in read_regular_text(file).split("\n"):
