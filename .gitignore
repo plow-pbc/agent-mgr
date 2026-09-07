@@ -3,5 +3,12 @@ __pycache__/
 .worktrees/
 docs/superpowers/
 
+# Agent scratch: plan docs land in docs/superpowers/ above, and the ledgers,
+# briefs and review packages of a plan being executed land here. Both are
+# working artifacts of writing the diff, never part of it -- and an ignore
+# that covers only one of them leaves the other one `git add -A` away from
+# inflating a PR's diff stat, which is the signal reviewers size scope by.
+.superpowers/
+
 # knightwatch materializes declared review siblings here during a review.
 .siblings/
