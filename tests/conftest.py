@@ -346,13 +346,22 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     stub = tmp_path / "stub"
     stub.mkdir(exist_ok=True)
     curl_log = f'printf "%s\\n" "$@" >> {log}.curlargv' if log else ":"
+    # The probe pipes its curl config on stdin (`--config -`) rather than
+    # writing it to disk. A test asserting the bearer is off argv proves
+    # nothing about whether it still reached curl at all -- this is the
+    # positive half, read off the same pipe curl itself would consume.
+    config_log = f'case "$*" in *--config*) cat >> {log}.curlconfig ;; esac' if log else ":"
     (stub / "curl").write_text(
-        f'#!/usr/bin/env bash\n{curl_log}\nprintf "%s" {exec_output or ""}\n')
+        f'#!/usr/bin/env bash\n{curl_log}\n{config_log}\nprintf "%s" {exec_output or ""}\n')
     (stub / "curl").chmod(0o755)
     env_prefix = " ".join(
         f"{key}={shlex.quote(value)}" for key, value in sorted((relay_env or {}).items()))
+    # `-i`: a developer with DOMO_DEVICE_UID set in their own shell must not
+    # silently satisfy the container-env fallback this fixture exists to
+    # exercise -- relay_env is the container's WHOLE environment, not an
+    # addition to whatever the test happens to be running under.
     parts.append(
-        f'  *"sh -s"*) env {env_prefix} PATH="{stub}:$PATH" sh "$stdin_capture" ;;')
+        f'  *"sh -s"*) env -i {env_prefix} PATH="{stub}:$PATH" sh "$stdin_capture" ;;')
     if exec_output is not None:
         parts.append(f'  *exec*) echo {exec_output} ;;')
     parts += ["esac", "exit 0", ""]

@@ -141,8 +141,9 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
     The credential must not reach argv: passed as `-H "Authorization: Bearer
     $tok"` it would sit in the argv of `docker compose exec` for the length of
     the probe, readable by `ps` from any account on the host. It goes in on
-    stdin instead -- and, inside the container, into a curl config written by a
-    shell builtin, so it is absent from `ps` on both sides.
+    stdin instead -- and, inside the container, into curl's --config over a
+    pipe rather than a file at rest, so it is absent from `ps` and from disk
+    on both sides.
 
     And it must be the value the GATEWAY loaded. Asserted on the bytes that
     reached curl rather than the exit code, because the fake relay answers 200
@@ -163,9 +164,15 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
     stdin = (tmp_path / "docker.log.stdin").read_text()
     assert f"DOTENV_TOK={expected}" in stdin or f"DOTENV_TOK='{expected}'" in stdin
     assert "stale_first" not in stdin
-    # Inside the container too: the bearer is written by `echo` into a config
-    # file, so it must not appear in the argv curl was invoked with.
+    # Inside the container too: the bearer is piped into curl's --config, so it
+    # must not appear in curl's own argv...
     assert expected not in (tmp_path / "docker.log.curlargv").read_text()
+    # ...but it MUST be the config curl actually read. Absent from argv proves
+    # nothing about whether it ever reached curl at all -- misspell `header` or
+    # drop `--config` and this is the only assertion that would catch it, by
+    # failing where check-latch would otherwise report a live credential REVOKED.
+    curlconfig = (tmp_path / "docker.log.curlconfig").read_text()
+    assert f'Authorization: Bearer {expected}' in curlconfig
 
 
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):

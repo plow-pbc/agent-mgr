@@ -442,18 +442,18 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
 # override=True). Preferring the dotenv here is that same precedence, so the
 # probe tests the credential the gateway actually uses.
 #
-# The script arrives on stdin rather than in argv, and the bearer is written to
-# a curl config by a shell BUILTIN -- so the credential is absent from `ps` on
-# the host and inside the container alike.
+# The script arrives on stdin rather than in argv, and the bearer reaches curl
+# through a PIPE rather than a file at rest in the container's filesystem -- so
+# the credential is absent from `ps` on the host and inside the container
+# alike, and from disk too. `echo` is still a shell builtin, so piping its
+# output costs nothing on that front.
 LATCH_PROBE = """\
 UID_V="${DOTENV_UID:-}"; [ -n "$UID_V" ] || UID_V="${DOMO_DEVICE_UID:-}"
 TOK="${DOTENV_TOK:-}"; [ -n "$TOK" ] || TOK="${DOMO_MCP_TOKEN:-}"
 case "$UID_V" in *[![:space:]]*) ;; *) echo UNSET:DOMO_DEVICE_UID; exit 0 ;; esac
 case "$TOK" in *[![:space:]]*) ;; *) echo UNSET:DOMO_MCP_TOKEN; exit 0 ;; esac
-cfg=$(mktemp) || exit 1
-trap 'rm -f "$cfg"' EXIT
-echo "header = \\"Authorization: Bearer $TOK\\"" > "$cfg"
-curl -sS --max-time 30 -o /dev/null -w '%{http_code}' --config "$cfg" \\
+echo "header = \\"Authorization: Bearer $TOK\\"" | curl -sS --max-time 30 \\
+  -o /dev/null -w '%{http_code}' --config - \\
   -X POST "https://api.plow.co/v1/relay/devices/$UID_V/mcp" \\
   -H 'Content-Type: application/json' \\
   -H 'Accept: application/json, text/event-stream' \\
