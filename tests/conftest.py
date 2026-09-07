@@ -360,8 +360,12 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
     # silently satisfy the container-env fallback this fixture exists to
     # exercise -- relay_env is the container's WHOLE environment, not an
     # addition to whatever the test happens to be running under.
+    # Piped in, not passed as a file argument: production's `sh -s` reads the
+    # script off the same fd `curl --config -` later reads its config from,
+    # and only piping here exercises that curl does not eat the rest of the
+    # script when it shares that fd.
     parts.append(
-        f'  *"sh -s"*) env -i {env_prefix} PATH="{stub}:$PATH" sh "$stdin_capture" ;;')
+        f'  *"sh -s"*) cat "$stdin_capture" | env -i {env_prefix} PATH="{stub}:$PATH" sh -s ;;')
     if exec_output is not None:
         parts.append(f'  *exec*) echo {exec_output} ;;')
     parts += ["esac", "exit 0", ""]

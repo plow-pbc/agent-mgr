@@ -439,20 +439,25 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
 # exist only in there: an instance override's env_file lands in the container's
 # environment and never on the host, while the home dotenv is what hermes loads
 # over the top of it (`hermes_cli/env_loader.py` calls load_dotenv with
-# override=True). Preferring the dotenv here is that same precedence, so the
-# probe tests the credential the gateway actually uses.
+# override=True). Preferring a NON-EMPTY dotenv value here approximates that
+# precedence, not matches it: hermes keys off PRESENCE, so a dotenv key that is
+# present but blank still clobbers the container's value to "" there, while
+# this prelude falls through to the container on emptiness alone. A home
+# deployed from templates/env.example before it shipped bare DOMO_* keys can
+# still carry that blank line -- tracked as a follow-up, not fixed here.
 #
 # The script arrives on stdin rather than in argv, and the bearer reaches curl
 # through a PIPE rather than a file at rest in the container's filesystem -- so
 # the credential is absent from `ps` on the host and inside the container
-# alike, and from disk too. `echo` is still a shell builtin, so piping its
-# output costs nothing on that front.
+# alike, and from disk too. `printf` is still a shell builtin, so piping its
+# output costs nothing on that front -- and unlike `echo` in dash (the agent
+# image's /bin/sh), it never expands a backslash the token happens to carry.
 LATCH_PROBE = """\
 UID_V="${DOTENV_UID:-}"; [ -n "$UID_V" ] || UID_V="${DOMO_DEVICE_UID:-}"
 TOK="${DOTENV_TOK:-}"; [ -n "$TOK" ] || TOK="${DOMO_MCP_TOKEN:-}"
 case "$UID_V" in *[![:space:]]*) ;; *) echo UNSET:DOMO_DEVICE_UID; exit 0 ;; esac
 case "$TOK" in *[![:space:]]*) ;; *) echo UNSET:DOMO_MCP_TOKEN; exit 0 ;; esac
-echo "header = \\"Authorization: Bearer $TOK\\"" | curl -sS --max-time 30 \\
+printf 'header = "Authorization: Bearer %s"\\n' "$TOK" | curl -sS --max-time 30 \\
   -o /dev/null -w '%{http_code}' --config - \\
   -X POST "https://api.plow.co/v1/relay/devices/$UID_V/mcp" \\
   -H 'Content-Type: application/json' \\
