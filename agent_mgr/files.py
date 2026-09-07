@@ -26,6 +26,21 @@ def dotenv_read(file: Path, key: str) -> str:
     return value
 
 
+def dotenv_declares(file: Path, key: str) -> bool:
+    """Whether `key` is DECLARED in the dotenv -- has an `=`, blank value or
+    not -- not merely non-empty. dotenv_read cannot say this: it returns ""
+    alike for a blank declaration and an absent key, and the difference is
+    exactly what check-latch (#165) needs, since hermes' own
+    load_dotenv(override=True) keys off PRESENCE: a declared-but-blank line
+    still clobbers a container-supplied value to "".
+    """
+    for line in read_regular_text(file).split("\n"):
+        found, separator, _ = line.partition("=")
+        if separator and found == key:
+            return True
+    return False
+
+
 def read_regular_text(file: Path) -> str:
     directory = -1
     try:

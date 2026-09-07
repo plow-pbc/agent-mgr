@@ -15,7 +15,7 @@ from .boot_contract import home_target, read_plow_credentials, require_running_c
 from .cloud_http import HttpCloudTransport
 from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
-from .files import atomic_write, dotenv_read, read_regular_text
+from .files import atomic_write, dotenv_declares, dotenv_read, read_regular_text
 from .local import compose, require_own_home, require_running, resolve_guard
 from .models import JsonValue, ResolvedAgent
 from .registry import Registry
@@ -439,12 +439,11 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
 # exist only in there: an instance override's env_file lands in the container's
 # environment and never on the host, while the home dotenv is what hermes loads
 # over the top of it (`hermes_cli/env_loader.py` calls load_dotenv with
-# override=True). Preferring a NON-EMPTY dotenv value here approximates that
-# precedence, not matches it: hermes keys off PRESENCE, so a dotenv key that is
-# present but blank still clobbers the container's value to "" there, while
-# this prelude falls through to the container on emptiness alone. A home
-# deployed from templates/env.example before it shipped bare DOMO_* keys can
-# still carry that blank line -- tracked as a follow-up, not fixed here.
+# override=True, which keys off PRESENCE -- a dotenv key that is declared but
+# blank still clobbers the container's value to "" there). The prelude below
+# matches that: it emits DOTENV_UID/DOTENV_TOK only for a key the dotenv
+# actually DECLARES, so the probe falls through to the container's own value
+# only when hermes would too.
 #
 # The script arrives on stdin rather than in argv, and the bearer reaches curl
 # through a PIPE rather than a file at rest in the container's filesystem -- so
@@ -453,8 +452,8 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
 # output costs nothing on that front -- and unlike `echo` in dash (the agent
 # image's /bin/sh), it never expands a backslash the token happens to carry.
 LATCH_PROBE = """\
-UID_V="${DOTENV_UID:-}"; [ -n "$UID_V" ] || UID_V="${DOMO_DEVICE_UID:-}"
-TOK="${DOTENV_TOK:-}"; [ -n "$TOK" ] || TOK="${DOMO_MCP_TOKEN:-}"
+UID_V="${DOTENV_UID-${DOMO_DEVICE_UID:-}}"
+TOK="${DOTENV_TOK-${DOMO_MCP_TOKEN:-}}"
 case "$UID_V" in *[![:space:]]*) ;; *) echo UNSET:DOMO_DEVICE_UID; exit 0 ;; esac
 case "$TOK" in *[![:space:]]*) ;; *) echo UNSET:DOMO_MCP_TOKEN; exit 0 ;; esac
 printf 'header = "Authorization: Bearer %s"\\n' "$TOK" | curl -sS --max-time 30 \\
@@ -476,10 +475,14 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
     require_running(agent, registry)
     # A dotenv that is not there contributes nothing; one that is there and
     # cannot be READ still raises out of read_regular_text, because a
-    # permission problem is not an unset credential.
+    # permission problem is not an unset credential. A key it does not
+    # DECLARE also contributes nothing -- omitting the line leaves the
+    # variable unset in the container's sh, which is what LATCH_PROBE's
+    # fallback keys off.
     prelude = "".join(
-        f"{name}={shlex.quote(dotenv_read(dotenv, key) if dotenv.exists() else '')}\n"
+        f"{name}={shlex.quote(dotenv_read(dotenv, key))}\n"
         for name, key in (("DOTENV_UID", "DOMO_DEVICE_UID"), ("DOTENV_TOK", "DOMO_MCP_TOKEN"))
+        if dotenv.exists() and dotenv_declares(dotenv, key)
     )
     response = compose(
         agent,
