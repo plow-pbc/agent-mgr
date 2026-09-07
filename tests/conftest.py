@@ -2,6 +2,7 @@ import contextlib
 import json
 import os
 import pathlib
+import shlex
 import shutil
 import subprocess
 import sys
@@ -233,7 +234,8 @@ def instance(tmp_path):
 def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<name>",
                 name="rowan", running=True, exec_output=None, log=None, mount=None,
                 exists=None, all_cids=(), mounts=None, image=None, build=False,
-                pull_policy=None, home_env="/opt/data", container_home_env=None):
+                pull_policy=None, home_env="/opt/data", container_home_env=None,
+                relay_env=None):
     """A `docker` that answers the four things agent-mgr asks of it.
 
     One builder rather than one per test file: every command now passes through
@@ -252,6 +254,12 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
 
     `log` records argv when given, so a test can assert on what actually ran
     rather than on what the source says.
+
+    `relay_env` is the CONTAINER's own environment -- what an override's
+    env_file or `environment:` block put there. `check-latch` resolves its
+    credential from the home dotenv first and this second, the way hermes does,
+    so a fixture that could only express the dotenv could not tell the two
+    apart.
     """
     import json
 
@@ -307,18 +315,20 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
         # needs observed. Separate file so substring assertions on the joined
         # log keep working.
         f'printf "%s\\n" "$@" >> {log}.argv' if log else "",
+        # stdin is captured ALWAYS, not only when `log` is set: for `sh -s` the
+        # piped bytes are the script, and running it is what makes these tests
+        # assert about the probe instead of about a canned reply. Gated on
+        # `exec -T` because that is what the real command needs to forward a
+        # pipe, and on fd 0 not being a terminal, because most execs here
+        # inherit the parent's stdin -- which under `pytest -s` IS the
+        # terminal, and an unconditional `cat` would hang the suite.
+        f'stdin_capture="{b}/.stdin.$$"',
+        'case "$*" in *"exec -T"*) [ -t 0 ] || cat > "$stdin_capture" ;; esac',
         # stdin beside argv, in its OWN file: a test asserting a secret is
         # absent from argv proves nothing about whether it still reaches the
         # command, and one file could not tell the two apart.
-        #
-        # Gated on `exec -T` because that is what the real command needs to
-        # forward a pipe -- without it docker allocates a TTY and refuses piped
-        # stdin, so a fake that read the pipe anyway would stay green while the
-        # live probe broke. And gated on fd 0 not being a terminal: most execs
-        # here inherit the parent's stdin, which under `pytest -s` IS the
-        # terminal, and an unconditional `cat` would hang the suite under the
-        # ordinary way to debug these tests.
-        f'case "$*" in *"exec -T"*) [ -t 0 ] || cat >> {log}.stdin ;; esac' if log else "",
+        (f'[ -s "$stdin_capture" ] && cat "$stdin_capture" >> {log}.stdin'
+         if log else ""),
         'case "$*" in',
         f"  *\"config --format json\"*) cat <<'JSON'\n{cfg}\nJSON\n    ;;",
         # `ps -a` answers about EXISTENCE, `--status running` about running.
@@ -330,6 +340,32 @@ def fake_docker(tmp_path, *, home, container="hermes-<name>", project="hermes-<n
             f'*{c}*) echo {m} ;;' for c, m in (mounts or {}).items())
          + f' *) echo {home} ;; esac ;;') if mounts else f'  *inspect*) echo {home} ;;',
     ]
+    # `check-latch` runs `exec -T hermes sh -s`, whose script is the piped
+    # stdin. Run it for real, with the container's own environment and a curl
+    # that answers `exec_output`, so the probe's own logic is under test.
+    stub = tmp_path / "stub"
+    stub.mkdir(exist_ok=True)
+    curl_log = f'printf "%s\\n" "$@" >> {log}.curlargv' if log else ":"
+    # The probe pipes its curl config on stdin (`--config -`) rather than
+    # writing it to disk. A test asserting the bearer is off argv proves
+    # nothing about whether it still reached curl at all -- this is the
+    # positive half, read off the same pipe curl itself would consume.
+    config_log = f'case "$*" in *--config*) cat >> {log}.curlconfig ;; esac' if log else ":"
+    (stub / "curl").write_text(
+        f'#!/usr/bin/env bash\n{curl_log}\n{config_log}\nprintf "%s" {exec_output or ""}\n')
+    (stub / "curl").chmod(0o755)
+    env_prefix = " ".join(
+        f"{key}={shlex.quote(value)}" for key, value in sorted((relay_env or {}).items()))
+    # `-i`: a developer with DOMO_DEVICE_UID set in their own shell must not
+    # silently satisfy the container-env fallback this fixture exists to
+    # exercise -- relay_env is the container's WHOLE environment, not an
+    # addition to whatever the test happens to be running under.
+    # Piped in, not passed as a file argument: production's `sh -s` reads the
+    # script off the same fd `curl --config -` later reads its config from,
+    # and only piping here exercises that curl does not eat the rest of the
+    # script when it shares that fd.
+    parts.append(
+        f'  *"sh -s"*) cat "$stdin_capture" | env -i {env_prefix} PATH="{stub}:$PATH" sh -s ;;')
     if exec_output is not None:
         parts.append(f'  *exec*) echo {exec_output} ;;')
     parts += ["esac", "exit 0", ""]

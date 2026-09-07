@@ -56,6 +56,52 @@ def test_check_latch_reports_reachable_when_the_relay_answers(run, instance, tmp
     assert "reachable" in r.stdout
 
 
+@pytest.mark.parametrize(
+    "dotenv,relay_env,expected_uid,rejected_uid",
+    [
+        # An instance whose compose.override.yml supplies DOMO_* through
+        # env_file has a working relay and a home dotenv that declares neither
+        # key. Reading only the dotenv called that agent unconfigured and told
+        # the operator to re-mint a live credential -- which would have
+        # written a second, divergent pair into a file the container does not
+        # read. agent_mgr/local.py:104 promises an override's env_file
+        # survives, so this is a supported shape, not a workaround.
+        ("API_SERVER_KEY=keepme\n",
+         {"DOMO_DEVICE_UID": "dev_from_compose", "DOMO_MCP_TOKEN": "tok_from_compose"},
+         "dev_from_compose", None),
+        # hermes loads $HERMES_HOME/.env with override=True
+        # (hermes_cli/env_loader.py:500), so a key in the dotenv is the one
+        # the gateway ends up using. Probing the container's value instead
+        # would report REVOKED for a live credential whenever the two
+        # disagree -- which is exactly what a half-finished set-latch leaves
+        # behind.
+        ("DOMO_DEVICE_UID=dev_dotenv\nDOMO_MCP_TOKEN=tok_dotenv\n",
+         {"DOMO_DEVICE_UID": "dev_stale", "DOMO_MCP_TOKEN": "tok_stale"},
+         "dev_dotenv", "dev_stale"),
+    ],
+    ids=["container-supplies-an-unconfigured-dotenv", "dotenv-outranks-the-container"],
+)
+def test_the_pair_resolves_dotenv_first_container_fallback(
+        run, instance, tmp_path, dotenv, relay_env, expected_uid, rejected_uid):
+    """Two rows of one arrange/act, differing only in who is supposed to win.
+
+    Both assert on the bytes that reached curl, not just the exit code: the
+    fake relay answers 200 to anything, so an exit-code-only assertion pins
+    that a uid was found, never that it was the RIGHT one."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("deploy", "property")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(dotenv)
+    log = tmp_path / "docker.log"
+    r = run("check-latch", "property", env=_bin(
+        tmp_path, "property", exec_output="200", log=log, relay_env=relay_env))
+    assert r.returncode == 0, r.stderr
+    assert "reachable" in r.stdout
+    curl_argv = (tmp_path / "docker.log.curlargv").read_text()
+    assert expected_uid in curl_argv
+    if rejected_uid:
+        assert rejected_uid not in curl_argv, "the probe used the wrong source's value"
+
+
 def test_a_revoked_credential_is_named_as_revoked_not_as_unreachable(run, instance, tmp_path):
     """A dead credential and a dead network need different fixes."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
@@ -104,8 +150,10 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
 
     The credential must not reach argv: passed as `-H "Authorization: Bearer
     $tok"` it would sit in the argv of `docker compose exec` for the length of
-    the probe, readable by `ps` from any account on the host. It goes in as a
-    curl config on stdin instead.
+    the probe, readable by `ps` from any account on the host. It goes in on
+    stdin instead -- and, inside the container, into curl's --config over a
+    pipe rather than a file at rest, so it is absent from `ps` and from disk
+    on both sides.
 
     And it must be the value the GATEWAY loaded. Asserted on the bytes that
     reached curl rather than the exit code, because the fake relay answers 200
@@ -124,9 +172,17 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
     # the probe gets an unauthenticated 401, which check-latch reports as
     # REVOKED -- sending the operator to replace a credential never sent.
     stdin = (tmp_path / "docker.log.stdin").read_text()
-    assert 'header = "Authorization: Bearer %s"' % expected in stdin
+    assert f"DOTENV_TOK={expected}" in stdin or f"DOTENV_TOK='{expected}'" in stdin
     assert "stale_first" not in stdin
-    assert "Bearer DOMO_MCP_TOKEN" not in stdin
+    # Inside the container too: the bearer is piped into curl's --config, so it
+    # must not appear in curl's own argv...
+    assert expected not in (tmp_path / "docker.log.curlargv").read_text()
+    # ...but it MUST be the config curl actually read. Absent from argv proves
+    # nothing about whether it ever reached curl at all -- misspell `header` or
+    # drop `--config` and this is the only assertion that would catch it, by
+    # failing where check-latch would otherwise report a live credential REVOKED.
+    curlconfig = (tmp_path / "docker.log.curlconfig").read_text()
+    assert f'header = "Authorization: Bearer {expected}"' in curlconfig
 
 
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):
@@ -135,6 +191,25 @@ def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
         "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=\n")
     r = run("check-latch", "property", env=_bin(tmp_path, "property"))
+    assert r.returncode != 0
+    assert "DOMO_MCP_TOKEN is empty" in r.stderr
+
+
+def test_a_blank_dotenv_declaration_clobbers_a_working_container_credential(
+        run, instance, tmp_path):
+    """hermes' own load_dotenv(override=True) keys off PRESENCE: a
+    DOMO_MCP_TOKEN= line with no value still clobbers whatever the container's
+    env_file supplied, to "". Falling through to the container on emptiness
+    alone read that blank declaration as absent and probed the container's
+    still-good token instead -- reporting a latch the gateway cannot actually
+    use as reachable, a false green on a health probe (#166)."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("deploy", "property")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
+        "DOMO_DEVICE_UID=dev_123\nDOMO_MCP_TOKEN=\n")
+    r = run("check-latch", "property", env=_bin(
+        tmp_path, "property", exec_output="200",
+        relay_env={"DOMO_DEVICE_UID": "dev_from_compose", "DOMO_MCP_TOKEN": "tok_from_compose"}))
     assert r.returncode != 0
     assert "DOMO_MCP_TOKEN is empty" in r.stderr
 

@@ -405,7 +405,7 @@ looks busier.
 |---|---|---|
 | [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `39d664a`, a current-contract base (`/var/lib/hermes`, `plow-init`); `089a6b1` was the last base under the `/opt/data` contract, still bootable for an agent that pins it (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
 | [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat), earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **40-char SHA**, at `artifacts.plow_chat_activation` in `runtime/stack.json` |
-| [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its own dotenv, never from git |
+| [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its home dotenv or an override's container environment, never from git |
 
 Both pins are exact on purpose — a `sha256:` digest for the image, and a
 40-char SHA for the activation script taken from `hermes-plow-chat`. A tag or a
