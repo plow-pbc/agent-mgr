@@ -172,7 +172,7 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
     # drop `--config` and this is the only assertion that would catch it, by
     # failing where check-latch would otherwise report a live credential REVOKED.
     curlconfig = (tmp_path / "docker.log.curlconfig").read_text()
-    assert f'Authorization: Bearer {expected}' in curlconfig
+    assert f'header = "Authorization: Bearer {expected}"' in curlconfig
 
 
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):
