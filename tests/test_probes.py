@@ -56,6 +56,42 @@ def test_check_latch_reports_reachable_when_the_relay_answers(run, instance, tmp
     assert "reachable" in r.stdout
 
 
+def test_the_pair_may_come_from_the_container_rather_than_the_home_dotenv(run, instance, tmp_path):
+    """An instance whose compose.override.yml supplies DOMO_* through env_file
+    has a working relay and an empty home dotenv. Reading only the dotenv called
+    that agent unconfigured and told the operator to re-mint a live credential --
+    which would have written a second, divergent pair into a file the container
+    does not read. agent_mgr/local.py:104 promises an override's env_file
+    survives, so this is a supported shape, not a workaround."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("deploy", "property")
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text("API_SERVER_KEY=keepme\n")
+    r = run("check-latch", "property", env=_bin(
+        tmp_path, "property", exec_output="200",
+        relay_env={"DOMO_DEVICE_UID": "dev_from_compose", "DOMO_MCP_TOKEN": "tok_from_compose"}))
+    assert r.returncode == 0, r.stderr
+    assert "reachable" in r.stdout
+
+
+def test_the_home_dotenv_outranks_the_container_environment(run, instance, tmp_path):
+    """hermes loads $HERMES_HOME/.env with override=True
+    (hermes_cli/env_loader.py:500), so a key in the dotenv is the one the
+    gateway ends up using. Probing the container's value instead would report
+    REVOKED for a live credential whenever the two disagree -- which is exactly
+    what a half-finished set-latch leaves behind."""
+    run("register", "property", str(instance("property", config=LATCH_CONFIG)))
+    run("deploy", "property")
+    _with_latch(tmp_path, "property", uid="dev_dotenv", tok="tok_dotenv")
+    log = tmp_path / "docker.log"
+    r = run("check-latch", "property", env=_bin(
+        tmp_path, "property", exec_output="200", log=log,
+        relay_env={"DOMO_DEVICE_UID": "dev_stale", "DOMO_MCP_TOKEN": "tok_stale"}))
+    assert r.returncode == 0, r.stderr
+    curl_argv = (tmp_path / "docker.log.curlargv").read_text()
+    assert "dev_dotenv" in curl_argv, "the probe used the container's value, not the gateway's"
+    assert "dev_stale" not in curl_argv
+
+
 def test_a_revoked_credential_is_named_as_revoked_not_as_unreachable(run, instance, tmp_path):
     """A dead credential and a dead network need different fixes."""
     run("register", "property", str(instance("property", config=LATCH_CONFIG)))
@@ -104,8 +140,9 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
 
     The credential must not reach argv: passed as `-H "Authorization: Bearer
     $tok"` it would sit in the argv of `docker compose exec` for the length of
-    the probe, readable by `ps` from any account on the host. It goes in as a
-    curl config on stdin instead.
+    the probe, readable by `ps` from any account on the host. It goes in on
+    stdin instead -- and, inside the container, into a curl config written by a
+    shell builtin, so it is absent from `ps` on both sides.
 
     And it must be the value the GATEWAY loaded. Asserted on the bytes that
     reached curl rather than the exit code, because the fake relay answers 200
@@ -124,9 +161,11 @@ def test_check_latch_sends_the_loaded_credential_and_only_on_stdin(run, instance
     # the probe gets an unauthenticated 401, which check-latch reports as
     # REVOKED -- sending the operator to replace a credential never sent.
     stdin = (tmp_path / "docker.log.stdin").read_text()
-    assert 'header = "Authorization: Bearer %s"' % expected in stdin
+    assert f"DOTENV_TOK={expected}" in stdin or f"DOTENV_TOK='{expected}'" in stdin
     assert "stale_first" not in stdin
-    assert "Bearer DOMO_MCP_TOKEN" not in stdin
+    # Inside the container too: the bearer is written by `echo` into a config
+    # file, so it must not appear in the argv curl was invoked with.
+    assert expected not in (tmp_path / "docker.log.curlargv").read_text()
 
 
 def test_a_half_configured_latch_names_the_missing_key(run, instance, tmp_path):

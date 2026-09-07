@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import tempfile
@@ -434,57 +435,65 @@ def set_latch(agent: ResolvedAgent, registry: Registry) -> int:
     return 0
 
 
+# The relay probe, run by `sh -s` inside the container. Both credential sources
+# exist only in there: an instance override's env_file lands in the container's
+# environment and never on the host, while the home dotenv is what hermes loads
+# over the top of it (`hermes_cli/env_loader.py` calls load_dotenv with
+# override=True). Preferring the dotenv here is that same precedence, so the
+# probe tests the credential the gateway actually uses.
+#
+# The script arrives on stdin rather than in argv, and the bearer is written to
+# a curl config by a shell BUILTIN -- so the credential is absent from `ps` on
+# the host and inside the container alike.
+LATCH_PROBE = """\
+UID_V="${DOTENV_UID:-}"; [ -n "$UID_V" ] || UID_V="${DOMO_DEVICE_UID:-}"
+TOK="${DOTENV_TOK:-}"; [ -n "$TOK" ] || TOK="${DOMO_MCP_TOKEN:-}"
+case "$UID_V" in *[![:space:]]*) ;; *) echo UNSET:DOMO_DEVICE_UID; exit 0 ;; esac
+case "$TOK" in *[![:space:]]*) ;; *) echo UNSET:DOMO_MCP_TOKEN; exit 0 ;; esac
+cfg=$(mktemp) || exit 1
+trap 'rm -f "$cfg"' EXIT
+echo "header = \\"Authorization: Bearer $TOK\\"" > "$cfg"
+curl -sS --max-time 30 -o /dev/null -w '%{http_code}' --config "$cfg" \\
+  -X POST "https://api.plow.co/v1/relay/devices/$UID_V/mcp" \\
+  -H 'Content-Type: application/json' \\
+  -H 'Accept: application/json, text/event-stream' \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+"""
+
+
 def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
     dotenv, installed = agent.home / ".env", agent.home / "config.yaml"
-    if not dotenv.is_file() or not installed.is_file():
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR,
-            f"no {dotenv if not dotenv.is_file() else installed} -- run deploy first",
-        )
+    if not installed.is_file():
+        raise AgentMgrError(ErrorCode.IO_ERROR, f"no {installed} -- run deploy first")
     if not config_declares_latch(installed):
         print(f"no latch configured for {agent.name} -- its config declares no latch server")
         return 0
-    uid, token = dotenv_read(dotenv, "DOMO_DEVICE_UID"), dotenv_read(dotenv, "DOMO_MCP_TOKEN")
-    if not uid or not token:
-        missing = "DOMO_DEVICE_UID" if not uid else "DOMO_MCP_TOKEN"
-        raise AgentMgrError(
-            ErrorCode.INVALID_ARGUMENT,
-            f"{missing} is empty in {dotenv} -- mint the pair on the Mac, then: agent-mgr set-latch {agent.name}",
-        )
     require_running(agent, registry)
+    # A dotenv that is not there contributes nothing; one that is there and
+    # cannot be READ still raises out of read_regular_text, because a
+    # permission problem is not an unset credential.
+    prelude = "".join(
+        f"{name}={shlex.quote(dotenv_read(dotenv, key) if dotenv.exists() else '')}\n"
+        for name, key in (("DOTENV_UID", "DOMO_DEVICE_UID"), ("DOTENV_TOK", "DOMO_MCP_TOKEN"))
+    )
     response = compose(
         agent,
-        [
-            "exec",
-            "-T",
-            "hermes",
-            "curl",
-            "-sS",
-            "--max-time",
-            "30",
-            "-o",
-            "/dev/null",
-            "-w",
-            "%{http_code}",
-            "--config",
-            "-",
-            "-X",
-            "POST",
-            f"https://api.plow.co/v1/relay/devices/{uid}/mcp",
-            "-H",
-            "Content-Type: application/json",
-            "-H",
-            "Accept: application/json, text/event-stream",
-            "-d",
-            '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}',
-        ],
+        ["exec", "-T", "hermes", "sh", "-s"],
         capture=True,
-        stdin=f'header = "Authorization: Bearer {token}"\n',
+        stdin=prelude + LATCH_PROBE,
     )
     code = response.stdout.strip()
     if code == "200":
         print(f"latch reachable from {agent.name}'s container (HTTP 200)")
         return 0
+    if code.startswith("UNSET:"):
+        key = code.partition(":")[2]
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"{key} is empty for {agent.name} -- neither {dotenv} nor the container's "
+            f"environment defines it. Mint the pair on the Mac, then: "
+            f"agent-mgr set-latch {agent.name}",
+        )
     if code == "401":
         raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, "DOMO_MCP_TOKEN is REVOKED")
     if code == "000":
