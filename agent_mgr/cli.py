@@ -26,13 +26,7 @@ from .commands import (
     set_latch,
     sign_in,
 )
-from .deploy import (
-    deploy,
-    install_fleet_skills,
-    install_plugin,
-    migrate_plugin_env,
-    reload_if_running,
-)
+from .deploy import deploy, migrate_plugin_env
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
 from .local import (
@@ -134,7 +128,7 @@ def _usage(stream: TextIO = sys.stdout) -> None:
         """usage: agent-mgr [--json] <command> [args]
 
   ls | register | unregister | new | resolve
-  deploy | install-plugin | install-skill | add-skill | cron-sync
+  deploy | add-skill | cron-sync
   activate | scope-chat-credential | sign-in | set-latch | check-latch | chats | set-home
   check-connectors | migrate-plugin-env
   backup-homes | prune-backups
@@ -302,14 +296,14 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         _need(args, 1, "agent-mgr resolve-guard <name>")
         resolve_guard(resolve_agent(args[0], registry, ROOT), registry)
         return 0
-    if operation in {"deploy", "install-plugin", "install-skill", "migrate-plugin-env"}:
+    if operation in {"deploy", "migrate-plugin-env"}:
         if not args:
             raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"usage: agent-mgr {operation} <name>")
         agent = resolve_agent(args[0], registry, ROOT)
         if operation == "deploy":
             _need(args, 1, "agent-mgr deploy <name>")
             deploy(agent, registry)
-        elif operation == "migrate-plugin-env":
+        else:
             if len(args) > 2 or (len(args) == 2 and args[1] != "--sync"):
                 raise AgentMgrError(
                     ErrorCode.INVALID_ARGUMENT,
@@ -317,21 +311,6 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 )
             require_own_home(agent, registry)
             migrate_plugin_env(agent, len(args) == 2)
-        else:
-            _need(args, 1, f"agent-mgr {operation} <name>")
-            resolve_guard(agent, registry)
-            if not agent.home.is_dir():
-                raise AgentMgrError(
-                    ErrorCode.IO_ERROR,
-                    f"no {agent.home} -- run 'agent-mgr deploy {agent.name}' first",
-                )
-            if operation == "install-plugin":
-                install_plugin(agent)
-                reason = "the plugin just installed"
-            else:
-                install_fleet_skills(agent)
-                reason = "the fleet skills just installed"
-            reload_if_running(agent, registry, reason)
         return 0
     if operation in {"backup-homes", "prune-backups"}:
         if not args:

@@ -57,8 +57,7 @@ def test_the_scaffolded_config_has_baseline_integrations_group_scope_and_fallbac
 
 
 def test_new_does_not_create_the_home_that_deploy_owns(run, tmp_path):
-    """install-plugin and activate gate on the home existing as their "run
-    deploy first" check. Pre-creating it lets activate spend a one-time
+    """activate gates on the home existing as its "run deploy first" check. Pre-creating it lets activate spend a one-time
     activation into a home deploy has never prepared."""
     r = run("new", "acme", str(tmp_path / "acme-hermes-agent"))
     assert not (tmp_path / "home" / ".hermes-acme").exists()
@@ -91,11 +90,8 @@ def test_new_refuses_a_directory_holding_only_a_config(run, tmp_path):
 
 def test_new_prints_the_bring_up_sequence(run, tmp_path):
     r = run("new", "acme", str(tmp_path / "acme-hermes-agent"))
-    # No install-plugin: deploy does it, and listing it as a separate step is
-    # the workflow re-running the installer over the config deploy just laid down.
     for step in ("deploy", "activate", "up", "sign-in", "check-latch"):
         assert step in r.stdout
-    assert "install-plugin" not in r.stdout
 
 
 def test_new_refuses_to_overwrite_an_existing_instance(run, tmp_path):
