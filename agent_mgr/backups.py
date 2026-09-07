@@ -18,6 +18,23 @@ VOLATILE_REMOVAL = re.compile(
     r"(-wal|-shm|-journal|\.tmp|\.lock|~): file removed before we read it",
     re.IGNORECASE,
 )
+# A running gateway keeps unix sockets in its home -- `gateway.sock`, and one
+# per loop tick under `state/`. tar cannot put a socket in an archive and says
+# so once per socket, which on its own is a status 0 run.
+#
+# It is the tolerance below that made them fatal: it asks EVERY stderr line to
+# be benign, so on any night a live home also lost a read race -- which is every
+# night, the gateway is writing -- these lines rode along and condemned an
+# archive tar had finished. Measured on wakeup 2026-09-07: four of seven homes,
+# `str` and `life-assistant-sam-employee` among them, had no archive on any
+# night their gateway was up, while the dead homes beside them archived fine
+# because nothing was writing to those.
+#
+# Tolerated rather than tallied with the read races above because it is a
+# different fact: a socket carries no bytes. A member tar could not READ is
+# content missing from the backup; a socket left out is not, so this cannot
+# hide the loss `unreadable-member` exists to catch.
+IGNORED_SOCKET = re.compile(r": socket ignored$", re.IGNORECASE)
 
 
 def _backup_error(message: str) -> AgentMgrError:
@@ -110,7 +127,7 @@ def backup_homes(destination_name: str) -> int:
             if result.stderr:
                 print(result.stderr, end="", file=sys.stderr)
             tolerated = bool(result.stderr) and all(
-                BENIGN.search(line) or VOLATILE_REMOVAL.search(line)
+                BENIGN.search(line) or VOLATILE_REMOVAL.search(line) or IGNORED_SOCKET.search(line)
                 for line in result.stderr.splitlines()
             )
             if result.returncode and not (result.returncode == 1 and tolerated):

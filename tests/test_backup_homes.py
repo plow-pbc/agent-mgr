@@ -271,9 +271,12 @@ def tar_shim(directory, message, only_for=None):
     ("tar: ./sessions.db: file changed as we read it\ntar: ./app.log: File shrank by 8 bytes; padding with zeros", True),
     ("tar: Can't open 'auth.json': Permission denied", False),
     ("tar: ./x: Cannot stat: No such file or directory", False),
+    ("tar: ./gateway.sock: socket ignored", True),
+    ("tar: ./gateway.sock: socket ignored\ntar: ./state/gateway.loop-tick.190.sock: socket ignored\ntar: .: file changed as we read it", True),
     ("", False),
 ], ids=["read-race", "wal-removed", "credential-removed", "journal-removed", "shrank",
         "race-and-shrank", "unreadable-member", "unstattable",
+        "socket-ignored", "live-gateway-sockets-and-race",
         "no-diagnostic-at-all"])
 def test_tar_status_1_is_judged_by_its_message_not_its_number(
         tmp_path, home, dest, message, tolerated):
@@ -289,7 +292,8 @@ def test_tar_status_1_is_judged_by_its_message_not_its_number(
     bsdtar keeps 1 for a member it could not open, which it then omits — so a
     status-only tolerance publishes a credential-less archive, exits 0, and lets
     retention prune the good copies. The measured race shapes live in one place,
-    the `benign` comment in `lib/backup-homes`; this does not restate them."""
+    the tolerance comments in `agent_mgr/backups.py`; this does not restate
+    them."""
 
     r = run(home, dest, extra_path=tar_shim(tmp_path / "bin", message))
     assert (r.returncode == 0) is tolerated, f"exit {r.returncode}: {r.stderr}"
