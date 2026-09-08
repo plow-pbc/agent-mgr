@@ -83,11 +83,9 @@ Rules that matter, in order of how much they cost to get wrong:
   `activate` — fix whatever refused its reload, then `restart`. A dropped
   `sign-in` re-runs for free; `activate` does not.
 
-On re-activation, an agent keeps its line: `activate` remembers the canonical
-`PLOW_HOME_CHANNEL` and narrows the fresh token to it, so group delivery
-survives even when the old token is dead. For an agent activated before line
-grants existed, `agent-mgr scope-chat-credential <name>` does that narrowing
-once, in place.
+Re-activating is free and repeatable: `activate` names the line, Plow decides
+the credential's scopes, and `plow-agents` revokes the key the file already
+carried before writing the new one.
 
 ## Set up Latch (let it drive a Mac)
 
@@ -357,4 +355,4 @@ measured cost of the second gateway is in *Why it exists* in the
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |
 | a shared skill behaves oddly | compare the SHA in `skills.tsv` against what upstream has since fixed |
-| `configured group(s) not on this agent's line` | verify `PLOW_HOME_CHANNEL` names a chat on the intended line, then run `scope-chat-credential` |
+| `configured group(s) not on this agent's line` | verify `PLOW_HOME_CHANNEL` names a chat on the intended line, then re-run `activate` against that line |

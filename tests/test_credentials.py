@@ -1,13 +1,12 @@
 import io
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
 
 import pytest
-from conftest import ROOT, LATCH_CONFIG, fake_curl, fake_docker
+from conftest import ROOT, LATCH_CONFIG, fake_docker
 
 
 def _fake_docker(tmp_path, name="rowan"):
@@ -77,7 +76,6 @@ def test_sign_in_refuses_before_deploy_has_run(run, instance):
     "argv",
     [
         ("activate", "rowan", "ln_test"),
-        ("scope-chat-credential", "rowan"),
         ("set-latch", "rowan"),
         ("migrate-plugin-env", "rowan"),
     ],
@@ -446,89 +444,3 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     # interpolated the value would put it in a terminal and a scrollback.
     assert "tok_xyz" not in r.stderr
     assert "tok_xyz" not in r.stdout
-
-
-@pytest.mark.parametrize(
-    ("relay_info_status", "chat_status"), [(200, 200), (403, 200), (200, 403)]
-)
-def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
-    run, instance, tmp_path, credential_api, relay_info_status, chat_status
-):
-    """Re-run on a credential Plow already narrowed -- the reply to a committed
-    PUT lost, or an operator repeating the command -- it stops at the 403 from
-    /v1/relay/info rather than failing the recovery it was named as. A 403
-    from anything else in the flow is still the failure it always was."""
-    credential_api.relay_info_status = relay_info_status
-    credential_api.chat_status = chat_status
-    already_narrowed = relay_info_status == 403
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    home = tmp_path / "home" / ".hermes-rowan"
-    (home / ".env").write_text(
-        "PLOW_CHAT_CHAT_UID=cht_home\n"
-        "PLOW_CHAT_TOKEN=plow_bootstrap\n"
-        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
-    )
-    docker_bin, docker_log = _fake_docker(tmp_path)
-    b = tmp_path / "credential-api-bin"
-    b.mkdir()
-    (b / "docker").symlink_to(docker_bin / "docker")
-
-    r = run(
-        "scope-chat-credential",
-        "rowan",
-        env={
-            "PATH": f"{b}:{os.environ['PATH']}",
-        },
-    )
-
-    if chat_status != 200:
-        assert r.returncode != 0
-        assert "already narrowed" not in r.stdout
-        return
-    assert r.returncode == 0, r.stderr
-    dotenv = (home / ".env").read_text()
-    assert "PLOW_HOME_CHANNEL=cht_home" in dotenv
-    assert "PLOW_AGENT_TOKEN=plow_bootstrap" in dotenv
-    puts = [request for request in credential_api.requests if request[0] == "PUT"]
-    if already_narrowed:
-        assert puts == []
-        assert "already narrowed" in r.stdout
-        # Reloaded anyway: the recovery case is an activate() that never got to.
-        assert "up" in docker_log.read_text().split()
-    else:
-        assert puts[0][2]["chat_uids"] == ["line:ln_elm"]
-
-
-def test_scope_chat_credential_finishes_an_interrupted_activation_publication(
-    run, instance, tmp_path, credential_api
-):
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    home = tmp_path / "home" / ".hermes-rowan"
-    (home / ".env").write_text(
-        "PLOW_HOME_CHANNEL=cht_existing\n"
-        "PLOW_AGENT_TOKEN=plow_stale\n"
-        "PLOW_CHAT_CHAT_UID=cht_fresh_dm\n"
-        "PLOW_CHAT_TOKEN=plow_fresh\n"
-        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
-    )
-    docker_bin, _ = _fake_docker(tmp_path)
-    b = tmp_path / "credential-recovery-bin"
-    b.mkdir()
-    (b / "docker").symlink_to(docker_bin / "docker")
-
-    r = run(
-        "scope-chat-credential",
-        "rowan",
-        env={"PATH": f"{b}:{os.environ['PATH']}"},
-    )
-
-    assert r.returncode == 0, r.stderr
-    lines = (home / ".env").read_text().splitlines()
-    assert "PLOW_HOME_CHANNEL=cht_existing" in lines
-    assert "PLOW_CHAT_CHAT_UID=cht_existing" in lines
-    assert "PLOW_AGENT_TOKEN=plow_fresh" in lines
-    assert "PLOW_CHAT_TOKEN=plow_fresh" in lines
-    assert credential_api.requests[0][1] == "/v1/chats/cht_existing"
-    assert all(request[3] == "Bearer plow_fresh" for request in credential_api.requests)
