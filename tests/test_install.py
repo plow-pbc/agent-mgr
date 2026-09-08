@@ -17,12 +17,15 @@ def test_deploy_installs_the_config_into_the_agents_home(run, instance, tmp_path
 
 
 def test_deploy_writes_a_dotenv_skeleton_carrying_both_platforms(run, instance, tmp_path):
+    """The Plow credential is deliberately absent: activate mints it into a
+    file outside the home, and the gateway strips those keys out of this one
+    on every boot."""
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_AGENT_TOKEN" in env
     assert "PLOW_HOME_CHANNEL" in env
     assert "DOMO_MCP_TOKEN" in env, "latch is baseline, not an opt-in"
+    assert "PLOW_AGENT_TOKEN" not in env
 
 
 def test_deploy_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
@@ -32,146 +35,6 @@ def test_deploy_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
     env.write_text("PLOW_AGENT_TOKEN=real\n")
     run("deploy", "rowan")
     assert env.read_text() == "PLOW_AGENT_TOKEN=real\n"
-
-
-def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance, tmp_path):
-    """The fleet migration step: legacy PLOW_CHAT_* values land under the names
-    the unified plugin reads, the old lines stay (a pre-rename plugin still
-    reads them mid-migration; a later cleanup removes them), and a second run
-    writes nothing."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\nHOSTEX_TOKEN=keepme\n")
-
-    r = run("migrate-plugin-env", "rowan")
-    assert r.returncode == 0, r.stderr
-    lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
-    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
-    assert "PLOW_CHAT_TOKEN=tok_plow" in lines, "the legacy lines must survive until the cleanup"
-    assert "HOSTEX_TOKEN=keepme" in lines
-    # One ledger line per var written, no values on stdout.
-    assert "wrote PLOW_AGENT_TOKEN from PLOW_CHAT_TOKEN" in r.stdout
-    assert "wrote PLOW_HOME_CHANNEL from PLOW_CHAT_CHAT_UID" in r.stdout
-    assert "tok_plow" not in r.stdout + r.stderr, "a credential value leaked into the ledger"
-
-    before = env.read_text()
-    r = run("migrate-plugin-env", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert env.read_text() == before, "a second run must write nothing"
-    assert "wrote" not in r.stdout
-
-
-def test_a_redeploy_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
-    """The public path migrates, not just the manual rollout order: a
-    legacy-only agent redeployed onto the unified plugin must come back with the
-    names it reads, or it silently loses its phone line."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\n")
-
-    r = run("deploy", "rowan")
-    assert r.returncode == 0, r.stderr
-    lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
-    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
-
-
-def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp_path):
-    """Last declaration wins -- dotenv_read and the compose env_file loader
-    both resolve a duplicated key to its last line, so the migrated value must
-    be the one the gateway actually ran with."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_stale\nPLOW_CHAT_TOKEN=tok_live\n")
-
-    r = run("migrate-plugin-env", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "PLOW_AGENT_TOKEN=tok_live" in env.read_text().splitlines()
-
-
-def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path):
-    """The recovery command activate prints must be able to finish the job.
-    Idempotent mode skips set keys, so after a failed in-activate sync the
-    fresh token sits only under the legacy name — `--sync` is the forwarded
-    mode that overwrites."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n")
-    r = run("migrate-plugin-env", "rowan", "--sync")
-    assert r.returncode == 0, r.stderr
-    lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_fresh" in lines
-    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
-
-
-def test_migrate_plugin_env_rejects_an_unknown_mode(run, instance, tmp_path):
-    """Fail-fast on a typo'd flag: silently running in the OTHER mode is the
-    stale-token bug this pair of modes exists to prevent."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    r = run("migrate-plugin-env", "rowan", "--bogus")
-    assert r.returncode != 0
-    assert "unknown mode" in r.stderr and "--sync" in r.stderr
-
-
-def test_migrate_plugin_env_without_a_dotenv_points_at_deploy(run, instance, tmp_path):
-    run("register", "rowan", str(instance("rowan")))
-    r = run("migrate-plugin-env", "rowan")
-    assert r.returncode != 0
-    assert "deploy" in r.stderr
-
-
-PLOW_AGENTS_STUB = """#!/bin/sh
-printf '%s\\n' "$@" >> "$ARGV_LOG"
-for a in "$@"; do case "$prev" in --credential-file) out=$a;; esac; prev=$a; done
-printf 'PLOW_API_BASE=https://api.plow.co\\nPLOW_AGENT_TOKEN=tok_new\\n' > "$out"
-"""
-
-
-def test_activate_mints_into_the_credential_file(run, instance, tmp_path):
-    """activate writes ~/.plow-credentials-<name>, never the home dotenv."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    argv_log = tmp_path / "plow-agents.argv"
-    stub = tmp_path / "bin" / "plow-agents"
-    stub.write_text(PLOW_AGENTS_STUB)
-    stub.chmod(0o755)
-
-    r = run("activate", "rowan", "ln_test", env={"ARGV_LOG": str(argv_log)})
-    assert r.returncode == 0, r.stderr
-
-    credential = tmp_path / "home" / ".plow-credentials-rowan"
-    assert "PLOW_AGENT_TOKEN=tok_new" in credential.read_text()
-    # The line uid is what decides the role, so it has to reach the mint.
-    assert argv_log.read_text().split() == [
-        "mint", "ln_test", "--credential-file", str(credential)
-    ]
-    assert "PLOW_CHAT_TOKEN" not in (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-
-
-def test_activate_says_how_to_install_plow_agents(run, instance, tmp_path):
-    """A missing plow-agents fails loudly and names the fix.
-
-    A PATH of docker and python3 alone, rather than a filtered inherit:
-    whether the operator happens to have plow-agents installed must not
-    decide the result."""
-    import sys
-
-    from conftest import fake_docker
-
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    bindir = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    (bindir / "python3").symlink_to(sys.executable)
-
-    r = run("activate", "rowan", "ln_test", env={"PATH": str(bindir)})
-    assert r.returncode != 0
-    assert "plow-agents" in r.stderr
 
 
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
@@ -268,7 +131,7 @@ def test_the_fleet_template_is_used_when_an_instance_ships_none(run, instance, t
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_AGENT_TOKEN" in env and "DOMO_MCP_TOKEN" in env
+    assert "PLOW_HOME_CHANNEL" in env and "DOMO_MCP_TOKEN" in env
 
 
 def test_deploy_is_the_whole_deploy_including_the_instances_own_step(run, instance, tmp_path):

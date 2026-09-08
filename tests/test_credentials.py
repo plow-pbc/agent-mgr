@@ -77,7 +77,6 @@ def test_sign_in_refuses_before_deploy_has_run(run, instance):
     [
         ("activate", "rowan", "ln_test"),
         ("set-latch", "rowan"),
-        ("migrate-plugin-env", "rowan"),
     ],
 )
 @pytest.mark.parametrize(
@@ -89,9 +88,9 @@ def test_credential_writers_refuse_a_home_that_is_not_this_agents(
     run, instance, argv, descriptor
 ):
     """Every command that writes a credential into a home takes the same guard.
-    Pointed at a sibling's, activate would take that agent off its chat and spend
-    a one-time activation; set-latch would hand it a relay credential minted
-    against someone else's Mac."""
+    Pointed at a sibling's, activate would revoke that agent's live key and
+    hand it one minted against another line; set-latch would hand it a relay
+    credential minted against someone else's Mac."""
     run("register", "rowan", str(instance("rowan", descriptor=descriptor)))
     r = run(*argv, input="dev_abc\ntok_xyz\n")
     assert r.returncode != 0
