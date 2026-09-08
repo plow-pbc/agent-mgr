@@ -4,14 +4,19 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
-import tempfile
 import termios
 from pathlib import Path
 
-from .artifacts import Artifact, fetch, stack, validate_revision
-from .boot_contract import home_target, read_plow_credentials, require_running_contract_matches
+from .artifacts import Artifact, fetch, validate_revision
+from .boot_contract import (
+    credentials_host_path,
+    home_target,
+    read_plow_credentials,
+    require_running_contract_matches,
+)
 from .cloud_http import HttpCloudTransport
 from .deploy import publish_activation_env, reload_if_running
 from .errors import AgentMgrError, ErrorCode
@@ -67,54 +72,34 @@ def cron_sync(agent: ResolvedAgent, registry: Registry) -> int:
     ).returncode
 
 
-def activate(agent: ResolvedAgent, registry: Registry) -> int:
+def activate(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
+    """Mint this agent's Plow credential into its durable two-key file.
+
+    `plow-agents` owns minting -- it asks the server for the assistant role by
+    naming a line, revokes the key the file already named before writing the
+    new one, and writes atomically at 0600. agent-mgr's job is only to say
+    WHICH file. The credential never touches the home dotenv: plow-init strips
+    those keys on every boot, and the dotenv is root-owned besides (#163).
+    """
     require_own_home(agent, registry)
     if not agent.home.is_dir():
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"no {agent.home} -- run 'agent-mgr deploy {agent.name}' first"
         )
-    dotenv = agent.home / ".env"
-    existing_home = (
-        dotenv_read(dotenv, "PLOW_HOME_CHANNEL") or dotenv_read(dotenv, "PLOW_CHAT_CHAT_UID")
-        if dotenv.is_file()
-        else ""
-    )
-    artifact = stack()["plow_chat_activation"]
-    revision = os.environ.get("AGENT_MGR_ACTIVATE_REF", artifact.revision)
-    validate_revision(revision, "the activate ref", ErrorCode.INVALID_ARGUMENT)
-    with tempfile.NamedTemporaryFile() as script:
-        url = (
-            f"https://raw.githubusercontent.com/{artifact.repository}/{revision}/{artifact.source}"
+    if shutil.which("plow-agents") is None:
+        raise AgentMgrError(
+            ErrorCode.IO_ERROR,
+            "plow-agents is not on PATH -- clone plow-pbc/plow-agents and add its bin/ "
+            "to PATH, then run 'plow-agents login' once on this machine",
         )
-        if subprocess.run(["curl", "-fsSL", url, "-o", script.name], check=False).returncode:
-            raise AgentMgrError(
-                ErrorCode.IO_ERROR, f"could not fetch activation script at {revision[:7]}"
-            )
-        result = subprocess.run(["bash", script.name, "--data-dir", str(agent.home)], check=False)
+    destination = credentials_host_path(agent)
+    result = subprocess.run(
+        ["plow-agents", "mint", line_uid, "--credential-file", str(destination)],
+        check=False,
+    )
     if result.returncode:
         return result.returncode
-    try:
-        # The frozen installer writes a fresh legacy pair. Publish its token
-        # and the durable pre-bind home in one replacement before narrowing.
-        publish_activation_env(agent, existing_home)
-        narrow_chat_credential(agent)
-    except AgentMgrError as error:
-        # The phone bind already succeeded. Report the idempotent follow-up
-        # instead of inviting another activation that would mint yet another
-        # credential and DM.
-        print(
-            "activation SUCCEEDED under a broad credential -- do NOT re-run activate; "
-            f"run 'agent-mgr scope-chat-credential {agent.name}' after fixing: {error.message}",
-            file=sys.stderr,
-        )
-        return 0
-    try:
-        reload_if_running(agent, registry, "the credential just written")
-    except AgentMgrError:
-        print(
-            "activation SUCCEEDED and the credential is written -- do NOT re-run activate",
-            file=sys.stderr,
-        )
+    reload_if_running(agent, registry, "the credential just minted")
     return 0
 
 

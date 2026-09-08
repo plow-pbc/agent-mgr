@@ -259,15 +259,15 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
             print(f"  home:     {agent.home} (created by deploy)\n")
             print("bring it up:")
             for next_command in (
-                "deploy",
-                "activate",
-                "up",
-                "cron-sync",
-                "sign-in",
-                "set-latch",
-                "check-latch",
+                f"deploy {name}",
+                f"activate {name} <line-uid>",
+                f"up {name}",
+                f"cron-sync {name}",
+                f"sign-in {name}",
+                f"set-latch {name}",
+                f"check-latch {name}",
             ):
-                print(f"  agent-mgr {next_command} {name}")
+                print(f"  agent-mgr {next_command}")
         return 0
     if operation == "resolve":
         if not args:
@@ -327,9 +327,11 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 ErrorCode.INVALID_ARGUMENT, "usage: agent-mgr prune-backups <dest> [days]"
             )
         return prune_backups(args[0], args[1] if len(args) == 2 else "14")
+    if operation == "activate":
+        _need(args, 2, "agent-mgr activate <name> <line-uid>   (line uids: plow-agents lines)")
+        return activate(resolve_agent(args[0], registry, ROOT), registry, args[1])
     if operation in {
         "cron-sync",
-        "activate",
         "scope-chat-credential",
         "sign-in",
         "set-latch",
@@ -341,7 +343,6 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         agent = resolve_agent(args[0], registry, ROOT)
         return {
             "cron-sync": cron_sync,
-            "activate": activate,
             "scope-chat-credential": scope_chat_credential,
             "sign-in": sign_in,
             "set-latch": set_latch,

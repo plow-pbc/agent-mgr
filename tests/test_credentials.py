@@ -74,7 +74,13 @@ def test_sign_in_refuses_before_deploy_has_run(run, instance):
 
 
 @pytest.mark.parametrize(
-    "command", ["activate", "scope-chat-credential", "set-latch", "migrate-plugin-env"]
+    "argv",
+    [
+        ("activate", "rowan", "ln_test"),
+        ("scope-chat-credential", "rowan"),
+        ("set-latch", "rowan"),
+        ("migrate-plugin-env", "rowan"),
+    ],
 )
 @pytest.mark.parametrize(
     "descriptor",
@@ -82,34 +88,16 @@ def test_sign_in_refuses_before_deploy_has_run(run, instance):
     ids=["not-a-hermes-home", "a-siblings-conventional-home"],
 )
 def test_credential_writers_refuse_a_home_that_is_not_this_agents(
-    run, instance, command, descriptor
+    run, instance, argv, descriptor
 ):
     """Every command that writes a credential into a home takes the same guard.
     Pointed at a sibling's, activate would take that agent off its chat and spend
     a one-time activation; set-latch would hand it a relay credential minted
     against someone else's Mac."""
     run("register", "rowan", str(instance("rowan", descriptor=descriptor)))
-    r = run(command, "rowan", input="dev_abc\ntok_xyz\n")
+    r = run(*argv, input="dev_abc\ntok_xyz\n")
     assert r.returncode != 0
     assert "refusing to write" in r.stderr
-
-
-def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instance, tmp_path):
-    """The rentals agent predates the ~/.hermes-<name> convention. An explicit
-    declaration is deliberate; the convention can never produce a bare .hermes."""
-    legacy = tmp_path / "home" / ".hermes"
-    legacy.mkdir(parents=True)
-    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    # ACTIVATE_REF, not PLUGIN_REF: activate owns a separate immutable pin.
-    r = run("activate", "str", env={"AGENT_MGR_ACTIVATE_REF": "not-a-sha"})
-    # It gets past the home guard and fails later, on the ref -- which is the
-    # proof that the guard let it through. Asserted on what the tool prints.
-    assert r.returncode != 0
-    assert "40-char SHA" in r.stderr
-    # The string the guard actually prints. Two other tests in this file pin the
-    # same one; the previous two spellings here matched nothing any code emits,
-    # so the line could not fail either way.
-    assert "refusing to write" not in r.stderr
 
 
 # The two axes are independent, so a product would run redundant CLIs. One row
@@ -458,74 +446,6 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     # interpolated the value would put it in a terminal and a scrollback.
     assert "tok_xyz" not in r.stderr
     assert "tok_xyz" not in r.stdout
-
-
-MAC = [{"device_uid": "dev_mac"}]
-RELAY_SCOPES = ["relay:call", "chats:use", "llm:chat", "payments:request"]
-
-
-@pytest.mark.parametrize(
-    ("preexisting", "expected_home", "devices", "expected_scopes"),
-    [
-        ("", "cht_fresh", MAC, RELAY_SCOPES),
-        (
-            "PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n",
-            "cht_existing", MAC, RELAY_SCOPES,
-        ),
-        (
-            "PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n",
-            "cht_legacy", [], ["chats:use", "llm:chat"],
-        ),
-    ],
-)
-def test_activate_narrows_bootstrap_to_line_granted_canonical_credential(
-    run, instance, tmp_path, credential_api, preexisting, expected_home, devices,
-    expected_scopes,
-):
-    """The frozen upstream activation remains the phone bind; agent-mgr only
-    narrows its broad result through Plow's existing key endpoint -- to the
-    relay-holding role when the account has a Mac, the chat-only one when not,
-    the same split plow's cloud seam makes."""
-    credential_api.devices = devices
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    home = tmp_path / "home" / ".hermes-rowan"
-    if preexisting:
-        (home / ".env").write_text(preexisting)
-    installer = """#!/usr/bin/env bash
-set -euo pipefail
-while [ $# -gt 0 ]; do
-  case "$1" in --data-dir) home="$2"; shift 2 ;; *) shift ;; esac
-done
-printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE_URL=__BASE__\n' >> "$home/.env"
-""".replace("__BASE__", credential_api.base_url)
-    activation = tmp_path / "activation"
-    activation.mkdir()
-    b = fake_curl(activation, body=installer)
-
-    r = run(
-        "activate",
-        "rowan",
-        env={
-            "PATH": f"{b}:{os.environ['PATH']}",
-        },
-    )
-
-    assert r.returncode == 0, r.stderr
-    dotenv = (home / ".env").read_text()
-    assert f"PLOW_HOME_CHANNEL={expected_home}" in dotenv
-    assert "PLOW_AGENT_TOKEN=plow_fresh" in dotenv
-    assert f"PLOW_CHAT_CHAT_UID={expected_home}" in dotenv
-    assert "PLOW_CHAT_TOKEN=plow_fresh" in dotenv
-    assert credential_api.requests[0][0:2] == ("GET", f"/v1/chats/{expected_home}")
-    assert credential_api.requests[1][0:2] == ("GET", "/v1/relay/info")
-    assert all(request[3] == "Bearer plow_fresh" for request in credential_api.requests)
-    request = credential_api.requests[2][2]
-    assert request == {
-        "name": "agent-mgr:rowan",
-        "scopes": expected_scopes,
-        "chat_uids": ["line:ln_elm"],
-    }
 
 
 @pytest.mark.parametrize(

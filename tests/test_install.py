@@ -126,6 +126,54 @@ def test_migrate_plugin_env_without_a_dotenv_points_at_deploy(run, instance, tmp
     assert "deploy" in r.stderr
 
 
+PLOW_AGENTS_STUB = """#!/bin/sh
+printf '%s\\n' "$@" >> "$ARGV_LOG"
+for a in "$@"; do case "$prev" in --credential-file) out=$a;; esac; prev=$a; done
+printf 'PLOW_API_BASE=https://api.plow.co\\nPLOW_AGENT_TOKEN=tok_new\\n' > "$out"
+"""
+
+
+def test_activate_mints_into_the_credential_file(run, instance, tmp_path):
+    """activate writes ~/.plow-credentials-<name>, never the home dotenv."""
+    run("register", "rowan", str(instance("rowan")))
+    run("deploy", "rowan")
+    argv_log = tmp_path / "plow-agents.argv"
+    stub = tmp_path / "bin" / "plow-agents"
+    stub.write_text(PLOW_AGENTS_STUB)
+    stub.chmod(0o755)
+
+    r = run("activate", "rowan", "ln_test", env={"ARGV_LOG": str(argv_log)})
+    assert r.returncode == 0, r.stderr
+
+    credential = tmp_path / "home" / ".plow-credentials-rowan"
+    assert "PLOW_AGENT_TOKEN=tok_new" in credential.read_text()
+    # The line uid is what decides the role, so it has to reach the mint.
+    assert argv_log.read_text().split() == [
+        "mint", "ln_test", "--credential-file", str(credential)
+    ]
+    assert "PLOW_CHAT_TOKEN" not in (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+
+
+def test_activate_says_how_to_install_plow_agents(run, instance, tmp_path):
+    """A missing plow-agents fails loudly and names the fix.
+
+    A PATH of docker and python3 alone, rather than a filtered inherit:
+    whether the operator happens to have plow-agents installed must not
+    decide the result."""
+    import sys
+
+    from conftest import fake_docker
+
+    run("register", "rowan", str(instance("rowan")))
+    run("deploy", "rowan")
+    bindir = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    (bindir / "python3").symlink_to(sys.executable)
+
+    r = run("activate", "rowan", "ln_test", env={"PATH": str(bindir)})
+    assert r.returncode != 0
+    assert "plow-agents" in r.stderr
+
+
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
@@ -139,21 +187,6 @@ def test_deploy_on_an_instance_with_no_config_is_refused(run, instance):
     r = run("deploy", "bare")
     assert r.returncode != 0
     assert "config.yaml" in r.stderr
-
-
-def test_every_shipped_pin_is_a_sha_not_a_branch():
-    """A branch would silently re-point a running agent on the next upstream push.
-
-    Both, because the activate pin gates the one command that is a one-time
-    irreversible spend -- a branch name or a truncated SHA in that file would
-    otherwise surface only when an operator ran it.
-    """
-    import json
-
-    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
-    for artifact in artifacts.values():
-        ref = artifact["revision"]
-        assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)
 
 
 def test_the_image_pin_is_a_digest_not_a_tag():
@@ -445,26 +478,6 @@ def test_the_interactive_prompt_defaults_to_no(run, registry, instance, tmp_path
     assert (r.returncode == 0) == ok, (reply, r.stderr)
 
 
-def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instance, tmp_path):
-    """The one command a refusal must not fail. By the reload the one-time
-    activation is already spent and the token written, so a red exit reads as
-    "activation failed" -- and the natural response is to run it again, spending
-    a second activation to recover from a guard that said "not right now"."""
-    import os
-
-    _guarded(instance, run, tmp_path, refuses=True)
-    from conftest import fake_docker
-
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
-
-    r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, f"a refused reload failed an activation that had landed: {r.stderr}"
-    assert "do NOT re-run activate" in r.stderr, (
-        "the operator was not told the activation succeeded, which is the whole point"
-    )
-
-
 @pytest.mark.parametrize(
     "args",
     [
@@ -475,10 +488,10 @@ def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instanc
 def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
     run, instance, tmp_path, args
 ):
-    """The negative half of `activate` being "the one command a refusal does not
-    fail". These are in the same position -- the write has landed by the
-    reload -- so activate's `|| echo ...SUCCEEDED...` is the obvious next
-    copy-paste, and it would make the word "one" false with a green suite."""
+    """A refused guard fails the command, for every command that writes and
+    then reloads. There is no exception left: activate used to report success
+    past a refusal because its one-time spend could not be repeated, and
+    `plow-agents mint` can be."""
     import os
 
     _guarded(instance, run, tmp_path, refuses=True)
@@ -683,36 +696,12 @@ def _block(text, start, end):
 
 def test_the_image_is_the_only_owner_of_the_plugin_and_seed_skills():
     """What an older deploy staged into every home is what the pinned base
-    bundles, and a home copy shadows the image's (#156). The activation script
-    is the one thing still fetched from hermes-plow-chat, at a pre-strip SHA.
+    bundles, and a home copy shadows the image's (#156). Nothing is fetched
+    from hermes-plow-chat any more, so the stack pins images alone.
     """
     import json
 
-    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
-    assert set(artifacts) == {"plow_chat_activation"}
-    assert artifacts["plow_chat_activation"]["source"] == "ref/scripts/create_plow_chat_curl.sh"
-
-
-def test_the_activate_pin_is_frozen():
-    """The activate ref may not be bumped at all, and this is what enforces it.
-
-    Proving the ref is an ANCESTOR of the strip commit would need that repo's
-    history, which is a network call this suite will not make. Pinning the SHA
-    needs nothing, and reddens on every forward bump -- so the why lives in the
-    failure message below, where whoever tripped it is already looking, rather
-    than in a doc they would have to be sent to. The README's builds-on section
-    is the same rule for someone reading before they bump.
-    """
-    import json
-
-    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
-    activate = artifacts["plow_chat_activation"]["revision"]
-    assert activate == "98ddb2e7f0ce563a7ed6c9af43802d15b5ff62d3", (
-        "the activate pin moved. It is frozen behind `Strip the SEED ceremony`, "
-        "which deleted the ref/scripts/ path it names -- a later SHA 404s on "
-        "activate. If this is deliberate, the new SHA must still predate that "
-        "commit, and the README's builds-on section says why."
-    )
+    assert "artifacts" not in json.loads((ROOT / "runtime" / "stack.json").read_text())
 
 
 def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(
