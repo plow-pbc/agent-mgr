@@ -37,6 +37,54 @@ def test_deploy_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
     assert env.read_text() == "PLOW_AGENT_TOKEN=real\n"
 
 
+PLOW_AGENTS_STUB = """#!/bin/sh
+printf '%s\\n' "$@" >> "$ARGV_LOG"
+for a in "$@"; do case "$prev" in --credential-file) out=$a;; esac; prev=$a; done
+printf 'PLOW_API_BASE=https://api.plow.co\\nPLOW_AGENT_TOKEN=tok_new\\n' > "$out"
+"""
+
+
+def test_activate_mints_into_the_credential_file(run, instance, tmp_path):
+    """activate writes ~/.plow-credentials-<name>, never the home dotenv."""
+    run("register", "rowan", str(instance("rowan")))
+    run("deploy", "rowan")
+    argv_log = tmp_path / "plow-agents.argv"
+    stub = tmp_path / "bin" / "plow-agents"
+    stub.write_text(PLOW_AGENTS_STUB)
+    stub.chmod(0o755)
+
+    r = run("activate", "rowan", "ln_test", env={"ARGV_LOG": str(argv_log)})
+    assert r.returncode == 0, r.stderr
+
+    credential = tmp_path / "home" / ".plow-credentials-rowan"
+    assert "PLOW_AGENT_TOKEN=tok_new" in credential.read_text()
+    # The line uid is what decides the role, so it has to reach the mint.
+    assert argv_log.read_text().split() == [
+        "mint", "ln_test", "--credential-file", str(credential)
+    ]
+    assert "PLOW_CHAT_TOKEN" not in (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
+
+
+def test_activate_says_how_to_install_plow_agents(run, instance, tmp_path):
+    """A missing plow-agents fails loudly and names the fix.
+
+    A PATH of docker and python3 alone, rather than a filtered inherit:
+    whether the operator happens to have plow-agents installed must not
+    decide the result."""
+    import sys
+
+    from conftest import fake_docker
+
+    run("register", "rowan", str(instance("rowan")))
+    run("deploy", "rowan")
+    bindir = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    (bindir / "python3").symlink_to(sys.executable)
+
+    r = run("activate", "rowan", "ln_test", env={"PATH": str(bindir)})
+    assert r.returncode != 0
+    assert "plow-agents" in r.stderr
+
+
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")

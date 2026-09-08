@@ -323,13 +323,19 @@ thing that works.
 
 **The instance's own dotenv** — `$AGENT_HOME/.env`, the file that holds its
 Latch credential, mounted at the image's own HERMES_HOME (`/opt/data` for the
-legacy contract, `/var/lib/hermes` for the current one). It is also where the
-Plow token lives for a **legacy**-contract agent. A **current**-contract
-agent's Plow token instead lives OUTSIDE every home, in its own credential
-file (`~/.plow-credentials-<name>`, never under `$AGENT_HOME` — an agent's own
-container must not be able to reach a sibling's): the current base's own
-gateway truncates the token out of the dotenv after first boot, so that file
-is the durable copy from then on.
+legacy contract, `/var/lib/hermes` for the current one). The Plow token is
+**not** among them: it lives OUTSIDE every home, in its own credential file
+(`~/.plow-credentials-<name>`, never under `$AGENT_HOME` — an agent's own
+container must not be able to reach a sibling's), written there by
+`agent-mgr activate`. The current base's own gateway truncates the token out
+of the dotenv on every boot, so a copy found in one is a revoked shadow.
+
+That file is mounted by `compose.current.yml` alone, so **agent-mgr no longer
+credentials the legacy contract at all**: `activate` writes only that file, the
+dotenv skeleton no longer ships `PLOW_AGENT_TOKEN`, and nothing reads a token
+out of a dotenv any more. A legacy-contract agent can still be deployed and
+started; it just cannot be given a Plow credential by this tool. Move it to the
+current base.
 
 `$AGENT_HOME` is `~/.hermes-<name>` by convention, but it is whatever the
 instance *resolved* — an agent whose descriptor declares `AGENT_HOME` keeps its
@@ -406,7 +412,7 @@ looks busier.
 
 | dependency | what it is | pinned as |
 |---|---|---|
-| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `9703470`, a current-contract base (`/var/lib/hermes`, `plow-init`); `089a6b1` was the last base under the `/opt/data` contract, still bootable for an agent that pins it (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
+| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `9703470`, a current-contract base (`/var/lib/hermes`, `plow-init`); `089a6b1` was the last base under the `/opt/data` contract — still bootable for an agent that pins it, but no longer credentialable, since `activate` writes only the file the current contract mounts (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
 | [`plow-pbc/plow-agents`](https://github.com/plow-pbc/plow-agents) | the credential minter: `activate` shells out to `plow-agents mint <line> --credential-file <path>` | not pinned — a tool on `PATH`, like `docker` and `gh` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its home dotenv or an override's container environment, never from git |
 

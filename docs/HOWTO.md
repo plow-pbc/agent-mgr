@@ -214,12 +214,12 @@ What an archive is worth:
   outside. Grep `~/backup-homes.log` for `were not archived`.
 - A killed run leaves a truncated newest archive; `gzip -t <archive>` before
   restoring, and fall back to the previous night's.
-- A **current**-contract agent's **Plow credential** lives *outside* its home,
-  at `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`.
-  After that agent's first boot the file is the only host-side copy of its
-  token, so a run that cannot read one fails the night. A **legacy**-contract
-  agent has no such file — its token stays in the home's own dotenv and rides
-  in the home archive, so an all-legacy fleet gets no credentials archive at all.
+- An agent's **Plow credential** lives *outside* its home, at
+  `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`.
+  That file is the only host-side copy of the token — nothing keeps one in the
+  dotenv any more — so a run that cannot read one fails the night. A
+  **legacy**-contract agent has no such file and cannot be given one:
+  `activate` writes only what `compose.current.yml` mounts.
 
 ### Restoring a home
 

@@ -73,13 +73,13 @@ def load_spec(text, env):
             if r.get("prompt"):
                 raise SystemExit(f"row {r['name']!r}: no_agent skips the agent, "
                                  "so its prompt would never be read")
-        # Expand ${VAR} now, loudly. The env source holds credentials beside
-        # delivery ids (PLOW_AGENT_TOKEN one line under PLOW_HOME_CHANNEL), and
-        # an expanded deliver lands in hermes argv AND is persisted verbatim in
+        # Expand ${VAR} now, loudly. The env source is the CONTAINER's whole
+        # environment, which holds credentials beside delivery ids, and an
+        # expanded deliver lands in hermes argv AND is persisted verbatim in
         # jobs.json -- so only delivery identifiers, names ending in _UID or
         # _CHANNEL, may be referenced at all. A blank resolved value refuses
-        # too: deploy writes PLOW_HOME_CHANNEL= empty until activate runs, and
-        # "plow_chat:" is the silent-drop target this field exists to close.
+        # too: deploy writes PLOW_HOME_CHANNEL= empty until set-home fills it,
+        # and "plow_chat:" is the silent-drop target this field exists to close.
         tmpl = string.Template(r["deliver"])
         if not tmpl.is_valid():
             raise SystemExit(f"row {r['name']!r}: malformed ${{...}} in deliver")

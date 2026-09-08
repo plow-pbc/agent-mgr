@@ -192,10 +192,10 @@ def run(registry, tmp_path):
         e["AGENT_MGR_REGISTRY"] = str(registry)
         e["HOME"] = str(tmp_path / "home")
         (tmp_path / "home").mkdir(exist_ok=True)
-        # deploy fetches an agent's skills.tsv pins through fetch-tree, and
-        # activate curls the activation script -- so both a hermetic `gh` and a
-        # hermetic `curl` are on PATH for every invocation unless a test
-        # overrides PATH deliberately.
+        # deploy fetches an agent's skills.tsv pins through fetch-tree, and the
+        # probes shell out to curl -- so both a hermetic `gh` and a hermetic
+        # `curl` are on PATH for every invocation unless a test overrides PATH
+        # deliberately.
         b = fake_curl(tmp_path)
         install_fake_gh(tmp_path, b)
         e["PATH"] = f"{b}:{e['PATH']}"
