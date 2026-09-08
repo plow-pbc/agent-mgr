@@ -5,7 +5,6 @@ from conftest import ASSISTANT_CONTRACT
 
 from agent_mgr.cloud_models import (
     AssistantResource,
-    AssistantSlot,
     AssistantStatus,
     CreateAssistantRequest,
     FailureCode,
@@ -117,14 +116,16 @@ def test_deleted_resource_rejects_live_status() -> None:
     assert raised.value.code is ErrorCode.INVALID_RESPONSE
 
 
-@pytest.mark.parametrize("taken", [True, False], ids=["taken", "free"])
-def test_slot_round_trips_a_taken_and_a_free_line(taken: bool) -> None:
-    raw = {"line": ASSISTANT_CONTRACT[0]["line"], "assistant": ASSISTANT_CONTRACT[0] if taken else None}
+def test_resource_reads_past_the_credentials_the_api_sends() -> None:
+    """`credentials` is allowed and ignored, not parsed.
 
-    slot = AssistantSlot.from_json(raw)
+    Nothing here consumes a credential, so the field is neither read nor
+    forwarded -- but every assistant the API answers with carries it, and
+    refusing it as unknown would fail every cloud read.
+    """
+    raw = resource(credentials=[{"id": 7, "name": "agent", "scopes": ["chats:use"]}])
 
-    assert (slot.assistant is not None) is taken
-    assert slot.to_json() == raw
+    assert AssistantResource.from_json(raw).to_json() == ASSISTANT_CONTRACT[0]
 
 
 def test_resource_fixture_covers_and_round_trips_the_public_contract() -> None:

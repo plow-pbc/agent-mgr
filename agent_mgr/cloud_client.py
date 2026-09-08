@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from agent_mgr.cloud_http import CloudTransport
 from agent_mgr.cloud_models import (
     AssistantResource,
-    AssistantSlot,
     CreateAssistantRequest,
     nonempty_string,
 )
@@ -29,11 +28,12 @@ class CloudClient:
         value = self.transport.request("POST", CLOUD_PATH, request.to_json())
         return AssistantResource.from_json(value)
 
-    def list(self) -> tuple[AssistantSlot, ...]:
+    def list(self) -> tuple[AssistantResource, ...]:
+        """Every assistant the account runs. Free lines are not here: see `GET /v1/lines`."""
         value = self.transport.request("GET", CLOUD_PATH)
         if not isinstance(value, list):
-            raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "assistant slot list is not an array")
-        return tuple(AssistantSlot.from_json(item) for item in value)
+            raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "assistant list is not an array")
+        return tuple(AssistantResource.from_json(item) for item in value)
 
     def get(self, uid: str) -> AssistantResource:
         value = self.transport.request("GET", f"{CLOUD_PATH}/{_assistant_uid(uid)}")

@@ -23,9 +23,9 @@ class FailureCode(StrEnum):
     UNKNOWN = "unknown"
 
 
-# Every field an assistant carries on the wire. Allowed and required are the
-# same set: the API answers all of them on every route, so a response missing
-# one -- or carrying one more -- is contract drift this build must not read past.
+# Every field an assistant carries on the wire and this tool has an opinion
+# about. The API answers all of them on every route, so a response missing one
+# is contract drift this build must not read past.
 ASSISTANT_FIELDS = {
     "uid",
     "provider",
@@ -38,6 +38,12 @@ ASSISTANT_FIELDS = {
     "daily_payment_cap_usd",
     "verbose_output_enabled",
 }
+
+# The credentials an assistant runs with ride along on every response. Allowed
+# and ignored rather than parsed -- nothing here consumes one -- and allowed
+# rather than required, so one build reads the API on both sides of the deploy
+# that starts sending it.
+ASSISTANT_ALLOWED_FIELDS = ASSISTANT_FIELDS | {"credentials"}
 
 
 def _error(code: ErrorCode, message: str) -> NoReturn:
@@ -120,7 +126,7 @@ def _line(value: object) -> dict[str, JsonValue]:
 
 @dataclass(frozen=True, slots=True)
 class CreateAssistantRequest:
-    """Provision one assistant on one line. The slot is 1:1 with the line."""
+    """Provision one assistant on one line, one to one with the line."""
 
     line_uid: str
     name: str = "cloud agent"
@@ -167,7 +173,9 @@ class AssistantResource:
 
     @classmethod
     def _from_json(cls, value: object, *, expect_deleted: bool) -> AssistantResource:
-        payload = _object(value, ASSISTANT_FIELDS, ASSISTANT_FIELDS, ErrorCode.INVALID_RESPONSE)
+        payload = _object(
+            value, ASSISTANT_ALLOWED_FIELDS, ASSISTANT_FIELDS, ErrorCode.INVALID_RESPONSE
+        )
         status_value = payload["status"]
         failure_code_value = payload["failure_code"]
         verbose = payload["verbose_output_enabled"]
@@ -221,32 +229,4 @@ class AssistantResource:
             "failure_code": None if self.failure_code is None else self.failure_code.value,
             "daily_payment_cap_usd": self.daily_payment_cap_usd,
             "verbose_output_enabled": self.verbose_output_enabled,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class AssistantSlot:
-    """One line in the pool and the caller's assistant on it, or null when free.
-
-    The listing answers a slot per line rather than a row per assistant, so an
-    empty line is as much of an answer as a taken one.
-    """
-
-    line: dict[str, JsonValue]
-    assistant: AssistantResource | None
-
-    @classmethod
-    def from_json(cls, value: object) -> AssistantSlot:
-        fields = {"line", "assistant"}
-        payload = _object(value, fields, fields, ErrorCode.INVALID_RESPONSE)
-        assistant = payload["assistant"]
-        return cls(
-            line=_line(payload["line"]),
-            assistant=None if assistant is None else AssistantResource.from_json(assistant),
-        )
-
-    def to_json(self) -> dict[str, JsonValue]:
-        return {
-            "line": dict(self.line),
-            "assistant": None if self.assistant is None else self.assistant.to_json(),
         }

@@ -10,7 +10,8 @@ from agent_mgr.errors import AgentMgrError, ErrorCode
 from agent_mgr.models import JsonValue
 
 RUNNING = ASSISTANT_CONTRACT[0]
-TAKEN_SLOT = {"line": RUNNING["line"], "assistant": RUNNING}
+# The shape the collection used to answer with. It is drift now, not a row.
+SLOT = {"line": RUNNING["line"], "assistant": RUNNING}
 
 
 @dataclass
@@ -33,10 +34,10 @@ class FakeTransport:
 
 @pytest.mark.parametrize(
     "response",
-    [TAKEN_SLOT, [TAKEN_SLOT, RUNNING]],
-    ids=["not an array", "an item that is not a slot"],
+    [RUNNING, [RUNNING, SLOT]],
+    ids=["not an array", "an item that is not an assistant"],
 )
-def test_list_rejects_a_response_that_is_not_slots(response: object) -> None:
+def test_list_rejects_a_response_that_is_not_a_flat_assistant_array(response: object) -> None:
     transport = FakeTransport(response)
 
     with pytest.raises(AgentMgrError) as raised:

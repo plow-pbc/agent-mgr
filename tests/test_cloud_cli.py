@@ -13,10 +13,6 @@ from conftest import ASSISTANT_CONTRACT, ROOT
 TOKEN = "test-token"
 
 
-def _slot(resource: dict[str, Any] | None, line: dict[str, Any]) -> dict[str, Any]:
-    return {"line": line, "assistant": resource}
-
-
 class _CloudServer:
     def __init__(self) -> None:
         self.requests: list[tuple[str, str, object | None]] = []
@@ -128,15 +124,18 @@ def test_cloud_create_reads_the_api_request_shape_from_stdin(run, cloud_server) 
     ]
 
 
-def test_cloud_list_emits_taken_and_free_slots(run, cloud_server) -> None:
-    taken, spare = ASSISTANT_CONTRACT[:2]
-    slots = [_slot(taken, taken["line"]), _slot(None, spare["line"])]
-    cloud_server.respond(slots)
+def test_cloud_list_emits_every_assistant_the_account_runs(run, cloud_server) -> None:
+    """A flat array of assistants under `assistants`, each naming its own line.
+
+    Served with the `credentials` the API now sends: agent-mgr reads past it.
+    """
+    assistants = ASSISTANT_CONTRACT[:2]
+    cloud_server.respond([assistant | {"credentials": []} for assistant in assistants])
 
     result = run("--json", "cloud-list", env=cloud_server.environment)
 
     assert result.returncode == 0
-    assert _json_document(result, "cloud-list")["result"] == {"slots": slots}
+    assert _json_document(result, "cloud-list")["result"] == {"assistants": assistants}
     assert cloud_server.requests == [("GET", "/v1/assistants", None)]
 
 

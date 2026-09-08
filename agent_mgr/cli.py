@@ -162,7 +162,7 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
     if operation == "cloud-list":
         _need(args, 0, "agent-mgr --json cloud-list")
         client = CloudClient(HttpCloudTransport.from_environment(os.environ))
-        _emit(operation, {"slots": [slot.to_json() for slot in client.list()]})
+        _emit(operation, {"assistants": [assistant.to_json() for assistant in client.list()]})
         return 0
     if operation == "cloud-get":
         _need(args, 1, "agent-mgr --json cloud-get <assistant-uid>")

@@ -146,11 +146,13 @@ agent-mgr --json cloud-move ASSISTANT_UID ln_other
 agent-mgr --json cloud-delete ASSISTANT_UID
 ```
 
-An assistant is one runtime on one line, and the slot is 1:1 — so an assistant
-is created *for a line*, not for a set of chats, and `cloud-list` answers one
-slot per line in the pool, carrying either the assistant on it or `null`. Its
-lifecycle-anchor chats are lifecycle state rather than something a caller sets:
-moving an assistant to another line is `cloud-move`, and the anchors follow.
+An assistant is one runtime on one line, one to one — so an assistant is
+created *for a line*, not for a set of chats, and `cloud-list` answers a flat
+array of the assistants the account runs, each naming its own line. A line with
+no assistant is not in that answer; the API's `GET /v1/lines` is where free
+lines live. Its lifecycle-anchor chats are lifecycle state rather than
+something a caller sets: moving an assistant to another line is `cloud-move`,
+and the anchors follow.
 
 Create normally returns `status: "provisioning"`. Callers should poll
 `cloud-get` until the assistant reaches `running`, `failed`, or `teardown`.
