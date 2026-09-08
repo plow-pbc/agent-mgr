@@ -13,7 +13,6 @@ from pathlib import Path
 from .artifacts import Artifact, fetch, validate_revision
 from .boot_contract import (
     credentials_host_path,
-    home_target,
     read_plow_credentials,
     require_running_contract_matches,
 )
@@ -395,22 +394,17 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
 
 
 def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
-    # The RUNNING container's contract, not the image's -- and not the two
-    # COMPARED either, the way the exec paths do it: mid-migration the legacy
-    # container is still live, and reading its still-valid dotenv token is
-    # exactly the recovery the operator came here for.
-    container = require_running(agent, registry)
-    target = home_target(container)
-    if target is None:
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR,
-            f"docker could not report {agent.name}'s running container's baked HERMES_HOME",
-        )
-    base, token = read_plow_credentials(agent, target)
+    # No contract derivation: the credential lives in one file under either
+    # one, so which contract the running container was created under does not
+    # decide where its token is read from. Still requires a RUNNING container,
+    # because the curl runs inside it.
+    require_running(agent, registry)
+    base, token = read_plow_credentials(agent)
     if not token:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            f"PLOW_AGENT_TOKEN is empty for {agent.name} -- run 'agent-mgr activate {agent.name}' first",
+            f"PLOW_AGENT_TOKEN is empty for {agent.name} -- "
+            f"run 'agent-mgr activate {agent.name} <line-uid>' first",
         )
     base = base or "https://api.plow.co"
     response = compose(

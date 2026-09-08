@@ -148,15 +148,16 @@ def ensure_credentials(agent: ResolvedAgent) -> Path:
     )
 
 
-def read_plow_credentials(agent: ResolvedAgent, target: str) -> tuple[str, str]:
-    """(PLOW_API_BASE, PLOW_AGENT_TOKEN) for the container `target` describes.
+def read_plow_credentials(agent: ResolvedAgent) -> tuple[str, str]:
+    """(PLOW_API_BASE, PLOW_AGENT_TOKEN), from the one file that holds them.
 
-    One source under either boot contract: the credential file outside every
-    agent's home, the same file ensure_credentials() requires and `activate`
-    writes. The home dotenv was the legacy contract's copy and is not read at
-    all any more -- the current gateway truncates those keys out of it on
-    every boot, so what is left there is a revoked shadow. Read-only: callers
-    that need to WRITE go through `activate`.
+    One source under either boot contract, so no caller has to derive which
+    one it is: the credential file outside every agent's home, the same file
+    ensure_credentials() requires and `activate` writes. The home dotenv was
+    the legacy contract's copy and is not read at all any more -- the current
+    gateway truncates those keys out of it on every boot, so what is left
+    there is a revoked shadow. Read-only: callers that need to WRITE go
+    through `activate`.
     """
     source = credentials_host_path(agent)
     if not source.is_file():

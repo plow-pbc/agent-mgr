@@ -438,16 +438,14 @@ def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
     return env_file
 
 
-@pytest.mark.parametrize("container_home_env", [None, "/opt/data"])
-def test_chats_reads_the_token_from_the_credential_file(
-        run, instance, tmp_path, container_home_env):
-    """One source under either boot contract -- including mid-migration, where
-    a deploy made the current image inspectable and then failed before
-    recreation, so the LEGACY container is still live.
+def test_chats_reads_the_token_from_the_credential_file(run, instance, tmp_path):
+    """One source, under either boot contract -- so `chats` derives no
+    contract at all, and the mid-migration row this used to carry asks the
+    same question as this one.
 
-    The dotenv was that contract's copy, and the current gateway truncates
-    these keys out of it on every boot: what is left there is a revoked
-    shadow, and reading it is what took the STR agent offline (#174).
+    The dotenv was the legacy contract's copy, and the current gateway
+    truncates these keys out of it on every boot: what is left there is a
+    revoked shadow, and reading it is what took the STR agent offline (#174).
     PLOW_HOME_CHANNEL is unaffected -- it is not a truncated key."""
     _with_plow(run, instance, tmp_path)
     (tmp_path / "home" / ".hermes-property" / ".env").write_text(
@@ -455,7 +453,6 @@ def test_chats_reads_the_token_from_the_credential_file(
     log = tmp_path / "docker.log"
     r = run("chats", "property", env=_bin(
         tmp_path, "property", log=log, home_env="/var/lib/hermes",
-        container_home_env=container_home_env,
         exec_output=_chats_response(("cht_old_dm", None))))
     assert r.returncode == 0, r.stderr
     assert "cht_old_dm" in r.stdout
