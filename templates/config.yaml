@@ -70,9 +70,10 @@ plugins:
   - plow-chat-platform
   entries:
     plow-chat-platform:
-      # The plugin registers one platform and no tools. Denying overrides keeps
-      # a future plugin change from silently shadowing an image tool of the
-      # same name, which would be invisible from this file.
+      # The plugin registers the chat platform AND its own plow_* tools -- which
+      # ones is hermes-plow-chat's to say, so this file does not name them.
+      # Denying overrides is what keeps one of them from silently shadowing an
+      # image tool of the same name, which would be invisible from here.
       allow_tool_override: false
 platforms:
   plow_chat:
