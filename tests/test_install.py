@@ -44,12 +44,17 @@ printf 'PLOW_API_BASE=https://api.plow.co\\nPLOW_AGENT_TOKEN=tok_new\\n' > "$out
 """
 
 
-def test_activate_mints_into_the_credential_file(run, instance, tmp_path):
-    """activate writes ~/.plow-credentials-<name>, never the home dotenv.
+@pytest.mark.parametrize("home_env,mints", [("/var/lib/hermes", True), ("/opt/data", False)],
+                         ids=["current-contract", "legacy-contract"])
+def test_activate_mints_only_for_the_contract_that_mounts_the_file(
+        run, instance, tmp_path, home_env, mints):
+    """activate writes ~/.plow-credentials-<name>, never the home dotenv -- and
+    only for the contract that mounts it.
 
-    A current-contract fake, because only that contract mounts the file this
-    writes -- asserting success against the legacy default would be asserting
-    a contradiction.
+    compose.legacy.yml never mounts that file, so minting for a legacy agent
+    would revoke its live key to write somewhere the container cannot read.
+    The refusal has to land before the mint, because the mint is irreversible;
+    `argv_log` staying absent is what proves it did.
     """
     import os
 
@@ -60,7 +65,7 @@ def test_activate_mints_into_the_credential_file(run, instance, tmp_path):
     argv_log = tmp_path / "plow-agents.argv"
     bindir = fake_docker(
         tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
-        home_env="/var/lib/hermes",
+        home_env=home_env,
     )
     stub = bindir / "plow-agents"
     stub.write_text(PLOW_AGENTS_STUB)
@@ -68,9 +73,14 @@ def test_activate_mints_into_the_credential_file(run, instance, tmp_path):
 
     r = run("activate", "rowan", "ln_test",
             env={"ARGV_LOG": str(argv_log), "PATH": f"{bindir}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr
 
     credential = tmp_path / "home" / ".plow-credentials-rowan"
+    if not mints:
+        assert r.returncode != 0
+        assert "legacy contract" in r.stderr
+        assert not argv_log.exists()
+        return
+    assert r.returncode == 0, r.stderr
     assert "PLOW_AGENT_TOKEN=tok_new" in credential.read_text()
     # The line uid is what decides the role, so it has to reach the mint.
     assert argv_log.read_text().split() == [
@@ -100,29 +110,6 @@ def test_activate_says_how_to_install_plow_agents(run, instance, tmp_path):
     r = run("activate", "rowan", "ln_test", env={"PATH": str(bindir)})
     assert r.returncode != 0
     assert "plow-agents" in r.stderr
-
-
-def test_activate_refuses_a_legacy_contract_agent(run, instance, tmp_path):
-    """The legacy contract never mounts the credential file, so minting for one
-    would revoke its live key to write somewhere it cannot read. The default
-    fixture is legacy, which is the whole point of this case."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    import os
-
-    argv_log = tmp_path / "plow-agents.argv"
-    stubdir = tmp_path / "stub"
-    stubdir.mkdir()
-    stub = stubdir / "plow-agents"
-    stub.write_text(PLOW_AGENTS_STUB)
-    stub.chmod(0o755)
-
-    r = run("activate", "rowan", "ln_test",
-            env={"ARGV_LOG": str(argv_log), "PATH": f"{stubdir}:{os.environ['PATH']}"})
-    assert r.returncode != 0
-    assert "legacy contract" in r.stderr
-    # The refusal has to come BEFORE the mint: it is irreversible.
-    assert not argv_log.exists()
 
 
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
