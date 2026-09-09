@@ -17,8 +17,7 @@ exited 0, and not whether the suppression carries a comment.
 
 A suppression is a **design decision** when the failure is surfaced and
 classified: a reload that prints which agent did not restart and the command to
-run; `activate` printing "SUCCEEDED — do NOT re-run" because a red exit would
-cost a second one-time activation; a relay probe that splits `000` from `401`,
+run; a relay probe that splits `000` from `401`,
 because a dead network and a dead credential need different fixes. Several
 `|| true` and `2>/dev/null` sites swallow a plain absence — a missing registry,
 key or row the next line handles — and need no defence at all.

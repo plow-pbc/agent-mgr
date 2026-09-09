@@ -43,7 +43,7 @@ agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
 mirrors the cloud Hermes infrastructure in
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
 the same plugin and the same protocol to the same API. The fleet pin in
-`runtime/stack.json` is `plow-pbc/plow-hermes-agent` `9703470`, a
+`runtime/stack.json` is `plow-pbc/plow-hermes-agent` `cd2a898`, a
 current-contract base: the home at `/var/lib/hermes`, the gateway gated
 behind a `/var/lib/plow/credentials` file, promoted at container creation
 from a bind-mounted `.host` copy this repository writes. agent-mgr derives
@@ -74,9 +74,11 @@ the checksum before running it.
 It runs on the Linux host the fleet lives on and on macOS with Python 3.11+.
 `python3`, `docker` and
 an authenticated `gh` have to be on `PATH` — `deploy` installs an agent's
-`skills.tsv` pins through `gh api`, and `activate` fetches its script the same
-way. The Plow Chat plugin and the seed skills (`google-workspace`,
-`plow-invite`) come from the image itself.
+`skills.tsv` pins through `gh api`. `activate` needs
+[`plow-agents`](https://github.com/plow-pbc/plow-agents) there too, logged in
+once per machine — it owns minting an agent's Plow credential. The Plow Chat
+plugin and the seed skills (`google-workspace`, `plow-invite`) come from the
+image itself.
 
 Then the whole setup, end to end (the [HOWTO](docs/HOWTO.md) explains each
 step; `docker`, `python3` and an authenticated `gh` are the install block's
@@ -94,10 +96,11 @@ agent-mgr deploy errands              # home, config, pinned skills, deploy hook
 # 3. Per-person config (after deploy, before up)
 agent-mgr resolve errands             # prints AGENT_HOME — put AGENT_TZ=... in the .env there
 
-# 4. Activate, start, sign in. If the agent will drive a Mac, Plow Latch must
-#    already be registered on it: activation fixes the credential's role by
-#    whether the account has one, and narrowing cannot widen later.
-agent-mgr activate errands            # text the code from the owner's phone; one-time spend
+# 4. Activate, start, sign in. Plow decides the credential's scopes from the
+#    line it is minted against, so register Plow Latch on the owner's Mac
+#    first if the agent will drive one.
+plow-agents lines                     # note the line uid — once per machine, after `plow-agents login`
+agent-mgr activate errands ln_...     # mints ~/.plow-credentials-errands; repeatable
 agent-mgr up errands
 agent-mgr cron-sync errands           # only if its agent.env names a cron spec
 agent-mgr sign-in errands             # device-code OAuth in the owner's browser
@@ -254,7 +257,7 @@ shape: a second copy of something `agent-mgr` already owns.
 | `compose.override.yml` | if it needs a derived image or extra mounts | paths must go through a variable set in `agent.env`, and a `build:` needs `pull_policy: never` beside it — [HOWTO](docs/HOWTO.md#where-does-my-code-go) has the shape and what `resolve-guard` refuses without it |
 | `AGENT_LIVE=1` | if real people's workflows run through it | declared in `agent.env`; the gateway messages its person at every restart, so a restart of a live agent is user-visible. agent-mgr asks `[y/N]` at a terminal before any transition and refuses non-interactively unless `AGENT_TRANSITION_ACK=1` — the explicit acknowledgement for automation that means to restart. Once admitted, container shutdown gives Hermes up to 30 seconds to checkpoint the interrupted session and release its database leases before s6 escalates |
 | a deploy hook | if it has its own deploy step | named by `AGENT_DEPLOY_HOOK`; `deploy` sequences it, so one command is the whole deploy -- except crons, which are `cron-sync`'s and run against a live gateway |
-| a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command — except `activate`, which reports success and skips the restart, having already spent a one-time activation a red exit would invite you to spend again. `deploy` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
+| a pre-transition guard | if stopping it at the wrong moment costs something | named by `AGENT_PRE_TRANSITION`; every route to a container transition asks it first, and a refusal refuses the command. `deploy` asks twice — a preflight, then the reload it ends with — so write it to be safe to ask more than once |
 
 What must **not** be there is the common half: **no `compose.yml`, no activation
 script, no `model-provider` or `reload-if-running`, no hand-rolled cron
@@ -264,7 +267,7 @@ near-miss: keep it for this agent's own recipes and tests, never to restate
 `up`, `deploy` or `activate`.
 
 **Pin upstream, never vendor it.** Every artifact from another repo arrives at
-an exact ref: a git artifact (an instance skill, the activation script) by 40-char SHA, a container image
+an exact ref: a git artifact (an instance skill) by 40-char SHA, a container image
 by `sha256:` digest — never a tag or a branch. (One exception: an image this host
 **builds**, which may carry any tag — the rentals agent's
 `sams-str-hermes-agent:local`, say. A `build:` service must declare
@@ -320,13 +323,19 @@ thing that works.
 
 **The instance's own dotenv** — `$AGENT_HOME/.env`, the file that holds its
 Latch credential, mounted at the image's own HERMES_HOME (`/opt/data` for the
-legacy contract, `/var/lib/hermes` for the current one). It is also where the
-Plow token lives for a **legacy**-contract agent. A **current**-contract
-agent's Plow token instead lives OUTSIDE every home, in its own credential
-file (`~/.plow-credentials-<name>`, never under `$AGENT_HOME` — an agent's own
-container must not be able to reach a sibling's): the current base's own
-gateway truncates the token out of the dotenv after first boot, so that file
-is the durable copy from then on.
+legacy contract, `/var/lib/hermes` for the current one). The Plow token is
+**not** among them: it lives OUTSIDE every home, in its own credential file
+(`~/.plow-credentials-<name>`, never under `$AGENT_HOME` — an agent's own
+container must not be able to reach a sibling's), written there by
+`agent-mgr activate`. The current base's own gateway truncates the token out
+of the dotenv on every boot, so a copy found in one is a revoked shadow.
+
+That file is mounted by `compose.current.yml` alone, so **agent-mgr no longer
+credentials the legacy contract at all**: `activate` writes only that file, the
+dotenv skeleton no longer ships `PLOW_AGENT_TOKEN`, and nothing reads a token
+out of a dotenv any more. A legacy-contract agent can still be deployed and
+started; it just cannot be given a Plow credential by this tool. Move it to the
+current base.
 
 `$AGENT_HOME` is `~/.hermes-<name>` by convention, but it is whatever the
 instance *resolved* — an agent whose descriptor declares `AGENT_HOME` keeps its
@@ -403,29 +412,19 @@ looks busier.
 
 | dependency | what it is | pinned as |
 |---|---|---|
-| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `9703470`, a current-contract base (`/var/lib/hermes`, `plow-init`); `089a6b1` was the last base under the `/opt/data` contract, still bootable for an agent that pins it (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
-| [`plow-pbc/hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat), earlier | `ref/scripts/create_plow_chat_curl.sh`, which `activate` fetches | a **40-char SHA**, at `artifacts.plow_chat_activation` in `runtime/stack.json` |
+| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `cd2a898`, a current-contract base (`/var/lib/hermes`, `plow-init`) whose `plow-init` also strips the legacy `PLOW_CHAT_TOKEN`/`PLOW_CHAT_BASE_URL` aliases (plow-hermes-agent#56); `089a6b1` was the last base under the `/opt/data` contract — still bootable for an agent that pins it, but no longer credentialable, since `activate` writes only the file the current contract mounts (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
+| [`plow-pbc/plow-agents`](https://github.com/plow-pbc/plow-agents) | the credential minter: `activate` shells out to `plow-agents mint <line> --credential-file <path>` | not pinned — a tool on `PATH`, like `docker` and `gh` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its home dotenv or an override's container environment, never from git |
 
-Both pins are exact on purpose — a `sha256:` digest for the image, and a
-40-char SHA for the activation script taken from `hermes-plow-chat`. A tag or a
-branch re-resolves on the next pull, which silently changes a large unreviewed
-surface under a running agent that holds live credentials — and for the image,
-one that carries the chat plugin holding the chat token.
+The image pin is exact on purpose — a `sha256:` digest. A tag or a branch
+re-resolves on the next pull, which silently changes a large unreviewed
+surface under a running agent that holds live credentials, and this one
+carries the chat plugin holding the chat token.
 
-**The one `hermes-plow-chat` pin, `artifacts.plow_chat_activation`, may not
-be bumped.** `Strip the SEED ceremony` deleted `ref/scripts/`, and
-`create_plow_chat_curl.sh` exists only before it; a later SHA 404s on
-`activate`, the one command that is a one-time irreversible spend.
-`tests/test_install.py` pins the SHA. The plugin and the seed skills used to
-be pinned beside it from the same repo's later history; they come from the
-image now. `artifacts.plow_chat_activation` is frozen at a pre-strip commit and must not be
-bumped forward at all — not to `HEAD`, not to any later SHA. That is the
-realistic slip rather than the collapse above: someone reaching for "latest in
-`hermes-plow-chat`" lands on `HEAD`, where the path this ref names no longer
-exists. No test can prove the *ancestry* — that needs another repo's history —
-so the suite pins the SHA itself, which reddens on any bump and makes moving
-that ref deliberate.
+`activate` used to fetch a bash installer from `hermes-plow-chat` at a frozen
+SHA; that repo deleted the file, and the pin froze a path that no longer
+exists. `plow-agents` owns minting now, so there is nothing left to pin —
+which is also why it is a tool on `PATH` rather than a fetched artifact.
 
 ## Sharing with `plow-pbc/plow`
 

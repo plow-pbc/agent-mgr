@@ -208,41 +208,38 @@ def _resolved_agent(monkeypatch, run, instance, registry, tmp_path, name="rowan"
     return resolve_agent(name, Registry(registry), ROOT)
 
 
-FRESH = "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n"
-KEPT = "PLOW_API_BASE=https://old.example\nPLOW_AGENT_TOKEN=tok_old\n"
+LIVE = "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_live\n"
+SHADOW = "PLOW_API_BASE=https://stale.example\nPLOW_AGENT_TOKEN=tok_stale\n"
 
 
-@pytest.mark.parametrize(("dotenv", "existing", "expected"), [
-    pytest.param(FRESH, None, FRESH, id="dotenv-wins"),
-    # After first boot the current base truncates these keys out of the
-    # dotenv, so this file is the only remaining copy -- refreshing it from an
-    # empty dotenv would erase the agent's credential, not protect it.
-    pytest.param("PLOW_HOME_CHANNEL=cht_x\nPLOW_AGENT_TOKEN=\n", KEPT, KEPT, id="existing-file"),
-    pytest.param(None, None, None, id="missing"),
-])
-def test_ensure_credentials_resolves_the_only_host_side_copy(
-        monkeypatch, run, instance, registry, tmp_path, dotenv, existing, expected):
+@pytest.mark.parametrize("existing", [LIVE, None], ids=["the-file", "nothing"])
+def test_ensure_credentials_never_rebuilds_from_a_dotenv_shadow(
+        monkeypatch, run, instance, registry, tmp_path, existing):
+    """#174: plow-init strips these keys out of the home dotenv on every boot,
+    so a copy found there is a revoked shadow -- and rebuilding the durable
+    credential from one is what took the STR agent offline. With no file
+    there is nothing to fall back TO: it fails loudly, naming activate."""
     from agent_mgr import boot_contract
     from agent_mgr.errors import AgentMgrError
     agent = _resolved_agent(monkeypatch, run, instance, registry, tmp_path)
     destination = boot_contract.credentials_host_path(agent)
-    if dotenv:
-        (agent.home / ".env").write_text(dotenv)
-    if existing:
-        destination.write_text(existing)
-    if expected is None:
+    (agent.home / ".env").write_text(SHADOW)
+    if existing is None:
         with pytest.raises(AgentMgrError) as exc:
             boot_contract.ensure_credentials(agent)
         assert "rowan" in str(exc.value) and "activate" in str(exc.value)
         return
+    destination.write_text(existing)
     assert boot_contract.ensure_credentials(agent) == destination
-    assert destination.read_text() == expected
+    assert destination.read_text() == LIVE
 
 
 def _seed_credentials(tmp_path, name):
+    """The home, plus the credential file `activate` would have minted beside
+    it -- outside the home, which is the whole point of that path."""
     home = tmp_path / "home" / f".hermes-{name}"
     home.mkdir(parents=True, exist_ok=True)
-    (home / ".env").write_text("PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n")
+    (tmp_path / "home" / f".plow-credentials-{name}").write_text(LIVE)
     return home
 
 
@@ -268,13 +265,11 @@ def test_up_force_recreates_for_the_current_contract_only(
     current = home_env == "/var/lib/hermes"
     assert ("--force-recreate" in log.read_text()) == current
     # Outside home -- the run() fixture points HOME at tmp_path/"home" for
-    # the subprocess, which is what credentials_host_path() resolves against.
+    # the subprocess, which is what credentials_host_path() resolves against --
+    # and read, never rewritten: `activate` is the only writer.
     credentials_host = tmp_path / "home" / f".plow-credentials-{name}"
     assert not str(credentials_host).startswith(str(home))
-    written = credentials_host.read_text() if credentials_host.is_file() else ""
-    assert written == (
-        "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_x\n" if current else ""
-    )
+    assert credentials_host.read_text() == LIVE
 
 
 @pytest.mark.parametrize("verb", ["start", "restart", "unpause"])
@@ -295,7 +290,7 @@ def test_compose_refuses_a_native_resume_for_the_current_contract_only(
         assert r.returncode == 0, r.stderr
 
 
-@pytest.mark.parametrize(("run_args", "staged"), [
+@pytest.mark.parametrize(("run_args", "requires"), [
     # Every verb that makes a container, through both dispatch paths -- the
     # image's cont-init promotes the credential at creation and never again,
     # and its read-only bind source must already BE a file or Docker leaves a
@@ -303,18 +298,22 @@ def test_compose_refuses_a_native_resume_for_the_current_contract_only(
     (("up", "rowan"), True),
     (("compose", "rowan", "create"), True),
     (("compose", "rowan", "run", "--entrypoint", "true"), True),
-    # And the verbs that make none, where writing (or requiring) a credential
-    # would be pointless at best and a spurious refusal at worst.
+    # And the verbs that make none, where demanding a credential would be a
+    # spurious refusal.
     (("down", "rowan"), False),
     (("compose", "rowan", "stop"), False),
     (("compose", "rowan", "kill"), False),
     (("compose", "rowan", "pause"), False),
 ])
-def test_only_container_creating_verbs_stage_the_current_credential(
-        run, instance, tmp_path, run_args, staged):
+def test_only_container_creating_verbs_require_the_current_credential(
+        run, instance, tmp_path, run_args, requires):
+    """Un-activated: no credential file at all. agent-mgr no longer derives one
+    from the dotenv, so the creating verbs refuse and name activate."""
     run("register", "rowan", str(instance("rowan")))
-    home = _seed_credentials(tmp_path, "rowan")
+    home = tmp_path / "home" / ".hermes-rowan"
+    home.mkdir(parents=True, exist_ok=True)
     b = fake_docker(tmp_path, home=home, name="rowan", home_env="/var/lib/hermes")
     r = run(*run_args, env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, r.stderr
-    assert (tmp_path / "home" / ".plow-credentials-rowan").is_file() == staged
+    assert (r.returncode != 0) == requires, r.stderr
+    if requires:
+        assert "activate" in r.stderr

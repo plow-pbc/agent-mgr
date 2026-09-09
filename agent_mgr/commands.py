@@ -4,20 +4,25 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
-import tempfile
 import termios
 from pathlib import Path
 
-from .artifacts import Artifact, fetch, stack, validate_revision
-from .boot_contract import home_target, read_plow_credentials, require_running_contract_matches
-from .cloud_http import HttpCloudTransport
-from .deploy import publish_activation_env, reload_if_running
+from .artifacts import Artifact, fetch, validate_revision
+from .boot_contract import (
+    CURRENT_HOME,
+    credentials_host_path,
+    read_plow_credentials,
+    require_home_target,
+    require_running_contract_matches,
+)
+from .deploy import reload_if_running
 from .errors import AgentMgrError, ErrorCode
 from .files import atomic_write, dotenv_declares, dotenv_read, read_regular_text
 from .local import compose, require_own_home, require_running, resolve_guard
-from .models import JsonValue, ResolvedAgent
+from .models import ResolvedAgent
 from .registry import Registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -67,159 +72,42 @@ def cron_sync(agent: ResolvedAgent, registry: Registry) -> int:
     ).returncode
 
 
-def activate(agent: ResolvedAgent, registry: Registry) -> int:
+def activate(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
+    """Mint this agent's Plow credential into its durable two-key file.
+
+    `plow-agents` owns minting -- it asks the server for the assistant role by
+    naming a line, revokes the key the file already named before writing the
+    new one, and writes atomically at 0600. agent-mgr's job is only to say
+    WHICH file. The credential never touches the home dotenv: plow-init strips
+    those keys on every boot, and the dotenv is root-owned besides (#163).
+    """
     require_own_home(agent, registry)
     if not agent.home.is_dir():
         raise AgentMgrError(
             ErrorCode.IO_ERROR, f"no {agent.home} -- run 'agent-mgr deploy {agent.name}' first"
         )
-    dotenv = agent.home / ".env"
-    existing_home = (
-        dotenv_read(dotenv, "PLOW_HOME_CHANNEL") or dotenv_read(dotenv, "PLOW_CHAT_CHAT_UID")
-        if dotenv.is_file()
-        else ""
-    )
-    artifact = stack()["plow_chat_activation"]
-    revision = os.environ.get("AGENT_MGR_ACTIVATE_REF", artifact.revision)
-    validate_revision(revision, "the activate ref", ErrorCode.INVALID_ARGUMENT)
-    with tempfile.NamedTemporaryFile() as script:
-        url = (
-            f"https://raw.githubusercontent.com/{artifact.repository}/{revision}/{artifact.source}"
-        )
-        if subprocess.run(["curl", "-fsSL", url, "-o", script.name], check=False).returncode:
-            raise AgentMgrError(
-                ErrorCode.IO_ERROR, f"could not fetch activation script at {revision[:7]}"
-            )
-        result = subprocess.run(["bash", script.name, "--data-dir", str(agent.home)], check=False)
-    if result.returncode:
-        return result.returncode
-    try:
-        # The frozen installer writes a fresh legacy pair. Publish its token
-        # and the durable pre-bind home in one replacement before narrowing.
-        publish_activation_env(agent, existing_home)
-        narrow_chat_credential(agent)
-    except AgentMgrError as error:
-        # The phone bind already succeeded. Report the idempotent follow-up
-        # instead of inviting another activation that would mint yet another
-        # credential and DM.
-        print(
-            "activation SUCCEEDED under a broad credential -- do NOT re-run activate; "
-            f"run 'agent-mgr scope-chat-credential {agent.name}' after fixing: {error.message}",
-            file=sys.stderr,
-        )
-        return 0
-    try:
-        reload_if_running(agent, registry, "the credential just written")
-    except AgentMgrError:
-        print(
-            "activation SUCCEEDED and the credential is written -- do NOT re-run activate",
-            file=sys.stderr,
-        )
-    return 0
-
-
-class AlreadyNarrowed(AgentMgrError):
-    """/v1/relay/info refused the credential: it no longer holds the wildcard
-    grant, so it was narrowed already. Distinct from any other rejection in
-    the same flow, which stays a failure."""
-
-
-def narrow_chat_credential(agent: ResolvedAgent) -> int:
-    """Convert an activation credential to line reach in place."""
-    dotenv = agent.home / ".env"
-    if not dotenv.is_file():
+    if shutil.which("plow-agents") is None:
         raise AgentMgrError(
-            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr deploy {agent.name}' first"
+            ErrorCode.IO_ERROR,
+            "plow-agents is not on PATH -- clone plow-pbc/plow-agents and add its bin/ "
+            "to PATH, then run 'plow-agents login' once on this machine",
         )
-    home_uid = dotenv_read(dotenv, "PLOW_HOME_CHANNEL")
-    token = dotenv_read(dotenv, "PLOW_AGENT_TOKEN")
-    if not home_uid or not token:
+    if require_home_target(agent) != CURRENT_HOME:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            f"incomplete Plow credential in {dotenv} -- activation must write a home and token together",
+            f"{agent.name} boots the legacy contract, which never mounts the credential "
+            f"file this writes -- minting would revoke its live key for a file it cannot "
+            f"read. Move it to a current-contract base first (see #130).",
         )
-    base = dotenv_read(dotenv, "PLOW_API_BASE") or "https://api.plow.co"
-    transport = HttpCloudTransport.from_environment(
-        {"PLOW_API_BASE": base, "PLOW_API_TOKEN": token}
+    destination = credentials_host_path(agent)
+    result = subprocess.run(
+        ["plow-agents", "mint", line_uid, "--credential-file", str(destination)],
+        check=False,
     )
-    chat = transport.request("GET", f"/v1/chats/{home_uid}")
-    if not isinstance(chat, dict):
-        raise AgentMgrError(ErrorCode.INVALID_RESPONSE, "home chat returned invalid JSON")
-    participants = chat.get("participants")
-    if not isinstance(participants, list):
-        raise AgentMgrError(ErrorCode.IO_ERROR, "home chat has no participant roster")
-    agents = [
-        participant
-        for participant in participants
-        if isinstance(participant, dict) and participant.get("type") == "agent"
-    ]
-    self_agents = [
-        participant for participant in agents if participant.get("relationship") == "self"
-    ]
-    current = self_agents[0] if len(self_agents) == 1 else agents[0] if len(agents) == 1 else None
-    line = current.get("line") if current is not None else None
-    line_uid = line.get("uid") if isinstance(line, dict) else None
-    if not isinstance(line_uid, str) or not line_uid:
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR, "home chat did not identify exactly one current agent line"
-        )
-    # The same role plow's own cloud seam mints (relay/agent_credentials.py):
-    # with a Mac on the account the credential reaches it -- `relay:call` is
-    # what makes `GET /v1/agents/cloud/me` answer an `mcp_url`, which is how a
-    # plow-init image learns it has a relay server at all -- and without one it
-    # keeps to its chats and its model. Asked of the bootstrap credential,
-    # whose wildcard grant clears the relay:device gate on /v1/relay/info.
-    try:
-        info = transport.request("GET", "/v1/relay/info")
-    except AgentMgrError as error:
-        # This one request, and only its 403: relay:device is what the
-        # bootstrap credential's wildcard grant clears, so a credential that
-        # lacks it was narrowed already and its role settled then.
-        if (
-            error.code is ErrorCode.REMOTE_REJECTED
-            and "(403)" in error.message
-            and "relay:device" in error.message
-        ):
-            raise AlreadyNarrowed(ErrorCode.REMOTE_REJECTED, error.message) from None
-        raise
-    has_relay = isinstance(info, dict) and bool(info.get("devices"))
-    scopes: list[JsonValue] = (
-        ["relay:call", "chats:use", "llm:chat", "payments:request"]
-        if has_relay
-        else ["chats:use", "llm:chat"]
-    )
-    transport.request(
-        "PUT",
-        "/v1/api-keys/current",
-        {
-            "name": f"agent-mgr:{agent.name}",
-            "scopes": scopes,
-            "chat_uids": [f"line:{line_uid}"],
-        },
-    )
+    if result.returncode:
+        return result.returncode
+    reload_if_running(agent, registry, "the credential just minted")
     return 0
-
-
-def scope_chat_credential(agent: ResolvedAgent, registry: Registry) -> int:
-    """One-time narrowing for agents activated before line grants existed."""
-    require_own_home(agent, registry)
-    resolve_guard(agent, registry)
-    publish_activation_env(agent)
-    try:
-        result = narrow_chat_credential(agent)
-    except AlreadyNarrowed:
-        # An activation whose reply was lost after Plow committed the PUT, or
-        # an operator repeating this command. Narrowing cannot widen, so
-        # nothing is written; a different role is a fresh activation. The
-        # reload still runs: in the lost-reply case activate() never reloaded,
-        # so the gateway is on the pre-activation token until this does. Only
-        # here, not in activate(): a fresh bootstrap credential answering 403
-        # is an anomaly its own handler reports.
-        print(f"{agent.name}'s credential is already narrowed -- nothing to write")
-        reload_if_running(agent, registry, "the credential activation already narrowed")
-        return 0
-    reload_if_running(agent, registry, "the scoped chat credential just written")
-    return result
 
 
 def model_provider(file: Path) -> str:
@@ -515,22 +403,17 @@ def check_latch(agent: ResolvedAgent, registry: Registry) -> int:
 
 
 def plow_chats(agent: ResolvedAgent, registry: Registry) -> dict[str, object]:
-    # The RUNNING container's contract, not the image's -- and not the two
-    # COMPARED either, the way the exec paths do it: mid-migration the legacy
-    # container is still live, and reading its still-valid dotenv token is
-    # exactly the recovery the operator came here for.
-    container = require_running(agent, registry)
-    target = home_target(container)
-    if target is None:
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR,
-            f"docker could not report {agent.name}'s running container's baked HERMES_HOME",
-        )
-    base, token = read_plow_credentials(agent, target)
+    # No contract derivation: the credential lives in one file under either
+    # one, so which contract the running container was created under does not
+    # decide where its token is read from. Still requires a RUNNING container,
+    # because the curl runs inside it.
+    require_running(agent, registry)
+    base, token = read_plow_credentials(agent)
     if not token:
         raise AgentMgrError(
             ErrorCode.INVALID_ARGUMENT,
-            f"PLOW_AGENT_TOKEN is empty for {agent.name} -- run 'agent-mgr activate {agent.name}' first",
+            f"PLOW_AGENT_TOKEN is empty for {agent.name} -- "
+            f"run 'agent-mgr activate {agent.name} <line-uid>' first",
         )
     base = base or "https://api.plow.co"
     response = compose(

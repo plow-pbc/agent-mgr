@@ -17,12 +17,15 @@ def test_deploy_installs_the_config_into_the_agents_home(run, instance, tmp_path
 
 
 def test_deploy_writes_a_dotenv_skeleton_carrying_both_platforms(run, instance, tmp_path):
+    """The Plow credential is deliberately absent: activate mints it into a
+    file outside the home, and the gateway strips those keys out of this one
+    on every boot."""
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_AGENT_TOKEN" in env
     assert "PLOW_HOME_CHANNEL" in env
     assert "DOMO_MCP_TOKEN" in env, "latch is baseline, not an opt-in"
+    assert "PLOW_AGENT_TOKEN" not in env
 
 
 def test_deploy_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
@@ -34,96 +37,79 @@ def test_deploy_never_clobbers_an_existing_dotenv(run, instance, tmp_path):
     assert env.read_text() == "PLOW_AGENT_TOKEN=real\n"
 
 
-def test_migrate_plugin_env_copies_legacy_names_and_is_idempotent(run, instance, tmp_path):
-    """The fleet migration step: legacy PLOW_CHAT_* values land under the names
-    the unified plugin reads, the old lines stay (a pre-rename plugin still
-    reads them mid-migration; a later cleanup removes them), and a second run
-    writes nothing."""
+PLOW_AGENTS_STUB = """#!/bin/sh
+printf '%s\\n' "$@" >> "$ARGV_LOG"
+for a in "$@"; do case "$prev" in --credential-file) out=$a;; esac; prev=$a; done
+printf 'PLOW_API_BASE=https://api.plow.co\\nPLOW_AGENT_TOKEN=tok_new\\n' > "$out"
+"""
+
+
+@pytest.mark.parametrize("home_env,mints", [("/var/lib/hermes", True), ("/opt/data", False)],
+                         ids=["current-contract", "legacy-contract"])
+def test_activate_mints_only_for_the_contract_that_mounts_the_file(
+        run, instance, tmp_path, home_env, mints):
+    """activate writes ~/.plow-credentials-<name>, never the home dotenv -- and
+    only for the contract that mounts it.
+
+    compose.legacy.yml never mounts that file, so minting for a legacy agent
+    would revoke its live key to write somewhere the container cannot read.
+    The refusal has to land before the mint, because the mint is irreversible;
+    `argv_log` staying absent is what proves it did.
+    """
+    import os
+
+    from conftest import fake_docker
+
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\nHOSTEX_TOKEN=keepme\n")
+    argv_log = tmp_path / "plow-agents.argv"
+    bindir = fake_docker(
+        tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+        home_env=home_env,
+    )
+    stub = bindir / "plow-agents"
+    stub.write_text(PLOW_AGENTS_STUB)
+    stub.chmod(0o755)
 
-    r = run("migrate-plugin-env", "rowan")
+    r = run("activate", "rowan", "ln_test",
+            env={"ARGV_LOG": str(argv_log), "PATH": f"{bindir}:{os.environ['PATH']}"})
+
+    credential = tmp_path / "home" / ".plow-credentials-rowan"
+    if not mints:
+        assert r.returncode != 0
+        assert "legacy contract" in r.stderr
+        assert not argv_log.exists()
+        return
     assert r.returncode == 0, r.stderr
-    lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
-    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
-    assert "PLOW_CHAT_TOKEN=tok_plow" in lines, "the legacy lines must survive until the cleanup"
-    assert "HOSTEX_TOKEN=keepme" in lines
-    # One ledger line per var written, no values on stdout.
-    assert "wrote PLOW_AGENT_TOKEN from PLOW_CHAT_TOKEN" in r.stdout
-    assert "wrote PLOW_HOME_CHANNEL from PLOW_CHAT_CHAT_UID" in r.stdout
-    assert "tok_plow" not in r.stdout + r.stderr, "a credential value leaked into the ledger"
-
-    before = env.read_text()
-    r = run("migrate-plugin-env", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert env.read_text() == before, "a second run must write nothing"
-    assert "wrote" not in r.stdout
+    assert "PLOW_AGENT_TOKEN=tok_new" in credential.read_text()
+    # The line uid is what decides the role, so it has to reach the mint.
+    assert argv_log.read_text().split() == [
+        "mint", "ln_test", "--credential-file", str(credential)
+    ]
+    assert "PLOW_CHAT_TOKEN" not in (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
 
 
-def test_a_redeploy_migrates_a_legacy_only_dotenv(run, instance, tmp_path):
-    """The public path migrates, not just the manual rollout order: a
-    legacy-only agent redeployed onto the unified plugin must come back with the
-    names it reads, or it silently loses its phone line."""
+def test_activate_says_how_to_install_plow_agents(run, instance, tmp_path):
+    """A missing plow-agents fails loudly and names the fix.
+
+    A PATH of docker and python3 alone, rather than a filtered inherit:
+    whether the operator happens to have plow-agents installed must not
+    decide the result."""
+    import sys
+
+    from conftest import fake_docker
+
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_plow\nPLOW_CHAT_CHAT_UID=cht_dm\n")
+    bindir = fake_docker(
+        tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+        home_env="/var/lib/hermes",
+    )
+    (bindir / "python3").symlink_to(sys.executable)
 
-    r = run("deploy", "rowan")
-    assert r.returncode == 0, r.stderr
-    lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
-    assert "PLOW_HOME_CHANNEL=cht_dm" in lines
-
-
-def test_migration_resolves_a_duplicated_key_like_its_readers(run, instance, tmp_path):
-    """Last declaration wins -- dotenv_read and the compose env_file loader
-    both resolve a duplicated key to its last line, so the migrated value must
-    be the one the gateway actually ran with."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_stale\nPLOW_CHAT_TOKEN=tok_live\n")
-
-    r = run("migrate-plugin-env", "rowan")
-    assert r.returncode == 0, r.stderr
-    assert "PLOW_AGENT_TOKEN=tok_live" in env.read_text().splitlines()
-
-
-def test_migrate_plugin_env_sync_overwrites_for_recovery(run, instance, tmp_path):
-    """The recovery command activate prints must be able to finish the job.
-    Idempotent mode skips set keys, so after a failed in-activate sync the
-    fresh token sits only under the legacy name — `--sync` is the forwarded
-    mode that overwrites."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    env = tmp_path / "home" / ".hermes-rowan" / ".env"
-    env.write_text("PLOW_CHAT_TOKEN=tok_fresh\nPLOW_AGENT_TOKEN=tok_stale\n")
-    r = run("migrate-plugin-env", "rowan", "--sync")
-    assert r.returncode == 0, r.stderr
-    lines = env.read_text().splitlines()
-    assert "PLOW_AGENT_TOKEN=tok_fresh" in lines
-    assert "PLOW_AGENT_TOKEN=tok_stale" not in lines
-
-
-def test_migrate_plugin_env_rejects_an_unknown_mode(run, instance, tmp_path):
-    """Fail-fast on a typo'd flag: silently running in the OTHER mode is the
-    stale-token bug this pair of modes exists to prevent."""
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    r = run("migrate-plugin-env", "rowan", "--bogus")
+    r = run("activate", "rowan", "ln_test", env={"PATH": str(bindir)})
     assert r.returncode != 0
-    assert "unknown mode" in r.stderr and "--sync" in r.stderr
-
-
-def test_migrate_plugin_env_without_a_dotenv_points_at_deploy(run, instance, tmp_path):
-    run("register", "rowan", str(instance("rowan")))
-    r = run("migrate-plugin-env", "rowan")
-    assert r.returncode != 0
-    assert "deploy" in r.stderr
+    assert "plow-agents" in r.stderr
 
 
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):
@@ -139,21 +125,6 @@ def test_deploy_on_an_instance_with_no_config_is_refused(run, instance):
     r = run("deploy", "bare")
     assert r.returncode != 0
     assert "config.yaml" in r.stderr
-
-
-def test_every_shipped_pin_is_a_sha_not_a_branch():
-    """A branch would silently re-point a running agent on the next upstream push.
-
-    Both, because the activate pin gates the one command that is a one-time
-    irreversible spend -- a branch name or a truncated SHA in that file would
-    otherwise surface only when an operator ran it.
-    """
-    import json
-
-    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
-    for artifact in artifacts.values():
-        ref = artifact["revision"]
-        assert len(ref) == 40 and all(c in "0123456789abcdef" for c in ref)
 
 
 def test_the_image_pin_is_a_digest_not_a_tag():
@@ -235,7 +206,7 @@ def test_the_fleet_template_is_used_when_an_instance_ships_none(run, instance, t
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     env = (tmp_path / "home" / ".hermes-rowan" / ".env").read_text()
-    assert "PLOW_AGENT_TOKEN" in env and "DOMO_MCP_TOKEN" in env
+    assert "PLOW_HOME_CHANNEL" in env and "DOMO_MCP_TOKEN" in env
 
 
 def test_deploy_is_the_whole_deploy_including_the_instances_own_step(run, instance, tmp_path):
@@ -445,26 +416,6 @@ def test_the_interactive_prompt_defaults_to_no(run, registry, instance, tmp_path
     assert (r.returncode == 0) == ok, (reply, r.stderr)
 
 
-def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instance, tmp_path):
-    """The one command a refusal must not fail. By the reload the one-time
-    activation is already spent and the token written, so a red exit reads as
-    "activation failed" -- and the natural response is to run it again, spending
-    a second activation to recover from a guard that said "not right now"."""
-    import os
-
-    _guarded(instance, run, tmp_path, refuses=True)
-    from conftest import fake_docker
-
-    b = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
-    (tmp_path / "home" / ".hermes-rowan").mkdir(parents=True, exist_ok=True)
-
-    r = run("activate", "rowan", env={"PATH": f"{b}:{os.environ['PATH']}"})
-    assert r.returncode == 0, f"a refused reload failed an activation that had landed: {r.stderr}"
-    assert "do NOT re-run activate" in r.stderr, (
-        "the operator was not told the activation succeeded, which is the whole point"
-    )
-
-
 @pytest.mark.parametrize(
     "args",
     [
@@ -475,10 +426,10 @@ def test_activate_reports_success_when_the_guard_refuses_its_reload(run, instanc
 def test_every_other_write_then_reload_still_fails_on_a_refused_guard(
     run, instance, tmp_path, args
 ):
-    """The negative half of `activate` being "the one command a refusal does not
-    fail". These are in the same position -- the write has landed by the
-    reload -- so activate's `|| echo ...SUCCEEDED...` is the obvious next
-    copy-paste, and it would make the word "one" false with a green suite."""
+    """A refused guard fails the command, for every command that writes and
+    then reloads. There is no exception left: activate used to report success
+    past a refusal because its one-time spend could not be repeated, and
+    `plow-agents mint` can be."""
     import os
 
     _guarded(instance, run, tmp_path, refuses=True)
@@ -683,36 +634,12 @@ def _block(text, start, end):
 
 def test_the_image_is_the_only_owner_of_the_plugin_and_seed_skills():
     """What an older deploy staged into every home is what the pinned base
-    bundles, and a home copy shadows the image's (#156). The activation script
-    is the one thing still fetched from hermes-plow-chat, at a pre-strip SHA.
+    bundles, and a home copy shadows the image's (#156). Nothing is fetched
+    from hermes-plow-chat any more, so the stack pins images alone.
     """
     import json
 
-    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
-    assert set(artifacts) == {"plow_chat_activation"}
-    assert artifacts["plow_chat_activation"]["source"] == "ref/scripts/create_plow_chat_curl.sh"
-
-
-def test_the_activate_pin_is_frozen():
-    """The activate ref may not be bumped at all, and this is what enforces it.
-
-    Proving the ref is an ANCESTOR of the strip commit would need that repo's
-    history, which is a network call this suite will not make. Pinning the SHA
-    needs nothing, and reddens on every forward bump -- so the why lives in the
-    failure message below, where whoever tripped it is already looking, rather
-    than in a doc they would have to be sent to. The README's builds-on section
-    is the same rule for someone reading before they bump.
-    """
-    import json
-
-    artifacts = json.loads((ROOT / "runtime" / "stack.json").read_text())["artifacts"]
-    activate = artifacts["plow_chat_activation"]["revision"]
-    assert activate == "98ddb2e7f0ce563a7ed6c9af43802d15b5ff62d3", (
-        "the activate pin moved. It is frozen behind `Strip the SEED ceremony`, "
-        "which deleted the ref/scripts/ path it names -- a later SHA 404s on "
-        "activate. If this is deliberate, the new SHA must still predate that "
-        "commit, and the README's builds-on section says why."
-    )
+    assert "artifacts" not in json.loads((ROOT / "runtime" / "stack.json").read_text())
 
 
 def test_an_orphaned_tree_from_a_killed_run_does_not_survive_the_next_install(

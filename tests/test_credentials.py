@@ -1,13 +1,12 @@
 import io
 import json
 import os
-import shutil
 import stat
 import subprocess
 import sys
 
 import pytest
-from conftest import ROOT, LATCH_CONFIG, fake_curl, fake_docker
+from conftest import ROOT, LATCH_CONFIG, fake_docker
 
 
 def _fake_docker(tmp_path, name="rowan"):
@@ -74,7 +73,11 @@ def test_sign_in_refuses_before_deploy_has_run(run, instance):
 
 
 @pytest.mark.parametrize(
-    "command", ["activate", "scope-chat-credential", "set-latch", "migrate-plugin-env"]
+    "argv",
+    [
+        ("activate", "rowan", "ln_test"),
+        ("set-latch", "rowan"),
+    ],
 )
 @pytest.mark.parametrize(
     "descriptor",
@@ -82,34 +85,16 @@ def test_sign_in_refuses_before_deploy_has_run(run, instance):
     ids=["not-a-hermes-home", "a-siblings-conventional-home"],
 )
 def test_credential_writers_refuse_a_home_that_is_not_this_agents(
-    run, instance, command, descriptor
+    run, instance, argv, descriptor
 ):
     """Every command that writes a credential into a home takes the same guard.
-    Pointed at a sibling's, activate would take that agent off its chat and spend
-    a one-time activation; set-latch would hand it a relay credential minted
-    against someone else's Mac."""
+    Pointed at a sibling's, activate would revoke that agent's live key and
+    hand it one minted against another line; set-latch would hand it a relay
+    credential minted against someone else's Mac."""
     run("register", "rowan", str(instance("rowan", descriptor=descriptor)))
-    r = run(command, "rowan", input="dev_abc\ntok_xyz\n")
+    r = run(*argv, input="dev_abc\ntok_xyz\n")
     assert r.returncode != 0
     assert "refusing to write" in r.stderr
-
-
-def test_activate_allows_a_legacy_bare_home_the_descriptor_declared(run, instance, tmp_path):
-    """The rentals agent predates the ~/.hermes-<name> convention. An explicit
-    declaration is deliberate; the convention can never produce a bare .hermes."""
-    legacy = tmp_path / "home" / ".hermes"
-    legacy.mkdir(parents=True)
-    run("register", "str", str(instance("str", descriptor="AGENT_HOME=$HOME/.hermes\n")))
-    # ACTIVATE_REF, not PLUGIN_REF: activate owns a separate immutable pin.
-    r = run("activate", "str", env={"AGENT_MGR_ACTIVATE_REF": "not-a-sha"})
-    # It gets past the home guard and fails later, on the ref -- which is the
-    # proof that the guard let it through. Asserted on what the tool prints.
-    assert r.returncode != 0
-    assert "40-char SHA" in r.stderr
-    # The string the guard actually prints. Two other tests in this file pin the
-    # same one; the previous two spellings here matched nothing any code emits,
-    # so the line could not fail either way.
-    assert "refusing to write" not in r.stderr
 
 
 # The two axes are independent, so a product would run redundant CLIs. One row
@@ -458,157 +443,3 @@ def test_a_failed_publish_leaves_the_dotenv_and_no_staged_credential(run, instan
     # interpolated the value would put it in a terminal and a scrollback.
     assert "tok_xyz" not in r.stderr
     assert "tok_xyz" not in r.stdout
-
-
-MAC = [{"device_uid": "dev_mac"}]
-RELAY_SCOPES = ["relay:call", "chats:use", "llm:chat", "payments:request"]
-
-
-@pytest.mark.parametrize(
-    ("preexisting", "expected_home", "devices", "expected_scopes"),
-    [
-        ("", "cht_fresh", MAC, RELAY_SCOPES),
-        (
-            "PLOW_HOME_CHANNEL=cht_existing\nPLOW_AGENT_TOKEN=plow_stale\n",
-            "cht_existing", MAC, RELAY_SCOPES,
-        ),
-        (
-            "PLOW_CHAT_CHAT_UID=cht_legacy\nPLOW_CHAT_TOKEN=plow_stale\n",
-            "cht_legacy", [], ["chats:use", "llm:chat"],
-        ),
-    ],
-)
-def test_activate_narrows_bootstrap_to_line_granted_canonical_credential(
-    run, instance, tmp_path, credential_api, preexisting, expected_home, devices,
-    expected_scopes,
-):
-    """The frozen upstream activation remains the phone bind; agent-mgr only
-    narrows its broad result through Plow's existing key endpoint -- to the
-    relay-holding role when the account has a Mac, the chat-only one when not,
-    the same split plow's cloud seam makes."""
-    credential_api.devices = devices
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    home = tmp_path / "home" / ".hermes-rowan"
-    if preexisting:
-        (home / ".env").write_text(preexisting)
-    installer = """#!/usr/bin/env bash
-set -euo pipefail
-while [ $# -gt 0 ]; do
-  case "$1" in --data-dir) home="$2"; shift 2 ;; *) shift ;; esac
-done
-printf 'PLOW_CHAT_CHAT_UID=cht_fresh\nPLOW_CHAT_TOKEN=plow_fresh\nPLOW_CHAT_BASE_URL=__BASE__\n' >> "$home/.env"
-""".replace("__BASE__", credential_api.base_url)
-    activation = tmp_path / "activation"
-    activation.mkdir()
-    b = fake_curl(activation, body=installer)
-
-    r = run(
-        "activate",
-        "rowan",
-        env={
-            "PATH": f"{b}:{os.environ['PATH']}",
-        },
-    )
-
-    assert r.returncode == 0, r.stderr
-    dotenv = (home / ".env").read_text()
-    assert f"PLOW_HOME_CHANNEL={expected_home}" in dotenv
-    assert "PLOW_AGENT_TOKEN=plow_fresh" in dotenv
-    assert f"PLOW_CHAT_CHAT_UID={expected_home}" in dotenv
-    assert "PLOW_CHAT_TOKEN=plow_fresh" in dotenv
-    assert credential_api.requests[0][0:2] == ("GET", f"/v1/chats/{expected_home}")
-    assert credential_api.requests[1][0:2] == ("GET", "/v1/relay/info")
-    assert all(request[3] == "Bearer plow_fresh" for request in credential_api.requests)
-    request = credential_api.requests[2][2]
-    assert request == {
-        "name": "agent-mgr:rowan",
-        "scopes": expected_scopes,
-        "chat_uids": ["line:ln_elm"],
-    }
-
-
-@pytest.mark.parametrize(
-    ("relay_info_status", "chat_status"), [(200, 200), (403, 200), (200, 403)]
-)
-def test_scope_chat_credential_migrates_an_existing_agent_without_reactivation(
-    run, instance, tmp_path, credential_api, relay_info_status, chat_status
-):
-    """Re-run on a credential Plow already narrowed -- the reply to a committed
-    PUT lost, or an operator repeating the command -- it stops at the 403 from
-    /v1/relay/info rather than failing the recovery it was named as. A 403
-    from anything else in the flow is still the failure it always was."""
-    credential_api.relay_info_status = relay_info_status
-    credential_api.chat_status = chat_status
-    already_narrowed = relay_info_status == 403
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    home = tmp_path / "home" / ".hermes-rowan"
-    (home / ".env").write_text(
-        "PLOW_CHAT_CHAT_UID=cht_home\n"
-        "PLOW_CHAT_TOKEN=plow_bootstrap\n"
-        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
-    )
-    docker_bin, docker_log = _fake_docker(tmp_path)
-    b = tmp_path / "credential-api-bin"
-    b.mkdir()
-    (b / "docker").symlink_to(docker_bin / "docker")
-
-    r = run(
-        "scope-chat-credential",
-        "rowan",
-        env={
-            "PATH": f"{b}:{os.environ['PATH']}",
-        },
-    )
-
-    if chat_status != 200:
-        assert r.returncode != 0
-        assert "already narrowed" not in r.stdout
-        return
-    assert r.returncode == 0, r.stderr
-    dotenv = (home / ".env").read_text()
-    assert "PLOW_HOME_CHANNEL=cht_home" in dotenv
-    assert "PLOW_AGENT_TOKEN=plow_bootstrap" in dotenv
-    puts = [request for request in credential_api.requests if request[0] == "PUT"]
-    if already_narrowed:
-        assert puts == []
-        assert "already narrowed" in r.stdout
-        # Reloaded anyway: the recovery case is an activate() that never got to.
-        assert "up" in docker_log.read_text().split()
-    else:
-        assert puts[0][2]["chat_uids"] == ["line:ln_elm"]
-
-
-def test_scope_chat_credential_finishes_an_interrupted_activation_publication(
-    run, instance, tmp_path, credential_api
-):
-    run("register", "rowan", str(instance("rowan")))
-    run("deploy", "rowan")
-    home = tmp_path / "home" / ".hermes-rowan"
-    (home / ".env").write_text(
-        "PLOW_HOME_CHANNEL=cht_existing\n"
-        "PLOW_AGENT_TOKEN=plow_stale\n"
-        "PLOW_CHAT_CHAT_UID=cht_fresh_dm\n"
-        "PLOW_CHAT_TOKEN=plow_fresh\n"
-        f"PLOW_CHAT_BASE_URL={credential_api.base_url}\n"
-    )
-    docker_bin, _ = _fake_docker(tmp_path)
-    b = tmp_path / "credential-recovery-bin"
-    b.mkdir()
-    (b / "docker").symlink_to(docker_bin / "docker")
-
-    r = run(
-        "scope-chat-credential",
-        "rowan",
-        env={"PATH": f"{b}:{os.environ['PATH']}"},
-    )
-
-    assert r.returncode == 0, r.stderr
-    lines = (home / ".env").read_text().splitlines()
-    assert "PLOW_HOME_CHANNEL=cht_existing" in lines
-    assert "PLOW_CHAT_CHAT_UID=cht_existing" in lines
-    assert "PLOW_AGENT_TOKEN=plow_fresh" in lines
-    assert "PLOW_CHAT_TOKEN=plow_fresh" in lines
-    assert credential_api.requests[0][1] == "/v1/chats/cht_existing"
-    assert all(request[3] == "Bearer plow_fresh" for request in credential_api.requests)

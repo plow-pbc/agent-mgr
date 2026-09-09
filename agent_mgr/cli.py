@@ -21,12 +21,11 @@ from .commands import (
     check_connectors,
     check_latch,
     cron_sync,
-    scope_chat_credential,
     set_home,
     set_latch,
     sign_in,
 )
-from .deploy import deploy, migrate_plugin_env
+from .deploy import deploy
 from .descriptor import resolve_agent
 from .errors import AgentMgrError, ErrorCode
 from .local import (
@@ -36,7 +35,6 @@ from .local import (
     compose,
     require_container_ours,
     require_fetch_safe,
-    require_own_home,
     require_running,
     resolve_guard,
     transition,
@@ -129,8 +127,8 @@ def _usage(stream: TextIO = sys.stdout) -> None:
 
   ls | register | unregister | new | resolve
   deploy | add-skill | cron-sync
-  activate | scope-chat-credential | sign-in | set-latch | check-latch | chats | set-home
-  check-connectors | migrate-plugin-env
+  activate | sign-in | set-latch | check-latch | chats | set-home
+  check-connectors
   backup-homes | prune-backups
   up | down | restart | logs | agent | compose | resolve-guard
   cloud-create
@@ -259,15 +257,15 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
             print(f"  home:     {agent.home} (created by deploy)\n")
             print("bring it up:")
             for next_command in (
-                "deploy",
-                "activate",
-                "up",
-                "cron-sync",
-                "sign-in",
-                "set-latch",
-                "check-latch",
+                f"deploy {name}",
+                f"activate {name} <line-uid>",
+                f"up {name}",
+                f"cron-sync {name}",
+                f"sign-in {name}",
+                f"set-latch {name}",
+                f"check-latch {name}",
             ):
-                print(f"  agent-mgr {next_command} {name}")
+                print(f"  agent-mgr {next_command}")
         return 0
     if operation == "resolve":
         if not args:
@@ -296,21 +294,9 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         _need(args, 1, "agent-mgr resolve-guard <name>")
         resolve_guard(resolve_agent(args[0], registry, ROOT), registry)
         return 0
-    if operation in {"deploy", "migrate-plugin-env"}:
-        if not args:
-            raise AgentMgrError(ErrorCode.INVALID_ARGUMENT, f"usage: agent-mgr {operation} <name>")
-        agent = resolve_agent(args[0], registry, ROOT)
-        if operation == "deploy":
-            _need(args, 1, "agent-mgr deploy <name>")
-            deploy(agent, registry)
-        else:
-            if len(args) > 2 or (len(args) == 2 and args[1] != "--sync"):
-                raise AgentMgrError(
-                    ErrorCode.INVALID_ARGUMENT,
-                    "migrate_plugin_env: unknown mode -- the only mode is --sync",
-                )
-            require_own_home(agent, registry)
-            migrate_plugin_env(agent, len(args) == 2)
+    if operation == "deploy":
+        _need(args, 1, "agent-mgr deploy <name>")
+        deploy(resolve_agent(args[0], registry, ROOT), registry)
         return 0
     if operation in {"backup-homes", "prune-backups"}:
         if not args:
@@ -327,10 +313,11 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
                 ErrorCode.INVALID_ARGUMENT, "usage: agent-mgr prune-backups <dest> [days]"
             )
         return prune_backups(args[0], args[1] if len(args) == 2 else "14")
+    if operation == "activate":
+        _need(args, 2, "agent-mgr activate <name> <line-uid>   (line uids: plow-agents lines)")
+        return activate(resolve_agent(args[0], registry, ROOT), registry, args[1])
     if operation in {
         "cron-sync",
-        "activate",
-        "scope-chat-credential",
         "sign-in",
         "set-latch",
         "check-latch",
@@ -341,8 +328,6 @@ def _run(operation: str, args: list[str], json_output: bool, registry: Registry)
         agent = resolve_agent(args[0], registry, ROOT)
         return {
             "cron-sync": cron_sync,
-            "activate": activate,
-            "scope-chat-credential": scope_chat_credential,
             "sign-in": sign_in,
             "set-latch": set_latch,
             "check-latch": check_latch,

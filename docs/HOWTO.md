@@ -6,9 +6,9 @@ One host, many agents. Each agent is a Docker container running Hermes,
 connected to **Plow Chat** (its phone line) and, optionally, **Plow Latch** (a
 Mac it can drive). `agent-mgr` owns everything the agents share — the image,
 which bundles the plugin and the seed skills, and the Compose template — with
-the exact image digest and the activation script's 40-char SHA recorded in
-`runtime/stack.json`. Each agent's own repo owns only what makes it itself:
-`agent.env`, `config.yaml`, its skills and hooks.
+the exact image digest recorded in `runtime/stack.json`. Each agent's own repo
+owns only what makes it itself: `agent.env`, `config.yaml`, its skills and
+hooks.
 
 A registry at `~/.config/agent-mgr/agents` maps each agent **name** to its
 **repo**, so every command works from any directory. Several names may point
@@ -26,7 +26,10 @@ agent-mgr ls
 ```
 
 You need **`gh`, authenticated** (`gh auth status`) — `deploy` installs an
-agent's `skills.tsv` pins and `activate` fetches its script through `gh api`.
+agent's `skills.tsv` pins through `gh api`. You need
+[`plow-agents`](https://github.com/plow-pbc/plow-agents) on `PATH` too, and
+`plow-agents login` run once on this machine: it is what `activate` mints
+through.
 
 ## Set up a new agent
 
@@ -51,21 +54,29 @@ agent-mgr register bob ~/services/life-assistant-hermes-agent
 
 Then, for either case (`<name>` is whichever you just registered):
 
+Once per machine:
+
 ```sh
-agent-mgr deploy <name>      # the whole deploy: home, config, plugin, skills, deploy hook
-agent-mgr activate <name>    # prints a code — text it from THAT agent's phone
-agent-mgr up <name>          # start the container
-agent-mgr cron-sync <name>   # only if its agent.env names a cron spec
-agent-mgr sign-in <name>     # device-code OAuth for the model credential
+plow-agents login            # from plow-pbc/plow-agents, on PATH
+plow-agents lines            # note the line uid
+```
+
+Per agent:
+
+```sh
+agent-mgr deploy <name>              # the whole deploy: home, config, skills, deploy hook
+agent-mgr activate <name> <line-uid> # mint its Plow credential against that line
+agent-mgr up <name>                  # start the container
+agent-mgr cron-sync <name>           # only if its agent.env names a cron spec
+agent-mgr sign-in <name>             # device-code OAuth for the model credential
 ```
 
 Rules that matter, in order of how much they cost to get wrong:
 
-- **`activate` is a one-time spend, and the phone decides ownership.** The
-  activation POST carries no credential — the agent binds to whichever account
-  texts the code back. Wrong handset = wrong owner, permanently. The code has
-  a short TTL and cannot be minted ahead of time; `activate` polls until the
-  text arrives.
+- **The line decides ownership, and Plow decides the scopes.** `activate`
+  names a line to `plow-agents mint`, which revokes the key the credential
+  file already carried before writing the new one. Wrong line = wrong owner,
+  until you re-run it against the right one — which is free.
 - **Per-person values go in the instance dotenv, after `deploy` and before
   `up`.** e.g. `AGENT_TZ=America/Chicago` in the `.env` inside the home that
   `agent-mgr resolve <name>` prints. Before `deploy` there is no home (don't
@@ -77,17 +88,12 @@ Rules that matter, in order of how much they cost to get wrong:
   README's dotenv section is the contract.
 - **`up` before `sign-in`** — `sign-in` runs inside the container, so it
   refuses until one is running. And **don't restart the agent while `sign-in`
-  is waiting on the browser** — the session lives in the container. If
-  `activate` reports a failed follow-up, recover *before* starting `sign-in`:
-  run the command it prints, or — when it only says not to re-run
-  `activate` — fix whatever refused its reload, then `restart`. A dropped
-  `sign-in` re-runs for free; `activate` does not.
+  is waiting on the browser** — the session lives in the container. Both
+  commands re-run for free.
 
-On re-activation, an agent keeps its line: `activate` remembers the canonical
-`PLOW_HOME_CHANNEL` and narrows the fresh token to it, so group delivery
-survives even when the old token is dead. For an agent activated before line
-grants existed, `agent-mgr scope-chat-credential <name>` does that narrowing
-once, in place.
+Re-activating is free and repeatable: `activate` names the line, Plow decides
+the credential's scopes, and `plow-agents` revokes the key the file already
+carried before writing the new one.
 
 ## Set up Latch (let it drive a Mac)
 
@@ -124,20 +130,20 @@ and the Latch credential (their Mac). Before you start:
 
 - **Confirm their Mac runs Plow Latch** (if the agent will drive one) — a
   missing Latch found mid-flow means a second sitting with them.
-- **Start only when they're present** — the activation code can't be sent
-  ahead (short TTL, one-time spend) and both blocking steps need them live.
+- **Start only when they're present** — the two blocking steps, the model
+  credential and the Latch credential, need them live.
 - **Tell them where their credentials live**: their Plow token — and through
-  it their mailbox — sits in a dotenv on this host, readable by whoever runs
-  `agent-mgr`.
+  it their mailbox — sits in `~/.plow-credentials-<name>` on this host,
+  readable by whoever runs `agent-mgr`.
 
 Then the sequence (each step finishes before the next):
 
 | | who | what |
 |---|---|---|
 | 1 | you | `register` (or `new`), `deploy`, set `AGENT_TZ` in their dotenv |
-| 2 | you | `agent-mgr activate bob` — prints the code and number, then polls |
-| 3 | **them** | text the code **from the handset that should own the agent** |
-| 4 | you | `agent-mgr up bob` — start the container. Not sooner: the current boot contract's credential is what `activate` (rows 2-3) just wrote, and `up` is what a not-yet-activated agent would refuse for |
+| 2 | you | `plow-agents lines` — find the line the agent should own |
+| 3 | you | `agent-mgr activate bob <line-uid>` — mints its credential against that line |
+| 4 | you | `agent-mgr up bob` — start the container. Not sooner: `up` refuses until row 3 has written the credential |
 | 5 | you | `agent-mgr sign-in bob` — prints a device-code URL, waits on the browser |
 | 6 | **them** | open the URL in *their* browser, enter the code |
 | 7 | **them** | Plow Latch → Agents → *can't use OAuth? create a static credential* |
@@ -208,12 +214,12 @@ What an archive is worth:
   outside. Grep `~/backup-homes.log` for `were not archived`.
 - A killed run leaves a truncated newest archive; `gzip -t <archive>` before
   restoring, and fall back to the previous night's.
-- A **current**-contract agent's **Plow credential** lives *outside* its home,
-  at `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`.
-  After that agent's first boot the file is the only host-side copy of its
-  token, so a run that cannot read one fails the night. A **legacy**-contract
-  agent has no such file — its token stays in the home's own dotenv and rides
-  in the home archive, so an all-legacy fleet gets no credentials archive at all.
+- An agent's **Plow credential** lives *outside* its home, at
+  `~/.plow-credentials-<name>`, so it gets its own `plow-credentials.tar.gz`.
+  That file is the only host-side copy of the token — nothing keeps one in the
+  dotenv any more — so a run that cannot read one fails the night. A
+  **legacy**-contract agent has no such file and cannot be given one:
+  `activate` writes only what `compose.current.yml` mounts.
 
 ### Restoring a home
 
@@ -289,11 +295,9 @@ write one (derived image or extra mounts). Three rules for that override:
   `resolve-guard` refuses every Compose-resolving command — everything but
   the registry bookkeeping (`ls`, `register`, `unregister`, `new`,
   `resolve`). A running container keeps running; you just lose the agent-mgr
-  surface over it. `activate` is the one command that neither refuses nor
-  fully works: it swallows the guard's refusal on its final reload (so the
-  one-time activation is never re-spent), writes the credential, and skips
-  the reload — leaving you to fix the line and then `restart`, which itself
-  refuses until you do.
+  surface over it. `activate` is no exception: it mints the credential and
+  then fails on the refused reload — minting is repeatable, so fix the line
+  and re-run it, or `restart`.
 
 ```yaml
 # with AGENT_IMAGE=my-agent:local in agent.env — the tag agent-mgr inspects
@@ -329,10 +333,6 @@ the seed skills (`google-workspace`, `plow-invite`) come from the image
 itself, so bumping `images.hermes_local` and re-running `deploy` is how they
 move; a destination the agent's own `skills.tsv` pins stays authoritative.
 
-**The activation pin may never move** — before touching
-`artifacts.plow_chat_activation`, read *What this builds on* in the
-[README](../README.md), which owns that rule.
-
 ## Running a one-off container
 
 ```sh
@@ -357,4 +357,4 @@ measured cost of the second gateway is in *Why it exists* in the
 | `... is REVOKED` | mint a fresh Latch credential from the Mac |
 | `no answer from api.plow.co` | the credential was **not** tested; this is a network fault, not a bad token |
 | a shared skill behaves oddly | compare the SHA in `skills.tsv` against what upstream has since fixed |
-| `configured group(s) not on this agent's line` | verify `PLOW_HOME_CHANNEL` names a chat on the intended line, then run `scope-chat-credential` |
+| `configured group(s) not on this agent's line` | verify `PLOW_HOME_CHANNEL` names a chat on the intended line, then re-run `activate` against that line |

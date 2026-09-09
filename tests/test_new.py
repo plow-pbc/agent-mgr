@@ -34,8 +34,9 @@ def test_the_scaffolded_config_has_baseline_integrations_and_group_scope(
 
 
 def test_new_does_not_create_the_home_that_deploy_owns(run, tmp_path):
-    """activate gates on the home existing as its "run deploy first" check. Pre-creating it lets activate spend a one-time
-    activation into a home deploy has never prepared."""
+    """activate gates on the home existing as its "run deploy first" check.
+    Pre-creating it lets activate mint into a home deploy has never
+    prepared -- no config, no dotenv, nothing the gateway can boot on."""
     r = run("new", "acme", str(tmp_path / "acme-hermes-agent"))
     assert not (tmp_path / "home" / ".hermes-acme").exists()
     assert str(tmp_path / "home" / ".hermes-acme") in r.stdout, "the banner must still report it"

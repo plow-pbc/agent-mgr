@@ -427,43 +427,38 @@ def _chats_response(*uids_and_names):
 
 
 def _with_plow(run, instance, tmp_path, home_uid="cht_old_dm"):
-    """Register + deploy `property` and give it a Plow credential pair."""
+    """Register + deploy `property`, and mint it the credential `activate`
+    writes -- outside the home, which is the only place the token lives now."""
     run("register", "property", str(instance("property")))
     run("deploy", "property")
     env_file = tmp_path / "home" / ".hermes-property" / ".env"
-    env_file.write_text(
-        f"HOSTEX_TOKEN=keepme\nPLOW_AGENT_TOKEN=tok_plow\nPLOW_HOME_CHANNEL={home_uid}\n")
+    env_file.write_text(f"HOSTEX_TOKEN=keepme\nPLOW_HOME_CHANNEL={home_uid}\n")
+    (tmp_path / "home" / ".plow-credentials-property").write_text(
+        "PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_plow\n")
     return env_file
 
 
-@pytest.mark.parametrize(("container_home_env", "credential_file"), [
-    # Migrated: the current base's own gateway truncates PLOW_AGENT_TOKEN out
-    # of the home dotenv after first boot, so the credential file -- not the
-    # dotenv -- is where this agent's token actually lives.
-    (None, ".plow-credentials-property"),
-    # Mid-migration: a deploy made the current image inspectable and then
-    # failed before recreation, so the LEGACY container is still live and its
-    # dotenv token is still the working one. Picking the source from the
-    # IMAGE's contract looked past it and told the operator to activate an
-    # agent whose token was fine -- and comparing the two instead refused
-    # outright, in the one interval `chats` exists to get you out of.
-    ("/opt/data", ".hermes-property/.env"),
-])
-def test_chats_reads_the_token_the_running_container_actually_uses(
-        run, instance, tmp_path, container_home_env, credential_file):
-    """PLOW_HOME_CHANNEL is unaffected either way: it is not a truncated key."""
-    run("register", "property", str(instance("property")))
-    run("deploy", "property")
-    home = tmp_path / "home" / ".hermes-property"
-    (home / ".env").write_text("HOSTEX_TOKEN=keepme\nPLOW_HOME_CHANNEL=cht_old_dm\n")
-    with (tmp_path / "home" / credential_file).open("a") as handle:
-        handle.write("PLOW_API_BASE=https://api.plow.co\nPLOW_AGENT_TOKEN=tok_plow\n")
+def test_chats_reads_the_token_from_the_credential_file(run, instance, tmp_path):
+    """One source, under either boot contract -- so `chats` derives no
+    contract at all, and the mid-migration row this used to carry asks the
+    same question as this one.
+
+    The dotenv was the legacy contract's copy, and the current gateway
+    truncates these keys out of it on every boot: what is left there is a
+    revoked shadow, and reading it is what took the STR agent offline (#174).
+    PLOW_HOME_CHANNEL is unaffected -- it is not a truncated key."""
+    _with_plow(run, instance, tmp_path)
+    (tmp_path / "home" / ".hermes-property" / ".env").write_text(
+        "HOSTEX_TOKEN=keepme\nPLOW_HOME_CHANNEL=cht_old_dm\nPLOW_AGENT_TOKEN=tok_shadow\n")
+    log = tmp_path / "docker.log"
     r = run("chats", "property", env=_bin(
-        tmp_path, "property", home_env="/var/lib/hermes",
-        container_home_env=container_home_env,
+        tmp_path, "property", log=log, home_env="/var/lib/hermes",
         exec_output=_chats_response(("cht_old_dm", None))))
     assert r.returncode == 0, r.stderr
     assert "cht_old_dm" in r.stdout
+    piped = Path(f"{log}.stdin").read_text()
+    assert "Bearer tok_plow" in piped
+    assert "tok_shadow" not in piped
 
 
 def test_chats_marks_the_home_and_keeps_the_token_off_argv(run, instance, tmp_path):
@@ -516,7 +511,6 @@ def test_set_home_writes_the_home_and_carries_every_other_key_through(run, insta
     # success and leaves the home un-moved.
     assert "PLOW_CHAT_CHAT_UID=cht_old_dm" in lines
     assert "HOSTEX_TOKEN=keepme" in lines
-    assert "PLOW_AGENT_TOKEN=tok_plow" in lines
 
 
 @pytest.mark.parametrize("command, extra", [("chats", ()), ("set-home", ("cht_old_dm",))])

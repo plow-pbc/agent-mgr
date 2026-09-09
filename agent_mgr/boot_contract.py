@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 
 from .errors import AgentMgrError, ErrorCode
-from .files import atomic_write, dotenv_read
+from .files import dotenv_read
 from .models import ResolvedAgent
 
 # The two boot contracts a Plow Hermes base image can declare, keyed on its own
@@ -131,48 +131,35 @@ def credentials_host_path(agent: ResolvedAgent) -> Path:
 
 
 def ensure_credentials(agent: ResolvedAgent) -> Path:
-    """Ensure the current contract's credential file, rather than guard it.
+    """The agent's durable two-key credential, or a loud failure.
 
-    NOT disposable derived state: after a current-contract container's first
-    boot, its own cont-init step promotes this file into
-    /var/lib/plow/credentials and, from then on, the gateway's own dotenv load
-    truncates PLOW_API_BASE/PLOW_AGENT_TOKEN out of the home .env -- so this
-    file becomes the ONLY copy on the host. Deleting it as "redundant" loses
-    the agent's credential.
-
-    - home dotenv has both keys -> write or refresh this file from them
-    - dotenv lacks them but this file already exists -> leave it alone
-    - neither -> fail loudly, naming the agent and what is missing
+    Written by `agent-mgr activate`, which delegates to `plow-agents mint`.
+    Never derived from the home dotenv: plow-init strips these keys from it on
+    every boot, so a copy found there is a stale shadow -- and reviving one is
+    how #174 took the STR agent offline.
     """
     destination = credentials_host_path(agent)
-    dotenv = agent.home / ".env"
-    base = dotenv_read(dotenv, "PLOW_API_BASE") if dotenv.is_file() else ""
-    token = dotenv_read(dotenv, "PLOW_AGENT_TOKEN") if dotenv.is_file() else ""
-    if base and token:
-        atomic_write(destination, f"PLOW_API_BASE={base}\nPLOW_AGENT_TOKEN={token}\n".encode())
-        return destination
     if destination.is_file():
         return destination
     raise AgentMgrError(
         ErrorCode.INVALID_ARGUMENT,
-        f"{agent.name} has no Plow credential to start from -- {dotenv} carries no "
-        f"PLOW_API_BASE/PLOW_AGENT_TOKEN and {destination} does not exist yet. "
-        f"Run 'agent-mgr activate {agent.name}' first.",
+        f"{agent.name} has no Plow credential -- {destination} does not exist. "
+        f"Run 'agent-mgr activate {agent.name} <line-uid>' first.",
     )
 
 
-def read_plow_credentials(agent: ResolvedAgent, target: str) -> tuple[str, str]:
-    """(PLOW_API_BASE, PLOW_AGENT_TOKEN), from whichever source is canonical
-    under `target` -- the boot contract of the container the caller is about to
-    talk to, never the image's, which can already have moved ahead of it.
+def read_plow_credentials(agent: ResolvedAgent) -> tuple[str, str]:
+    """(PLOW_API_BASE, PLOW_AGENT_TOKEN), from the one file that holds them.
 
-    The current contract's own gateway truncates both keys out of the home
-    dotenv after first boot -- credentials_host_path() is the durable copy
-    there, the same file ensure_credentials() writes. The legacy contract has
-    no such file; its dotenv stays canonical. Read-only: callers that need to
-    WRITE go through ensure_credentials() instead.
+    One source under either boot contract, so no caller has to derive which
+    one it is: the credential file outside every agent's home, the same file
+    ensure_credentials() requires and `activate` writes. The home dotenv was
+    the legacy contract's copy and is not read at all any more -- the current
+    gateway truncates those keys out of it on every boot, so what is left
+    there is a revoked shadow. Read-only: callers that need to WRITE go
+    through `activate`.
     """
-    source = credentials_host_path(agent) if target == CURRENT_HOME else agent.home / ".env"
+    source = credentials_host_path(agent)
     if not source.is_file():
         return "", ""
     return dotenv_read(source, "PLOW_API_BASE"), dotenv_read(source, "PLOW_AGENT_TOKEN")

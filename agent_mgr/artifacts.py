@@ -42,27 +42,6 @@ def image_reference(root: Path = ROOT) -> str:
     return reference
 
 
-def stack(root: Path = ROOT) -> dict[str, Artifact]:
-    artifacts = _load_stack(root).get("artifacts")
-    if not isinstance(artifacts, dict):
-        raise AgentMgrError(ErrorCode.INVALID_DESCRIPTOR, "unsupported runtime/stack.json")
-    result: dict[str, Artifact] = {}
-    for name, value in artifacts.items():
-        if not isinstance(name, str) or not isinstance(value, dict):
-            raise AgentMgrError(
-                ErrorCode.INVALID_DESCRIPTOR, "invalid artifact in runtime/stack.json"
-            )
-        fields = ("repository", "revision", "source", "destination")
-        if not all(isinstance(value.get(field), str) for field in fields):
-            raise AgentMgrError(ErrorCode.INVALID_DESCRIPTOR, f"invalid artifact {name}")
-        artifact = Artifact(*(value[field] for field in fields))
-        validate_revision(
-            artifact.revision, f"artifact {name} revision", ErrorCode.INVALID_DESCRIPTOR
-        )
-        result[name] = artifact
-    return result
-
-
 def fetch(
     agent: ResolvedAgent,
     kind: str,

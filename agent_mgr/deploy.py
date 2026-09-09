@@ -28,36 +28,6 @@ def _publish_home_file(source: Path, home: Path, name: str) -> None:
     atomic_write(resolved / name, source.read_bytes(), stage_in=resolved.parent)
 
 
-def migrate_plugin_env(agent: ResolvedAgent, sync: bool = False) -> None:
-    dotenv = agent.home / ".env"
-    if not dotenv.is_file():
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR, f"no {dotenv} -- run 'agent-mgr deploy {agent.name}' first"
-        )
-    args = [str(ROOT / "lib" / "upsert-env"), str(agent.home), "--migrate-legacy"]
-    if sync:
-        args.append("--sync")
-    if subprocess.run(args, check=False).returncode:
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR, f"refusing to write {agent.name}'s dotenv -- see above."
-        )
-
-
-def publish_activation_env(agent: ResolvedAgent, remembered_home: str = "") -> None:
-    """Atomically pair an activation's fresh legacy token with its durable home."""
-    result = subprocess.run(
-        [str(ROOT / "lib" / "upsert-env"), str(agent.home), "--publish-activation"],
-        input=f"{remembered_home}\n",
-        text=True,
-        check=False,
-    )
-    if result.returncode:
-        raise AgentMgrError(
-            ErrorCode.IO_ERROR,
-            f"refusing to publish {agent.name}'s activation credential -- see above. Nothing was written.",
-        )
-
-
 def replay_skills(agent: ResolvedAgent) -> None:
     manifest = agent.repo / "skills.tsv"
     if not manifest.is_file():
@@ -131,7 +101,6 @@ def deploy(agent: ResolvedAgent, registry: Registry) -> None:
         if not skeleton.is_file():
             skeleton = ROOT / "templates" / "env.example"
         _publish_home_file(skeleton, agent.home, ".env")
-    migrate_plugin_env(agent)
     _publish_home_file(agent.config, agent.home, "config.yaml")
     print(f"deployed config.yaml to {agent.home}")
     replay_skills(agent)
