@@ -45,15 +45,29 @@ printf 'PLOW_API_BASE=https://api.plow.co\\nPLOW_AGENT_TOKEN=tok_new\\n' > "$out
 
 
 def test_activate_mints_into_the_credential_file(run, instance, tmp_path):
-    """activate writes ~/.plow-credentials-<name>, never the home dotenv."""
+    """activate writes ~/.plow-credentials-<name>, never the home dotenv.
+
+    A current-contract fake, because only that contract mounts the file this
+    writes -- asserting success against the legacy default would be asserting
+    a contradiction.
+    """
+    import os
+
+    from conftest import fake_docker
+
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
     argv_log = tmp_path / "plow-agents.argv"
-    stub = tmp_path / "bin" / "plow-agents"
+    bindir = fake_docker(
+        tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+        home_env="/var/lib/hermes",
+    )
+    stub = bindir / "plow-agents"
     stub.write_text(PLOW_AGENTS_STUB)
     stub.chmod(0o755)
 
-    r = run("activate", "rowan", "ln_test", env={"ARGV_LOG": str(argv_log)})
+    r = run("activate", "rowan", "ln_test",
+            env={"ARGV_LOG": str(argv_log), "PATH": f"{bindir}:{os.environ['PATH']}"})
     assert r.returncode == 0, r.stderr
 
     credential = tmp_path / "home" / ".plow-credentials-rowan"
@@ -77,12 +91,38 @@ def test_activate_says_how_to_install_plow_agents(run, instance, tmp_path):
 
     run("register", "rowan", str(instance("rowan")))
     run("deploy", "rowan")
-    bindir = fake_docker(tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan")
+    bindir = fake_docker(
+        tmp_path, home=tmp_path / "home" / ".hermes-rowan", name="rowan",
+        home_env="/var/lib/hermes",
+    )
     (bindir / "python3").symlink_to(sys.executable)
 
     r = run("activate", "rowan", "ln_test", env={"PATH": str(bindir)})
     assert r.returncode != 0
     assert "plow-agents" in r.stderr
+
+
+def test_activate_refuses_a_legacy_contract_agent(run, instance, tmp_path):
+    """The legacy contract never mounts the credential file, so minting for one
+    would revoke its live key to write somewhere it cannot read. The default
+    fixture is legacy, which is the whole point of this case."""
+    run("register", "rowan", str(instance("rowan")))
+    run("deploy", "rowan")
+    import os
+
+    argv_log = tmp_path / "plow-agents.argv"
+    stubdir = tmp_path / "stub"
+    stubdir.mkdir()
+    stub = stubdir / "plow-agents"
+    stub.write_text(PLOW_AGENTS_STUB)
+    stub.chmod(0o755)
+
+    r = run("activate", "rowan", "ln_test",
+            env={"ARGV_LOG": str(argv_log), "PATH": f"{stubdir}:{os.environ['PATH']}"})
+    assert r.returncode != 0
+    assert "legacy contract" in r.stderr
+    # The refusal has to come BEFORE the mint: it is irreversible.
+    assert not argv_log.exists()
 
 
 def test_installed_state_is_not_reachable_by_other_users(run, instance, tmp_path):

@@ -12,8 +12,10 @@ from pathlib import Path
 
 from .artifacts import Artifact, fetch, validate_revision
 from .boot_contract import (
+    CURRENT_HOME,
     credentials_host_path,
     read_plow_credentials,
+    require_home_target,
     require_running_contract_matches,
 )
 from .deploy import reload_if_running
@@ -89,6 +91,13 @@ def activate(agent: ResolvedAgent, registry: Registry, line_uid: str) -> int:
             ErrorCode.IO_ERROR,
             "plow-agents is not on PATH -- clone plow-pbc/plow-agents and add its bin/ "
             "to PATH, then run 'plow-agents login' once on this machine",
+        )
+    if require_home_target(agent) != CURRENT_HOME:
+        raise AgentMgrError(
+            ErrorCode.INVALID_ARGUMENT,
+            f"{agent.name} boots the legacy contract, which never mounts the credential "
+            f"file this writes -- minting would revoke its live key for a file it cannot "
+            f"read. Move it to a current-contract base first (see #130).",
         )
     destination = credentials_host_path(agent)
     result = subprocess.run(
