@@ -43,7 +43,7 @@ agent's phone line — and **Plow Latch** — the Mac it is allowed to drive. It
 mirrors the cloud Hermes infrastructure in
 [`plow-pbc/plow`](https://github.com/plow-pbc/plow) (`cloud-agents/hermes`):
 the same plugin and the same protocol to the same API. The fleet pin in
-`runtime/stack.json` is `plow-pbc/plow-hermes-agent` `9703470`, a
+`runtime/stack.json` is `plow-pbc/plow-hermes-agent` `cd2a898`, a
 current-contract base: the home at `/var/lib/hermes`, the gateway gated
 behind a `/var/lib/plow/credentials` file, promoted at container creation
 from a bind-mounted `.host` copy this repository writes. agent-mgr derives
@@ -412,7 +412,7 @@ looks busier.
 
 | dependency | what it is | pinned as |
 |---|---|---|
-| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `9703470`, a current-contract base (`/var/lib/hermes`, `plow-init`); `089a6b1` was the last base under the `/opt/data` contract — still bootable for an agent that pins it, but no longer credentialable, since `activate` writes only the file the current contract mounts (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
+| [`plow-pbc/plow-hermes-agent`](https://github.com/plow-pbc/plow-hermes-agent) | the agent runtime: the shared cloud base, built `FROM nousresearch/hermes-agent` and carrying the bundled `plow_chat` plugin and seed skills. Pinned at `cd2a898`, a current-contract base (`/var/lib/hermes`, `plow-init`) whose `plow-init` also strips the legacy `PLOW_CHAT_TOKEN`/`PLOW_CHAT_BASE_URL` aliases (plow-hermes-agent#56); `089a6b1` was the last base under the `/opt/data` contract — still bootable for an agent that pins it, but no longer credentialable, since `activate` writes only the file the current contract mounts (see #130) | a **`sha256:` digest**, at `images.hermes_local` in `runtime/stack.json` |
 | [`plow-pbc/plow-agents`](https://github.com/plow-pbc/plow-agents) | the credential minter: `activate` shells out to `plow-agents mint <line> --credential-file <path>` | not pinned — a tool on `PATH`, like `docker` and `gh` |
 | [`plow-pbc/latch`](https://github.com/plow-pbc/latch) | the Mac an agent drives, over the relay | named in the agent's `config.yaml`; credentials come from its home dotenv or an override's container environment, never from git |
 

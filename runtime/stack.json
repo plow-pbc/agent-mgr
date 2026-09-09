@@ -1,1 +1,1 @@
-{"schema_version":1,"images":{"hermes_local":{"reference":"public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:b1b860d63c9e60075d15394f1a9ae93af5200c00692d0cc93548f6a05e46cc4b"}}}
+{"schema_version":1,"images":{"hermes_local":{"reference":"public.ecr.aws/e1h7x4a2/plow-cloud-agents@sha256:bfd4980f361a551e62569f8c2eb717c1076d0b8be3a0499b869eaece151336a4"}}}
