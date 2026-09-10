@@ -15,7 +15,7 @@
 # source, and materializing a third-party runtime on every review would cost
 # more than the drift it could catch.
 
-plow-pbc/hermes-plow-chat
+plow-pbc/hermes-plugin-plow
 plow-pbc/str-hermes-agent
 plow-pbc/property-hunt-hermes-agent
 plow-pbc/life-assistant-hermes-agent

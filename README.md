@@ -17,7 +17,7 @@ belongs there; this repo only follows, by bumping its pin if it holds one.
   This repo pins its digest and mounts a home; where it has to name one of
   those paths (the compose template), that copy follows the base, never leads.
 - The seed skills' contents are
-  [`hermes-plow-chat`](https://github.com/plow-pbc/hermes-plow-chat)'s, and
+  [`hermes-plugin-plow`](https://github.com/plow-pbc/hermes-plugin-plow)'s, and
   reach the fleet bundled in the base image, so adding or dropping one is a
   change there and a base bump here.
 - The API, the relay and the cloud registry are
@@ -421,7 +421,7 @@ re-resolves on the next pull, which silently changes a large unreviewed
 surface under a running agent that holds live credentials, and this one
 carries the chat plugin holding the chat token.
 
-`activate` used to fetch a bash installer from `hermes-plow-chat` at a frozen
+`activate` used to fetch a bash installer from `hermes-plugin-plow` at a frozen
 SHA; that repo deleted the file, and the pin froze a path that no longer
 exists. `plow-agents` owns minting now, so there is nothing left to pin —
 which is also why it is a tool on `PATH` rather than a fetched artifact.
