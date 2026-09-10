@@ -635,7 +635,7 @@ def _block(text, start, end):
 def test_the_image_is_the_only_owner_of_the_plugin_and_seed_skills():
     """What an older deploy staged into every home is what the pinned base
     bundles, and a home copy shadows the image's (#156). Nothing is fetched
-    from hermes-plow-chat any more, so the stack pins images alone.
+    from hermes-plugin-plow any more, so the stack pins images alone.
     """
     import json
 
